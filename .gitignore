@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Ship local artifacts (Linear mode — never commit)
+ship/changes/
+
+# Ship pipeline state (trace runs, active-run pointer — generated artifacts)
+ship/state/
+
+# Ship temporary pipeline artifacts
+ship/tmp/
+ship/.tmp/
+
+# Ship run-context scratch (shared between pipeline agents — never commit)
+.context/ship-run/

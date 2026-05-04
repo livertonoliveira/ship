@@ -1,0 +1,406 @@
+---
+name: ship:run
+description: "Full development pipeline for a task: develop → test → perf → security → review → analyze → homolog. Works on 1 task by default, or N tasks / entire project if requested."
+argument-hint: "<task-id | linear-issue-id | --project project-name>"
+allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
+user-invocable: true
+---
+
+# Ship Run — Development Pipeline
+
+You are the main Ship development orchestrator. Your mission is to take a task (from Linear or local markdown) and drive it through the full development pipeline: implementation → testing → quality checks → user acceptance. You maximize the use of parallel agents at every stage.
+
+**With Linear:** Task details, context, and quality reports all live in Linear. No local files needed.
+**Without Linear:** Everything lives in `ship/changes/<feature>/` as markdown files.
+
+**Input received:** $ARGUMENTS
+
+---
+
+## Prerequisites
+
+### 1. Check initialization
+
+Check if `ship/config.md` exists at the project root.
+- If it does NOT exist: inform the user they need to run `/ship:init` first and STOP.
+
+### 2. Determine storage mode
+
+See @ship/patterns/storage-mode.md.
+
+### 3. Check for specification
+
+- **Linear mode**: The user should provide a Linear issue ID. If they don't, ask for one.
+- **Local mode**: Check if `ship/changes/` contains feature folders with tasks. If none exist, inform the user to run `/ship:spec` first.
+
+---
+
+## Detect input mode
+
+Analyze `$ARGUMENTS` to determine what to work on:
+
+### Single task (default, recommended)
+- **Linear issue ID** (e.g., `ABC-123`): Work on this specific task. Fetch details via `mcp__linear-server__get_issue`.
+- **Local task ID** (e.g., `TASK-001`): Find the task in `ship/changes/<feature>/tasks.md`.
+
+### Multiple tasks
+- **`--project <name>`**: Work through ALL pending tasks in the specified project/feature, one at a time, in milestone order.
+- **`--milestone <name>`**: Work through all pending tasks in a specific milestone.
+- **Multiple IDs** (e.g., `ABC-123 ABC-124 ABC-125`): Work on these specific tasks in order.
+
+**Default behavior**: Work on **1 task at a time**. After completing each task, ask the user: "Task complete. Continue to the next task, or stop here?"
+
+---
+
+## Pipeline Execution (per task)
+
+For each task, execute the following phases:
+
+### 0.5. Initialize shared scratch dir
+
+> See @ship/patterns/run-context.md for canonical file formats and lifecycle rules.
+
+After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
+
+```bash
+mkdir -p .context/ship-run/<task-id>
+```
+
+Then populate the canonical files in a single batch:
+
+1. **`stack.md`** — Run stack-detection (see @ship/patterns/stack-detection.md): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
+
+   ```markdown
+   # Stack
+
+   - Language: <value>
+   - Runtime: <value>
+   - Framework: <value>
+   - Test runner: <value>
+   - Package manager: <value>
+   ```
+
+   Write this content to `.context/ship-run/<task-id>/stack.md`.
+
+2. **`diff.md`** — Run the following and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
+
+   ```bash
+   git diff origin/main...HEAD
+   ```
+
+3. **`phase-status.md`** — Create the file with only the header (no rows yet):
+
+   ```markdown
+   # Phase Status
+
+   | Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |
+   |-------|-----|-----------|-------|------|----------|------|--------|-----|-------|
+   ```
+
+   Write to `.context/ship-run/<task-id>/phase-status.md`.
+
+4. **`pre-quality-snapshot.sha`** — Capture the current HEAD SHA and write it as a single line:
+
+   ```bash
+   git rev-parse HEAD
+   ```
+
+   Write the SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`.
+
+Log to the user:
+```
+Run context: .context/ship-run/<task-id>/ (stack + diff cached)
+```
+
+### 1. Load task context
+
+**Linear mode:**
+1. Use `mcp__linear-server__get_issue` to get task title, description, acceptance criteria, labels, milestone
+2. Use `mcp__linear-server__get_project` to get the project context
+3. Use `mcp__linear-server__list_documents` + `mcp__linear-server__get_document` to read the Proposal and Design documents linked to the project
+4. Read `ship/config.md` (see @ship/patterns/stack-detection.md for stack detection logic).
+5. Build the **effective phase set** for this run (applies to both Linear and Local mode):
+   1. Read `Pipeline Profile → profile` from `ship/config.md` (default: `standard` if the field is absent or unknown)
+   2. Look up that profile's phase defaults in `@ship/patterns/profiles.md`. If the profile name is not recognized, fall back to `standard` and warn the user.
+   3. For each phase (`dev`, `test`, `perf`, `security`, `review`, `analyze`, `homolog`, `pr`): if `Pipeline Phases` has an explicit `enabled`/`disabled` entry, that override wins; otherwise use the profile default
+   4. **Log to the user** before starting any phase:
+      - Format: `Profile: <name> → fases ativas: <list> | puladas por profile: <list>`
+      - If any explicit `Pipeline Phases` entry overrode the profile default, append: `| override: <phase>: <enabled|disabled>`
+      - Example (no overrides): `Profile: lite → fases ativas: dev, pr | puladas por profile: test, perf, security, review, homolog`
+      - Example (with override): `Profile: lite | override: test: enabled → fases ativas: dev, test, pr | puladas por profile: perf, security, review, homolog`
+
+> **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
+>
+> Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
+> Do NOT continue to the development phase until this API call is confirmed.
+
+**Local mode:**
+
+Follow @ship/patterns/load-artifacts.md for the Local mode artifact loading steps.
+
+Additionally:
+- Apply step 5 above (effective phase set resolution) — it is not Linear-specific.
+
+> **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
+
+### 2. PHASE: Development
+
+> **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
+
+Use the **Agent** tool to execute development. Instruct the agent to:
+
+1. Read `.claude/commands/ship/develop.md` for full instructions
+2. Use the task description as the implementation spec (not the full feature — just THIS task)
+3. Read `ship/config.md` for project conventions
+4. Implement the code described in the task
+5. Run typecheck (if configured)
+6. Verify the change is under 400 lines: run `git diff --stat` and check
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
+**The agent MUST use parallel sub-agents** for independent modules when applicable.
+
+**Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
+- Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
+- Do NOT block — this is a warning, not a gate.
+
+### 3. PHASE: Testing
+
+> **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
+
+Use the **Agent** tool to execute tests. Instruct the agent to:
+
+1. Read `.claude/commands/ship/test.md` for full instructions
+2. Use the task's acceptance criteria to guide test generation
+3. Generate and run tests scoped to THIS task only
+
+**The agent MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
+If any test fails after fix attempts:
+- The pipeline STOPS. Inform the user.
+- Ask if they want an automatic fix attempt.
+
+### 4. PHASES: Quality Checks (PARALLEL)
+
+> **Phase check**: Check each quality phase individually against the **effective phase set** (resolved in step 1.5):
+> - If all three (`perf`, `security`, `review`) are `disabled`: skip this step entirely and proceed to Phase 5.
+> - If some are `disabled`: launch only the agents for enabled phases. Skip the disabled ones.
+
+> **Pre-quality snapshot:** The snapshot `.context/ship-run/<task-id>/pre-quality-snapshot.sha` was already captured in step 0.5. All quality agents and the PR agent can read the HEAD SHA from that file. See `ship/patterns/gates.md → Snapshot pré-fix` for format details and lifecycle rules.
+
+Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases):
+
+**Agent 1 — Performance** *(only if `perf` is `enabled`)*:
+- Read `.claude/commands/ship/perf.md` for full instructions
+- Analyze the diff for this task only
+- Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
+- **Scratch dir:** `.context/ship-run/<task-id>/`
+
+**Agent 2 — Security** *(only if `security` is `enabled`)*:
+- Read `.claude/commands/ship/security.md` for full instructions
+- Analyze the diff for this task only
+- Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
+- **Scratch dir:** `.context/ship-run/<task-id>/`
+
+**Agent 3 — Code Review** *(only if `review` is `enabled`)*:
+- Read `.claude/commands/ship/review.md` for full instructions
+- Analyze the diff for this task only
+- Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
+- **Scratch dir:** `.context/ship-run/<task-id>/`
+
+### 5. GATE CHECK
+
+After all 3 agents complete, apply severity overrides before gate evaluation:
+
+**Severity Overrides:**
+Read `Severity Overrides` from `ship/config.md`. For each override rule (e.g., `high → warn`), downgrade matching findings from all phase reports before evaluating the gate. If the field is absent, no downgrade is applied.
+
+Evaluate the gate decision manually based on the aggregated findings from all quality agents:
+- **FAIL** — any critical or high finding remains after severity overrides
+- **WARN** — no critical/high findings, but at least one medium finding remains
+- **PASS** — only low/info findings, or no findings at all
+
+**Before handling gate results:** Read the `Gate Behavior` section from `ship/config.md`:
+- `on_fail`: controls behavior for exit code 2 (`ask` | `fix` | `defer`). Default: `ask`.
+- `on_warn`: controls behavior for exit code 1 (`ask` | `fix` | `pass`). Default: `ask`.
+
+**If exit code 2 (FAIL):**
+1. Present the critical/high findings to the user
+2. Create tracking issues:
+   - **Linear mode:** Create sub-issues linked to the current task via `mcp__linear-server__save_issue` with rich descriptions (Context, What to do, Acceptance Criteria)
+   - **Local mode:** Record in `ship/changes/<feature>/tracking.md`
+3. Act based on `on_fail`:
+   - **`ask`**: Ask "I found issues that need fixing. Would you like me to apply the fixes automatically?" — if yes, fix; if no, pause.
+   - **`fix`**: Inform "Auto-fixing issues per project config..." and immediately launch an Agent to fix, then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
+   - **`defer`**: Inform "Issues tracked for later (gate behavior: defer). Continuing pipeline..." and proceed to acceptance.
+
+**If exit code 1 (WARN):**
+1. Present warnings
+2. Act based on `on_warn`:
+   - **`ask`**: Ask "There are warnings. Fix now or proceed to acceptance?" — if fix, same flow as FAIL; if proceed, continue.
+   - **`fix`**: Inform "Auto-fixing warnings per project config..." and apply fixes, then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
+   - **`pass`**: Inform "Warnings noted (gate behavior: pass). Continuing to acceptance..." and proceed.
+
+#### Surgical Re-run Procedure
+
+> **Iteration limit**: Track a `$FIX_ITERATION` counter (starting at 1 for the first fix attempt). Before each fix attempt, check: if `$FIX_ITERATION > 3`, abort the pipeline immediately — inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária." Do NOT proceed to acceptance. Increment the counter after each fix.
+
+> **Applies to both `on_fail: fix` and `on_warn: fix`**: both paths share this procedure and all edge cases below.
+
+After the fix agent completes, determine which quality phases to re-run:
+
+1. **Read `on_fail_rerun`** from `ship/config.md → Gate Behavior` (values: `surgical` | `all`, default: `surgical` if absent).
+
+2. **Check if fix produced changes:**
+
+   ```bash
+   sha=$(cat .context/ship-run/<task-id>/pre-quality-snapshot.sha)
+   git diff --name-only $sha HEAD
+   ```
+
+   If the output is **empty** (fix made no file changes):
+   - Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
+   - For each phase that failed/warned: append a row to `phase-status.md` with gate=`warn`, run=`#<N>`, timestamp=current ISO-8601, files=`-`, and notes=`fix sem mudanças — revisão manual necessária`.
+   - Skip all re-run logic and continue to acceptance.
+
+3. **If `on_fail_rerun: all`**: re-run all quality phases that were originally enabled (same set as Phase 4). Skip the scope mapping below.
+
+4. **If `on_fail_rerun: surgical`** (default):
+
+   a. The modified files list was already computed in step 2 above.
+
+   b. **Check for out-of-scope files**: if ANY modified file does not match any phase scope rule (not under `src/**`, `lib/**`, or any path covered by the active phases), treat as "unknown area" and re-run ALL originally enabled quality phases in conservative mode:
+      - Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
+      - Launch all originally enabled quality phases in parallel (same setup as Phase 4).
+      - Skip to step 4f (no further scope filtering needed).
+
+   c. **Apply phase → scope mapping** for each phase that previously ran:
+
+      | Phase | Scope |
+      |-------|-------|
+      | `perf` | Files matching `src/**` or `lib/**`, excluding `*.test.*`, `*.spec.*`, `**/__tests__/**` |
+      | `security` | All files in the diff (broad scope — always re-runs if it previously ran) |
+      | `review` | All files in the original diff |
+      | `analyze` | All files in the original diff (broad scope — always re-runs if it previously ran) |
+
+   d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
+
+   e. **Log the decision** before launching agents:
+      ```
+      Fix tocou: <file1>, <file2> (<N> arquivo(s))
+      Re-run cirúrgico: <phase1> (<reason>), <phase2> (<reason>)
+      Re-run pulado: <phase3> (não analisava arquivos modificados)
+      ```
+
+   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+
+5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
+
+**If exit code 0 (PASS):**
+Continue automatically.
+
+### 6. PHASE: Analyze (Drift Detection)
+
+> **Phase check**: If `analyze` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 7.
+
+> **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
+
+Use the **Agent** tool to execute drift detection. Instruct the agent to:
+
+1. Read `.claude/commands/ship/analyze.md` for full instructions
+2. Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
+3. Use the code diff from `.context/ship-run/<task-id>/diff.md`
+4. Run spec extraction and code/test extraction **in parallel** (2 agents)
+5. Pass results to the Correlation Engine
+6. Generate the drift report + compute gate
+7. Persist `drift-report.md` and `drift-findings.json` to scratch dir
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
+**Mode-agnostic persistence:**
+- **Linear mode:** Post `drift-findings.json` summary as a comment on the task issue via `mcp__linear-server__save_comment`
+- **Local mode:** Export `drift-report.md` to `ship/changes/<feature>/drift-report.md`
+
+**Monorepo support:** The agent detects which workspace is affected by inspecting diff paths. It filters spec requirements and test discovery to the detected workspace. If no workspace is detected, it analyzes the full repository.
+
+**Gate behavior after ANALYZE:**
+- Gate **FAIL** (critical/high findings) → act based on `on_fail` config (same flow as Phase 5)
+- Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
+- Gate **PASS** → continue to Phase 7
+
+**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):**
+
+| Phase | Scope |
+|-------|-------|
+| `analyze` | All files in the original diff (broad scope — re-run if any file changed) |
+
+### 7. PHASE: User Acceptance
+
+> **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
+
+Use the **Agent** tool to execute acceptance. Instruct the agent to:
+
+1. Read `.claude/commands/ship/homolog.md` for full instructions
+2. Consolidate findings into a quality report
+3. Present the report for this task
+4. Wait for user approval
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
+### 8. Task completion
+
+After acceptance:
+
+**Linear mode:**
+
+> **MANDATORY — Verify the full Linear lifecycle was completed**
+>
+> The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
+> You MUST verify both happened:
+>
+> 1. Call `mcp__linear-server__get_issue_status` — if status is NOT "Done", call `mcp__linear-server__save_issue` to set it to "Done" now.
+> 2. Call `mcp__linear-server__list_comments` — if the quality report comment is NOT present (i.e., no comment with a Summary table), call `mcp__linear-server__save_comment` to post it now.
+>
+> Both the "Done" status AND the quality report comment are required before the task is considered complete.
+
+3. Clean up temporary findings files
+
+**Local mode:**
+1. Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
+2. Mark the task as `done` in `tasks.md`
+3. Clean up temporary findings files
+
+**Both modes:**
+- If working on multiple tasks: ask "Task '<name>' complete. Continue to the next task '<next-name>', or stop here?"
+- If single task or user stops: inform "Task complete! Run `/ship:pr` when ready to create a Pull Request."
+
+---
+
+## Multi-task mode
+
+When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
+
+1. Sort tasks by milestone order, then by dependency order within each milestone
+2. Process one task at a time through the full pipeline
+3. After each task completion, ask the user before continuing
+4. At the end, present a summary of all completed tasks
+
+**Never process multiple tasks in parallel** — each task modifies code, so they must be sequential to avoid conflicts.
+
+---
+
+## Orchestrator Rules
+
+- **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
+- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
+- **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
+- **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
+- **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
+- **Language**: See @ship/patterns/language.md for language rules.
+- **Shared scratch dir**: See @ship/patterns/run-context.md for the `.context/ship-run/<task-id>/` structure and lifecycle.
+- **Linear mode = zero local artifacts**: When Linear is configured, do NOT create `ship/changes/` directories. Task context comes from Linear, quality reports go as comments.
+- **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
+- **Do not create the PR automatically**: The pipeline ends at acceptance. The user runs `/ship:pr` separately.
+- **Each agent reads its command file**: This ensures each phase follows its own detailed instructions.

@@ -1,0 +1,12 @@
+{
+  "name": "ship-marketplace",
+  "description": "Ship — automated development pipeline as Claude Code slash commands.",
+  "owner": { "name": "Líverton Oliveira" },
+  "plugins": [{
+    "name": "ship",
+    "source": "./plugins/ship",
+    "description": "Development pipeline as Claude Code slash commands — zero dependencies.",
+    "category": "development",
+    "tags": ["ship", "pipeline", "linear", "ai", "claude-code"]
+  }]
+}
