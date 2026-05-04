@@ -171,9 +171,9 @@ After `/ship:init`, Ship creates `ship/config.md` in your project root. This fil
 - pr: enabled
 
 ## Gate Behavior
-- on_fail: fix           # fix | stop | warn
-- on_warn: fix
-- on_fail_rerun: surgical   # surgical | all
+- on_fail: ask           # ask | fix | defer
+- on_warn: ask           # ask | fix | pass
+- on_fail_rerun: surgical   # surgical | full
 
 ## Conventions
 - Artifact language: en  # Language for specs, issues, docs, milestones, reports
@@ -199,7 +199,7 @@ Gates stop or redirect the pipeline based on finding severity:
 - `medium` findings → gate **WARN** → pipeline pauses, asks user
 - `low` or no findings → gate **PASS** → pipeline continues
 
-The `on_fail` setting controls what happens on gate failure: `fix` (agent attempts to fix), `stop` (pipeline halts), or `warn` (downgrade to warning).
+The `on_fail` setting controls what happens on a FAIL gate: `ask` (pause and ask the user), `fix` (agent attempts to fix automatically), or `defer` (create a tracking issue and continue). The `on_warn` setting controls WARN gates: `ask`, `fix`, or `pass` (continue without action). The `on_fail_rerun` setting controls rerun scope: `surgical` (only re-run the files with findings) or `full` (re-run the entire phase from scratch).
 
 ### Linear Integration
 

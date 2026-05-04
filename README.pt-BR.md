@@ -171,9 +171,9 @@ Após o `/ship:init`, a Ship cria o arquivo `ship/config.md` na raiz do seu proj
 - pr: enabled
 
 ## Gate Behavior
-- on_fail: fix           # fix | stop | warn
-- on_warn: fix
-- on_fail_rerun: surgical   # surgical | all
+- on_fail: ask           # ask | fix | defer
+- on_warn: ask           # ask | fix | pass
+- on_fail_rerun: surgical   # surgical | full
 
 ## Conventions
 - Artifact language: pt-BR  # Idioma para specs, issues, docs, milestones, relatórios
@@ -199,7 +199,7 @@ Os gates param ou redirecionam a pipeline com base na severidade dos achados:
 - Achados `medium` → gate **WARN** → pipeline pausa e pergunta ao usuário
 - Achados `low` ou nenhum → gate **PASS** → pipeline continua
 
-A configuração `on_fail` controla o que acontece em caso de falha do gate: `fix` (agente tenta corrigir), `stop` (pipeline para) ou `warn` (rebaixa para aviso).
+A configuração `on_fail` controla o que acontece em um gate FAIL: `ask` (pausa e pergunta ao usuário), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). A configuração `on_warn` controla gates WARN: `ask`, `fix` ou `pass` (continua sem ação). A configuração `on_fail_rerun` controla o escopo da reexecução: `surgical` (apenas os arquivos com problemas) ou `full` (reexecuta a fase inteira do zero).
 
 ### Integração com o Linear
 
