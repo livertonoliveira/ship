@@ -180,7 +180,6 @@ Each audit type customizes the project description, issue prefix, labels, and ad
 - **Project description**: includes Test Scope layers enabled/disabled (unit, integration, e2e), total AC count, gate result (PASS / WARN), and one-sentence summary of the most critical coverage gap
 - **Issue prefix**: `[TEST]`
 - **Labels**: `test-coverage`
-- **Gate override**: HIGH findings trigger **WARN** (not FAIL) — uncovered tests are a quality gap, not a blocking defect
 - **Replaces `## Evidence` and appends extra fields to `## Notes`**:
   ```markdown
   ## Evidence
