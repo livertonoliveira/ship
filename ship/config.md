@@ -42,6 +42,14 @@
 - homolog: enabled
 - pr: enabled
 
+## Test Scope
+# Which test layers /ship:test generates per task.
+# Layers disabled here are NOT generated during the pipeline,
+# but can be backfilled via /ship:audit:tests.
+- unit: enabled
+- integration: disabled
+- e2e: disabled
+
 ## Conventions
 - Artifact language: pt-BR (specs, issues, docs, milestones, reports, PR descriptions, Linear comments)
 - Prompt language: en (LLM system prompts — hardcoded, not configurable)

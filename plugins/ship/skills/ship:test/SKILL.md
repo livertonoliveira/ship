@@ -27,10 +27,18 @@ Check if you are running inside the `/ship:run` pipeline:
 ### 1. Load context
 
 Read:
-1. `ship/config.md` — Test framework, commands, conventions
+1. `ship/config.md` — Test framework, commands, conventions, and **`Test Scope`** section
 2. `ship/changes/<feature>/proposal.md` — Acceptance criteria (guide the tests)
 3. `ship/changes/<feature>/design.md` — Files created/modified
 4. `ship/changes/<feature>/tasks.md` — Testing section to update
+
+**Resolve active test layers from `Test Scope`:**
+After reading `ship/config.md`, extract the `## Test Scope` section. For each layer (`unit`, `integration`, `e2e`), check if it is `enabled` or `disabled`. If the section is absent, treat all three layers as `enabled` (backward-compatible default).
+
+Log to the user which layers are active before launching agents:
+```
+Test layers: unit=enabled, integration=disabled, e2e=disabled
+```
 
 ### 2. Identify existing test patterns
 
@@ -41,11 +49,18 @@ Before generating any test, explore the project to understand:
 - **Setup/teardown**: factories, fixtures, test databases, cleanup patterns
 - **Naming**: how tests are named ("should X when Y", "test_X_returns_Y", etc.)
 
-### 3. Generate tests (3 agents in parallel)
+### 3. Generate tests (up to 3 agents in parallel)
 
-Launch **3 agents in parallel** using the Agent tool:
+> **Layer guard**: Before launching, check the resolved `Test Scope` from step 1.
+> - If a layer is `disabled`, **do not launch that agent** — log `Skipping [unit|integration|e2e] tests (disabled in Test Scope)` and continue.
+> - Launch only agents for `enabled` layers. If all layers are disabled, report and stop.
+> - **ALWAYS launch 3 agents** only when all 3 layers are enabled.
+
+Launch agents in parallel using the Agent tool (only for enabled layers):
 
 **Agent A — Unit Tests:**
+
+> **Skip this agent if `unit` is `disabled` in `## Test Scope` of `ship/config.md`.**
 
 Responsibility: test isolated units (services, utilities, pure functions, helpers).
 
@@ -62,6 +77,8 @@ Responsibility: test isolated units (services, utilities, pure functions, helper
 
 **Agent B — Integration Tests:**
 
+> **Skip this agent if `integration` is `disabled` in `## Test Scope` of `ship/config.md`.**
+
 Responsibility: test interactions between modules, API endpoints, database operations.
 
 1. Identify the endpoints, repositories, and module interactions of the feature
@@ -76,6 +93,8 @@ Responsibility: test interactions between modules, API endpoints, database opera
 5. If any fail: fix (up to 2 iterations)
 
 **Agent C — E2E Tests (if applicable):**
+
+> **Skip this agent if `e2e` is `disabled` in `## Test Scope` of `ship/config.md`.**
 
 Responsibility: test critical end-to-end user flows.
 
@@ -133,5 +152,6 @@ After all 3 agents complete:
 - **Do not install test frameworks**: use what is already configured in the project
 - **Acceptance criteria guide the tests**: each criterion from proposal.md must have at least one corresponding test
 - **Language**: See @ship/patterns/language.md.
-- **ALWAYS launch 3 agents in parallel**: even if one of them concludes there are no tests to generate for its type, it must report this
+- **Respect `Test Scope`**: only launch agents for layers that are `enabled` in `ship/config.md → ## Test Scope`. If the section is absent, default all layers to `enabled`.
+- **ALWAYS launch 3 agents in parallel when all layers are enabled**: even if one of them concludes there are no tests to generate for its type, it must report this
 - **ALWAYS use `--pool=threads`** when invoking vitest directly (e.g. `vitest run --pool=threads`). Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
