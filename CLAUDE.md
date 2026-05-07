@@ -22,6 +22,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:audit:database` | Project-wide database audit (MongoDB / PostgreSQL / MySQL) |
 | `/ship:audit:security` | Project-wide AppSec audit — OWASP Top 10, A-F score, PoC for critical/high |
 | `/ship:audit:run` | Run all applicable audits in parallel; consolidated gate report |
+| `/ship:audit:tests` | Project-wide test coverage audit — maps AC/REQ ↔ existing tests, reports gaps by layer |
 
 ## Storage Modes
 
@@ -52,6 +53,7 @@ ship/
     ├── database-<date>.md
     ├── frontend-<date>.md
     ├── security-<date>.md
+    ├── tests-<date>.md
     └── run-<date>.md            # Consolidated audit suite report
 ```
 
@@ -92,6 +94,30 @@ ship/
 - **Pipeline phases** (`/ship:perf`, `/ship:security`) are diff-scoped: they analyze only changed code during the development pipeline.
 - **Audit commands** (`/ship:audit:*`) are project-wide: they scan the entire codebase for systemic issues. Run them periodically or before releases.
 - `/ship:audit:run` launches all applicable audits in parallel and produces a consolidated gate report.
+- `/ship:analyze` detects drift only within the **enabled** Test Scope layers; `/ship:audit:tests` audits **all** layers project-wide regardless of pipeline config.
+
+### Test Scope Configuration
+
+The `Test Scope` section in `ship/config.md` controls which test layers `/ship:test` generates during the pipeline:
+
+```
+## Test Scope
+- unit: enabled        # Unit tests (always recommended)
+- integration: enabled # Integration/API tests
+- e2e: disabled        # End-to-end tests (via /ship:audit:tests for backfill)
+```
+
+**Defaults by project type:**
+
+| Type | unit | integration | e2e |
+|------|------|-------------|-----|
+| `prompt-toolkit` / library | enabled | disabled | disabled |
+| `backend` / `fullstack` | enabled | enabled | disabled |
+| `frontend` | enabled | disabled | disabled |
+| `monorepo` | enabled | enabled | disabled |
+| `mobile` | enabled | disabled | disabled |
+
+Disabled layers are **not** generated during the pipeline but can be backfilled via `/ship:audit:tests`.
 
 ### Integration with Global Skills
 - The `/ship:audit:*` commands incorporate the methodology from global skills (`backend-performance-audit`, `security-audit`, `mongodb-audit`, `frontend-performance-audit`, `nextjs-performance-audit`) translated to English and adapted to Ship conventions.
