@@ -139,6 +139,7 @@ Audit commands are **project-wide** — they scan the entire codebase for system
 | `/ship:audit:database` | Project-wide database audit — routes to MongoDB, PostgreSQL, or MySQL methodology |
 | `/ship:audit:security` | Project-wide AppSec (Application Security) audit — OWASP Top 10, CWE mapping, A-F score, PoC for critical/high |
 | `/ship:audit:run` | Run all applicable audits in parallel; produces a consolidated gate report |
+| `/ship:audit:tests` | Project-wide test coverage audit — maps AC/REQ ↔ existing tests, reports gaps by layer |
 
 ---
 
@@ -207,6 +208,31 @@ When Linear MCP (Model Context Protocol) is configured, Ship operates in **Linea
 
 Without Linear, Ship falls back to **Local Mode**: artifacts are written to `ship/changes/<feature>/` as markdown files.
 
+### Test Scope
+
+The `Test Scope` section in `ship/config.md` controls which test layers `/ship:test` generates during the pipeline:
+
+```markdown
+## Test Scope
+- unit: enabled        # Unit tests (always recommended)
+- integration: enabled # Integration/API tests
+- e2e: disabled        # End-to-end tests (via /ship:audit:tests for backfill)
+```
+
+**Defaults by project type:**
+
+| Type | unit | integration | e2e |
+|------|------|-------------|-----|
+| `prompt-toolkit` / library | enabled | disabled | disabled |
+| `backend` / `fullstack` | enabled | enabled | disabled |
+| `frontend` | enabled | disabled | disabled |
+| `monorepo` | enabled | enabled | disabled |
+| `mobile` | enabled | disabled | disabled |
+
+Disabled layers are **not** generated during the pipeline. Use `/ship:audit:tests` to audit and backfill coverage for disabled layers project-wide.
+
+> **Note:** `/ship:analyze` detects drift only within the **enabled** Test Scope layers; `/ship:audit:tests` audits **all** layers project-wide regardless of pipeline config.
+
 ---
 
 ## Requirements
@@ -250,6 +276,7 @@ ship/
     ├── frontend-<date>.md
     ├── database-<date>.md
     ├── security-<date>.md
+    ├── tests-<date>.md
     └── run-<date>.md
 ```
 
