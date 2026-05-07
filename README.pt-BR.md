@@ -139,6 +139,7 @@ Os comandos de auditoria são **abrangentes ao projeto** — eles escaneiam toda
 | `/ship:audit:database` | Auditoria de banco de dados para todo o projeto — roteia para metodologia MongoDB, PostgreSQL ou MySQL |
 | `/ship:audit:security` | Auditoria AppSec (Application Security) para todo o projeto — OWASP Top 10, mapeamento CWE, pontuação A-F, PoC para críticos/altos |
 | `/ship:audit:run` | Executar todas as auditorias aplicáveis em paralelo; produz um relatório de gate consolidado |
+| `/ship:audit:tests` | Auditoria de cobertura de testes para todo o projeto — mapeia AC/REQ ↔ testes existentes, reporta lacunas por camada |
 
 ---
 
@@ -207,6 +208,31 @@ Quando o Linear MCP (Model Context Protocol) está configurado, a Ship opera em 
 
 Sem o Linear, a Ship recai para o **Modo Local**: os artefatos são escritos em `ship/changes/<feature>/` como arquivos markdown.
 
+### Test Scope
+
+A seção `Test Scope` no `ship/config.md` controla quais camadas de teste o `/ship:test` gera durante a pipeline:
+
+```markdown
+## Test Scope
+- unit: enabled        # Testes unitários (sempre recomendado)
+- integration: enabled # Testes de integração/API
+- e2e: disabled        # Testes end-to-end (via /ship:audit:tests para backfill)
+```
+
+**Padrões por tipo de projeto:**
+
+| Tipo | unit | integration | e2e |
+|------|------|-------------|-----|
+| `prompt-toolkit` / biblioteca | enabled | disabled | disabled |
+| `backend` / `fullstack` | enabled | enabled | disabled |
+| `frontend` | enabled | disabled | disabled |
+| `monorepo` | enabled | enabled | disabled |
+| `mobile` | enabled | disabled | disabled |
+
+Camadas desabilitadas **não** são geradas durante a pipeline. Use `/ship:audit:tests` para auditar e preencher a cobertura de camadas desabilitadas em todo o projeto.
+
+> **Observação:** O `/ship:analyze` detecta drift apenas nas camadas habilitadas do Test Scope; o `/ship:audit:tests` audita **todas** as camadas em todo o projeto, independente da configuração da pipeline.
+
 ---
 
 ## Requisitos
@@ -250,6 +276,7 @@ ship/
     ├── frontend-<data>.md
     ├── database-<data>.md
     ├── security-<data>.md
+    ├── tests-<data>.md
     └── run-<data>.md
 ```
 
