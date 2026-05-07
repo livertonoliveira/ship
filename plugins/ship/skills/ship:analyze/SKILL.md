@@ -49,6 +49,12 @@ Determine how you were invoked:
 1. Read `ship/changes/<feature>/proposal.md` → parse REQ-XX and AC-XX entries.
 2. Read `ship/changes/<feature>/design.md` → extract additional context.
 
+**Test Scope loading (both modes):**
+1. Read `ship/config.md` → locate the `Test Scope` section.
+2. Extract the enabled/disabled status for each layer: `unit`, `integration`, `e2e`.
+3. If the `Test Scope` section is absent → treat all three layers as `enabled`.
+4. Store the result as `test_scope` context (e.g., `{ unit: enabled, integration: disabled, e2e: disabled }`) for use in Step 3.
+
 **Extraction rules:**
 - A **requirement** is any line or block matching `REQ-\d+` followed by a description (e.g., `REQ-01: User authentication via OAuth`).
 - An **acceptance criterion** is any line or block matching `AC-\d+` followed by a description (e.g., `AC-03: Login must complete in < 2s`).
@@ -109,15 +115,25 @@ For each `REQ-XX`:
    - Best match confidence = highest Jaccard score across all files.
    - Best match file = the file with the highest score.
 
-**Criterion → test mapping (keyword matching):**
+**Criterion → test mapping (keyword matching with Test Scope filtering):**
 
-For each `AC-XX`:
-1. If `TEST-REQ-XX` or `TEST-AC-XX` marker found in any test file → set test confidence = 1.0 (skip matching).
-2. Otherwise:
-   - Build the criterion keyword set: tokenize the AC-XX description.
-   - For each test file's keyword set: compute Jaccard similarity.
-   - Best match test confidence = highest Jaccard score across all test files.
-   - Best match test = the test file with the highest score.
+Classify test files by layer before matching:
+- **unit**: files matching `*.test.*`, `*.spec.*`, `__tests__/**` that do NOT match integration or e2e patterns below.
+- **integration**: files matching `*.integration.test.*`, `*.integration.spec.*`, or located under `__tests__/integration/`.
+- **e2e**: files matching `*.e2e.*`, `*.e2e-spec.*`, or located under `e2e/`, `cypress/`, or `playwright/`.
+
+For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
+1. If the layer is **disabled** in `test_scope` → do NOT emit a finding for missing coverage in this layer. Instead, record the AC-ID in `informational_disabled_layers[layer]` (e.g., `{ integration: [AC-03, AC-07], e2e: [AC-01, AC-03] }`). Skip all further matching for this layer.
+2. If the layer is **enabled** in `test_scope`:
+   a. If `TEST-REQ-XX` or `TEST-AC-XX` marker found in any test file for this layer → set test confidence = 1.0 (skip matching).
+   b. Otherwise:
+      - Build the criterion keyword set: tokenize the AC-XX description.
+      - For each test file in this layer's keyword set: compute Jaccard similarity.
+      - Layer confidence = highest Jaccard score across all files in this layer.
+
+Overall AC coverage confidence: use the **best match across ALL enabled layers only**.
+
+> **Edge case — all layers disabled:** if `unit`, `integration`, and `e2e` are all `disabled`, no TEST-category findings are emitted. All ACs land in `informational_disabled_layers`. The gate evaluates only IMPL/DRIFT findings (REQ-XX). This is intentional — the behavior mirrors what `/ship:test` does when all layers are disabled.
 
 **Confidence interpretation:**
 - Confidence = 0 → not found (unimplemented / uncovered)
@@ -142,10 +158,11 @@ For each `AC-XX`:
 See @ship/patterns/severity.md (## Drift) for full definitions.
 See @ship/report-templates.md#finding-entry for finding format (Drift Analysis domain).
 
-**Gate decision:**
+**Gate decision (considers only findings from enabled layers):**
 - Any `critical` or `high` finding → **FAIL**
 - Any `medium` finding → **WARN** (if no critical/high)
 - Only `low` or no findings → **PASS**
+- Findings from **disabled** layers are never counted toward the gate — they appear only in the informational block.
 
 See @ship/patterns/gates.md for gate rules and severity override handling.
 
@@ -203,6 +220,18 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 - **Descrição:** O critério de aceitação "AC-03: <description>" não possui testes identificados.
 - **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador `TEST-AC-03`.
 - **Criterion ID:** AC-03
+
+## Disabled Layers — Informational (does not affect gate)
+
+The layers below are disabled in `Test Scope` and were not evaluated.
+To audit coverage for these layers, run `/ship:audit:run`.
+
+| Layer | ACs not evaluated |
+|-------|-----------------|
+| integration | AC-03, AC-07 |
+| e2e | AC-01, AC-03, AC-05, AC-07 |
+
+> This section appears **only** when `informational_disabled_layers` is non-empty (i.e., at least one AC-XX was recorded for a disabled layer). Omit entirely if all layers are enabled or `informational_disabled_layers` is empty.
 
 ## Summary
 - Critical: X
@@ -272,6 +301,8 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 7. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace. If no workspace prefix is found, analyze the full repo.
 
 8. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
+
+9. **Test Scope awareness**: Before emitting any coverage finding (category: TEST), check whether the test layer is enabled in `ship/config.md → Test Scope`. Disabled layers never generate MEDIUM/WARN findings — they appear only in the informational block (`## Disabled Layers — Informational`). If `Test Scope` is absent from config, treat all layers as enabled (preserve existing behavior).
 
 ---
 
