@@ -174,3 +174,26 @@ Each audit type customizes the project description, issue prefix, labels, and ad
   - **Effort:** <Hours | Days | Weeks>
   - **Maintenance window required:** <Yes | No>
   ```
+
+### Tests Coverage (`audit/tests.md`)
+
+- **Project description**: includes Test Scope layers enabled/disabled (unit, integration, e2e), total AC count, gate result (PASS / WARN), and one-sentence summary of the most critical coverage gap
+- **Issue prefix**: `[TEST]`
+- **Labels**: `test-coverage`
+- **Gate override**: HIGH findings trigger **WARN** (not FAIL) — uncovered tests are a quality gap, not a blocking defect
+- **Replaces `## Evidence` and appends extra fields to `## Notes`**:
+  ```markdown
+  ## Evidence
+  - **AC / REQ:** <AC-XX or REQ-XX>
+  - **Layer:** unit | integration | e2e
+  - **Current confidence:** <0.0 to 1.0>
+  - **Closest test match:** <file>:<test name> (Jaccard: <score>) | none
+
+  ## Fix
+  <Example test snippet that would cover this AC>
+
+  ## Notes
+  - **Layer:** unit | integration | e2e
+  - **Current confidence:** <0.0 to 1.0>
+  - **Effort:** <Hours | Days>
+  ```
