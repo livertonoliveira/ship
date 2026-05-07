@@ -30,16 +30,18 @@ Read `ship/config.md` and extract:
 
 ### 2. Determine applicable audits
 
+> **`audit:tests` is always included regardless of project type.**
+
 Use this routing table:
 
 | Project Type | Database configured? | Audits to run |
 |---|---|---|
-| `backend` | yes | audit:backend + audit:database + audit:security |
-| `backend` | no | audit:backend + audit:security |
-| `frontend` | — | audit:frontend + audit:security |
-| `fullstack` | yes | audit:backend + audit:database + audit:frontend + audit:security |
-| `fullstack` | no | audit:backend + audit:frontend + audit:security |
-| `monorepo` | varies | See monorepo logic below |
+| `backend` | yes | audit:backend + audit:database + audit:security + audit:tests |
+| `backend` | no | audit:backend + audit:security + audit:tests |
+| `frontend` | — | audit:frontend + audit:security + audit:tests |
+| `fullstack` | yes | audit:backend + audit:database + audit:frontend + audit:security + audit:tests |
+| `fullstack` | no | audit:backend + audit:frontend + audit:security + audit:tests |
+| `monorepo` | varies | See monorepo logic below + audit:tests |
 
 **Monorepo logic:**
 - Read the `Workspaces` section of `ship/config.md`
@@ -47,6 +49,7 @@ Use this routing table:
 - For each workspace classified as `frontend`: run `audit:frontend` for that workspace
 - If any workspace has a database configured: run `audit:database`
 - Always include one `audit:security` covering the full monorepo
+- Always include one `audit:tests` covering the full monorepo
 
 ### 3. Announce the plan
 
@@ -58,6 +61,7 @@ Running Ship audit suite for <Project Type> project:
 - audit:frontend   [yes | no]
 - audit:database   [yes | no — <DB type>]
 - audit:security   [yes]
+- audit:tests      [yes]
 
 Launching <N> audits in parallel...
 ```
@@ -70,12 +74,14 @@ Use the **Agent** tool to launch all applicable audit agents **in a SINGLE paral
 - **audit:database agent**: run the full `/ship:audit:database` analysis and return the findings report
 - **audit:frontend agent**: run the full `/ship:audit:frontend` analysis and return the findings report
 - **audit:security agent**: run the full `/ship:audit:security` analysis and return the findings report
+- **audit:tests agent**: run the full `/ship:audit:tests` analysis and return the findings report
 
 Each agent writes its own report file:
 - `ship/audits/backend-<YYYY-MM-DD>.md`
 - `ship/audits/database-<YYYY-MM-DD>.md`
 - `ship/audits/frontend-<YYYY-MM-DD>.md`
 - `ship/audits/security-<YYYY-MM-DD>.md`
+- `ship/audits/tests-<YYYY-MM-DD>.md`
 
 ### 5. Consolidate results
 
@@ -92,7 +98,7 @@ After all agents complete, read each report file and produce a consolidated summ
 
 **Linear mode:**
 1. Create a Linear Document titled "Audit Suite — <YYYY-MM-DD>" with the consolidated report
-2. Individual audit documents (backend, database, frontend, security) were already created by each agent
+2. Individual audit documents (backend, database, frontend, security, tests) were already created by each agent
 3. Link all documents together in the consolidated report
 
 **Consolidated report format:**
@@ -112,6 +118,7 @@ After all agents complete, read each report file and produce a consolidated summ
 | Database | X | X | X | X | PASS/WARN/FAIL |
 | Frontend Performance | X | X | X | X | PASS/WARN/FAIL |
 | Security | X | X | X | X | PASS/WARN/FAIL |
+| Test Coverage | X | X | X | X | PASS/WARN/FAIL |
 | **TOTAL** | **X** | **X** | **X** | **X** | **PASS/WARN/FAIL** |
 
 ## Critical and High Findings (All Audits)
@@ -143,6 +150,7 @@ After all agents complete, read each report file and produce a consolidated summ
 - Database: `ship/audits/database-<YYYY-MM-DD>.md`
 - Frontend: `ship/audits/frontend-<YYYY-MM-DD>.md`
 - Security: `ship/audits/security-<YYYY-MM-DD>.md`
+- Test Coverage: `ship/audits/tests-<YYYY-MM-DD>.md`
 ```
 
 ### 7. Present results to user
@@ -162,6 +170,7 @@ After writing the consolidated report:
 
 - **ALWAYS launch all applicable audits in a single parallel call** — never run audits sequentially.
 - **Do not skip security**: `audit:security` always runs regardless of project type.
+- **Do not skip tests**: `audit:tests` always runs regardless of project type — a failure in `audit:tests` does not block the other audits from running in parallel.
 - **Monorepo**: scope each backend/frontend audit to the correct workspace directory; share the security audit across all workspaces.
 - **Consolidated gate is pessimistic**: a single FAIL in any audit = overall FAIL.
 - **Individual reports are authoritative**: the consolidated report summarizes; individual reports have full details.
