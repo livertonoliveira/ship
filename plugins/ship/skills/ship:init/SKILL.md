@@ -18,6 +18,7 @@ You are the Ship initialization agent. Your mission is to analyze the current pr
 
 Check if `ship/config.md` already exists at the project root.
 - If it exists: inform the user and ask if they want to reconfigure.
+  - If reconfiguring: read the existing file and **preserve the `Test Scope` section** if present — do not overwrite it. Extract the existing values to pre-populate the interactive prompt.
 - If it does not exist: proceed with initialization.
 
 ### 2. Explore the project (2 agents in parallel)
@@ -104,6 +105,14 @@ With the results from both agents, create:
 - homolog: enabled
 - pr: enabled
 
+## Test Scope
+# Which test layers /ship:test generates per task.
+# Layers disabled here are NOT generated during the pipeline,
+# but can be backfilled via /ship:audit:tests.
+- unit: [default based on project type]
+- integration: [default based on project type]
+- e2e: [default based on project type]
+
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
@@ -126,6 +135,22 @@ With the results from both agents, create:
 ## Rules
 [Any project-specific rules discovered — to be extended over time]
 ```
+
+#### Test Scope defaults by project type
+
+When populating the `Test Scope` section, apply the following defaults based on the detected project type:
+
+| Project Type | unit | integration | e2e |
+|---|---|---|---|
+| `prompt-toolkit` / library | enabled | disabled | disabled |
+| `backend` / `fullstack` | enabled | enabled | disabled |
+| `frontend` | enabled | disabled | disabled |
+| `monorepo` | enabled | enabled | disabled |
+| (unrecognized) | enabled | disabled | disabled |
+
+Substitute `[default based on project type]` placeholders in the `Test Scope` section with the appropriate `enabled`/`disabled` values before presenting the config to the user.
+
+**Preservation rule:** If `ship/config.md` already exists and already contains a `## Test Scope` section, keep those existing values verbatim — do not overwrite with defaults.
 
 > **Gate Behavior options:**
 > - `on_fail` — what to do when the gate finds critical/high issues:
@@ -155,7 +180,12 @@ Ask the user the following questions **one block at a time** (present all at onc
 > - All enabled by default: dev, test, perf, security, review, homolog, pr
 > - Say which ones you want to disable, or press Enter to keep all.
 
-Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, and the pipeline phases in the config based on the user's answers.
+> **4. Test Scope** — I detected project type `[detected-type]`. Default Test Scope: unit=[X], integration=[X], e2e=[X].
+> Would you like to change any of these values before saving? (reply with the values you want to change, or press Enter to confirm)
+
+If the existing `ship/config.md` already contains a `## Test Scope` section, skip question 4 and display a note: "Test Scope already configured — preserving existing values."
+
+Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, and the `Test Scope` values in the config based on the user's answers.
 
 ### 6. Present to the user
 
