@@ -53,7 +53,12 @@ Before generating any test, explore the project to understand:
 
 > **Layer guard**: Before launching, check the resolved `Test Scope` from step 1.
 > - If a layer is `disabled`, **do not launch that agent** — log `Skipping [unit|integration|e2e] tests (disabled in Test Scope)` and continue.
-> - Launch only agents for `enabled` layers. If all layers are disabled, report and stop.
+> - Launch only agents for `enabled` layers.
+> - **If all layers are disabled** → output the following message (in the artifact language from `ship/config.md → Conventions`):
+>   > "Test phase skipped — all layers are disabled in Test Scope (ship/config.md). Enable at least one layer to generate tests."
+>   Then stop. Do not proceed to agent launch.
+> - **If one or more layers are disabled but not all** → after individual skip logs, output a consolidated message (in artifact language):
+>   > "Layers pulados por configuração: [&lt;list of disabled layers&gt;]. Para habilitá-los, edite `Test Scope` em `ship/config.md`."
 > - **ALWAYS launch 3 agents** only when all 3 layers are enabled.
 
 Launch agents in parallel using the Agent tool (only for enabled layers):
@@ -99,7 +104,7 @@ Responsibility: test interactions between modules, API endpoints, database opera
 Responsibility: test critical end-to-end user flows.
 
 1. Check if the project has an e2e framework configured (Playwright, Cypress, etc.) via config.md
-2. If there is NO e2e framework: **do not generate e2e tests**. Report that e2e is not applicable.
+2. If there is NO e2e framework: **do not generate e2e tests**. Report (in artifact language) that e2e was skipped due to no framework detected — distinguish this clearly from a config-disabled skip. Example: "E2E pulado: nenhum framework e2e detectado no projeto (Playwright, Cypress, etc.). Para ativar, configure um framework e2e e defina `e2e: enabled` em `Test Scope`."
 3. If there IS an e2e framework:
    - Identify the critical user flows affected by the feature
    - Generate tests that simulate the user interacting with the application
