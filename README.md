@@ -70,6 +70,14 @@ claude plugin install ship
 
 The plugin registers all `/ship:*` slash commands in Claude Code automatically. No configuration required to start.
 
+### Updating
+
+```bash
+claude plugin update ship@ship-marketplace
+```
+
+> **Note:** `claude plugin update ship` will fail with "Plugin not found". The full source-qualified name `ship@ship-marketplace` is required.
+
 ### curl (fallback)
 
 ```bash
