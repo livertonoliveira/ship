@@ -104,7 +104,7 @@ O método de atualização depende de como você instalou a Ship:
 **Instalação global via plugin:**
 
 ```bash
-claude plugin update ship
+claude plugin update ship@ship-marketplace
 ```
 
 Reinicie o Claude Code após atualizar.
