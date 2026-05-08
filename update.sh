@@ -73,6 +73,7 @@ AUDIT_COMMANDS=(
   "database.md"
   "security.md"
   "run.md"
+  "tests.md"
 )
 
 UPDATED=()
@@ -112,7 +113,7 @@ for cmd in "${PIPELINE_COMMANDS[@]}"; do
   # Create file if it doesn't exist yet (new command added to Ship)
   touch "$dest" 2>/dev/null || true
   skill_name="${cmd%.md}"
-  download_and_overwrite "${SHIP_REPO}/plugins/ship/skills/${skill_name}/SKILL.md" "$dest" "$cmd"
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/skills/ship:${skill_name}/SKILL.md" "$dest" "$cmd"
 done
 
 echo ""
@@ -121,7 +122,7 @@ for cmd in "${AUDIT_COMMANDS[@]}"; do
   dest="${COMMANDS_DIR}/audit/${cmd}"
   touch "$dest" 2>/dev/null || true
   skill_name="${cmd%.md}"
-  download_and_overwrite "${SHIP_REPO}/plugins/ship/skills/audit/${skill_name}/SKILL.md" "$dest" "audit/${cmd}"
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/skills/ship:audit:${skill_name}/SKILL.md" "$dest" "audit/${cmd}"
 done
 
 echo ""
