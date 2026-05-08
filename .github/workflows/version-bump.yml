@@ -1,0 +1,77 @@
+name: Version Bump
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    name: Auto-bump plugin version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump type from commit messages
+        id: bump_type
+        run: |
+          # Get commits since last version bump (or all commits if none)
+          LAST_BUMP=$(git log --oneline --format="%H" -- plugins/ship/.claude-plugin/plugin.json | sed -n '2p')
+          if [ -z "$LAST_BUMP" ]; then
+            COMMITS=$(git log --format="%s" HEAD)
+          else
+            COMMITS=$(git log --format="%s" ${LAST_BUMP}..HEAD)
+          fi
+
+          echo "Commits since last bump:"
+          echo "$COMMITS"
+
+          # Check for breaking changes first (highest priority)
+          if echo "$COMMITS" | grep -qE "^(feat|fix|refactor|chore)(\(.+\))?!:|BREAKING CHANGE"; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          elif echo "$COMMITS" | grep -qE "^(fix|docs|refactor|perf|test|chore|ci)(\(.+\))?:"; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+          else
+            echo "type=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version in plugin.json
+        if: steps.bump_type.outputs.type != 'none'
+        id: version
+        run: |
+          PLUGIN_JSON="plugins/ship/.claude-plugin/plugin.json"
+          CURRENT=$(jq -r '.version' $PLUGIN_JSON)
+          MAJOR=$(echo $CURRENT | cut -d. -f1)
+          MINOR=$(echo $CURRENT | cut -d. -f2)
+          PATCH=$(echo $CURRENT | cut -d. -f3)
+          TYPE="${{ steps.bump_type.outputs.type }}"
+
+          case $TYPE in
+            major) NEW="$((MAJOR + 1)).0.0" ;;
+            minor) NEW="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEW="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+
+          jq --arg v "$NEW" '.version = $v' $PLUGIN_JSON > tmp.json && mv tmp.json $PLUGIN_JSON
+
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "Bumped: $CURRENT → $NEW ($TYPE)"
+
+      - name: Commit and push
+        if: steps.bump_type.outputs.type != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugins/ship/.claude-plugin/plugin.json
+          git commit -m "chore(release): bump version ${{ steps.version.outputs.current }} → ${{ steps.version.outputs.new }}"
+          git push
