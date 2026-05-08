@@ -89,6 +89,26 @@ A Ship **não** requer:
 
 ---
 
+## Atualizando a Ship
+
+O método de atualização depende de como você instalou a Ship:
+
+**Instalação global via plugin:**
+
+```bash
+claude plugin update ship
+```
+
+Reinicie o Claude Code após atualizar.
+
+**Instalação local (curl):**
+
+```
+/ship:update
+```
+
+---
+
 ## Início Rápido
 
 ```bash

@@ -89,6 +89,26 @@ It is a pure prompt-toolkit: slash commands that instruct Claude Code agents. Th
 
 ---
 
+## Updating Ship
+
+The update method depends on how you installed Ship:
+
+**Global plugin install:**
+
+```bash
+claude plugin update ship
+```
+
+Restart Claude Code after updating.
+
+**Local install (curl):**
+
+```
+/ship:update
+```
+
+---
+
 ## Quick Start
 
 ```bash
