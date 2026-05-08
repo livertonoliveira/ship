@@ -113,20 +113,21 @@ AUDIT_COMMANDS=(
   "database.md"
   "security.md"
   "run.md"
+  "tests.md"
 )
 
 # Download commands
 echo -e "${BLUE}Downloading Ship pipeline commands...${NC}"
 for cmd in "${COMMANDS[@]}"; do
   skill_name="${cmd%.md}"
-  download_file "${SHIP_REPO}/plugins/ship/skills/${skill_name}/SKILL.md" "${COMMANDS_DIR}/${cmd}" "${cmd}" || true
+  download_file "${SHIP_REPO}/plugins/ship/skills/ship:${skill_name}/SKILL.md" "${COMMANDS_DIR}/${cmd}" "${cmd}" || true
 done
 
 # Download audit commands
 echo -e "${BLUE}Downloading Ship audit commands...${NC}"
 for cmd in "${AUDIT_COMMANDS[@]}"; do
   skill_name="${cmd%.md}"
-  download_file "${SHIP_REPO}/plugins/ship/skills/audit/${skill_name}/SKILL.md" "${COMMANDS_DIR}/audit/${cmd}" "audit/${cmd}" || true
+  download_file "${SHIP_REPO}/plugins/ship/skills/ship:audit:${skill_name}/SKILL.md" "${COMMANDS_DIR}/audit/${cmd}" "audit/${cmd}" || true
 done
 
 # Append Ship section to CLAUDE.md if not already present

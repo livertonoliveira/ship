@@ -8,9 +8,17 @@ user-invocable: true
 
 # Ship Update
 
-## Step 1 — Update command files
+## Step 1 — Detect install mode and update command files
 
-Run the following command in the terminal:
+First, check which install mode is active by running:
+
+```bash
+test -d ".claude/commands/ship" && echo "LOCAL" || echo "PLUGIN"
+```
+
+### If LOCAL (`.claude/commands/ship/` exists in the current project)
+
+Run the update script:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/livertonoliveira/ship/main/update.sh | bash
@@ -22,6 +30,18 @@ The script will:
 - Update itself (`update.md`) as part of the run
 
 No diff checks, no prompts.
+
+### If PLUGIN (installed globally via `claude plugin install`)
+
+The update script cannot update global plugin files. Instruct the user to run the following command in their terminal and restart Claude Code:
+
+```bash
+claude plugin update ship
+```
+
+This will pull the latest version from the `livertonoliveira/ship` GitHub repository and replace all skill files in the global plugin cache. A Claude Code restart is required for the changes to take effect.
+
+After the user confirms the update is done (or you detect the mode was PLUGIN), proceed to Step 2.
 
 ---
 
@@ -91,8 +111,10 @@ Replace `[enabled|disabled]` with the values from the table above for the detect
 
 ## Troubleshooting
 
-If the script reports `Ship is not installed in this project`, run the installer instead:
+**"Ship is not installed in this project"** — You're using a local install (`.claude/commands/ship/`) but it doesn't exist. Run the installer:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/livertonoliveira/ship/main/install.sh | bash
 ```
+
+**Using the global plugin install** — Use `claude plugin update ship` in the terminal instead of the update script. See Step 1 above.
