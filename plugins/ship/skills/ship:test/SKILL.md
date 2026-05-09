@@ -69,6 +69,7 @@ Launch agents in parallel using the Agent tool (only for enabled layers):
 
 Responsibility: test isolated units (services, utilities, pure functions, helpers).
 
+0. **Read efficiency**: each test pattern / source file at most ONCE per agent. Do not re-Read after Edit/Write — those tools validate. If a snippet was already quoted in this prompt, reuse it instead of reopening.
 1. Identify all services, utilities, and functions created/modified in the feature
 2. For each one, generate tests covering:
    - **Happy path**: expected behavior with valid inputs
@@ -86,6 +87,7 @@ Responsibility: test isolated units (services, utilities, pure functions, helper
 
 Responsibility: test interactions between modules, API endpoints, database operations.
 
+0. **Read efficiency**: each test pattern / source file at most ONCE per agent. Do not re-Read after Edit/Write — those tools validate. If a snippet was already quoted in this prompt, reuse it instead of reopening.
 1. Identify the endpoints, repositories, and module interactions of the feature
 2. For each endpoint/interaction, generate tests covering:
    - **Request/Response**: correct status codes, correct body, headers
@@ -103,6 +105,7 @@ Responsibility: test interactions between modules, API endpoints, database opera
 
 Responsibility: test critical end-to-end user flows.
 
+0. **Read efficiency**: each test pattern / source file at most ONCE per agent. Do not re-Read after Edit/Write — those tools validate. If a snippet was already quoted in this prompt, reuse it instead of reopening.
 1. Check if the project has an e2e framework configured (Playwright, Cypress, etc.) via config.md
 2. If there is NO e2e framework: **do not generate e2e tests**. Report (in artifact language) that e2e was skipped due to no framework detected — distinguish this clearly from a config-disabled skip. Example: "E2E pulado: nenhum framework e2e detectado no projeto (Playwright, Cypress, etc.). Para ativar, configure um framework e2e (ex: Playwright ou Cypress)."
 3. If there IS an e2e framework:
@@ -145,6 +148,17 @@ After all 3 agents complete:
    - This file signals to downstream phases (e.g., review) which modules need extra attention.
    - `<task-id>` is the Linear issue ID (e.g., `MOB-1149`) or feature slug in local mode.
    - **Standalone mode**: if running outside `/ship:run` (no scratch dir initialized), skip this step entirely.
+
+### 6. Read efficiency
+
+Avoid wasted Reads — they are the dominant token sink in this phase.
+
+- Re-Read a file ONLY when one of the following is true:
+  1. The file was modified by an external process (build, another subagent, user command) since the last Read.
+  2. The content was likely compacted out of the current context window (long session, many turns since the original Read).
+  3. The user explicitly asked to re-read it.
+- After Edit/Write, do NOT re-Read to "confirm". These tools already validate and return errors on failure.
+- When dispatching parallel subagents (step 3), pass the relevant file excerpts directly in the agent prompt instead of asking the agent to reopen them. The orchestrator's prompt is already cached; a fresh Read inside an empty subagent window is new input.
 
 ---
 

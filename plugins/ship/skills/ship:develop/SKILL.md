@@ -84,7 +84,7 @@ If independent modules were identified, launch **parallel agents** via the Agent
 Each agent receives:
 - The specific module to implement (which files, which logic)
 - The full context (config.md, task details, Design document)
-- Instruction to read existing patterns before writing
+- Instruction to read existing patterns before writing (each pattern file at most ONCE; do not re-Read after Edit/Write; if the orchestrator already quoted file content in this prompt, use it instead of opening the file)
 
 Each agent must:
 1. Read existing patterns in the same domain
@@ -120,6 +120,17 @@ If typecheck fails:
    - Mark each implementation item as completed (`- [x]`)
    - If any item could not be completed, add a note explaining why
 2. If design decisions different from those planned were made, update `design.md` with the decision and the reason
+
+### 9. Read efficiency
+
+Avoid wasted Reads — they are the dominant token sink in this phase.
+
+- Re-Read a file ONLY when one of the following is true:
+  1. The file was modified by an external process (build, another subagent, user command) since the last Read.
+  2. The content was likely compacted out of the current context window (long session, many turns since the original Read).
+  3. The user explicitly asked to re-read it.
+- After Edit/Write, do NOT re-Read to "confirm". These tools already validate and return errors on failure.
+- When dispatching parallel subagents (step 5), pass the relevant file excerpts directly in the agent prompt instead of asking the agent to reopen them. The orchestrator's prompt is already cached; a fresh Read inside an empty subagent window is new input.
 
 ---
 
