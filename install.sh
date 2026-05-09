@@ -116,6 +116,21 @@ AUDIT_COMMANDS=(
   "tests.md"
 )
 
+PATTERN_FILES=(
+  "gates.md"
+  "language.md"
+  "lazy-load-findings.md"
+  "load-artifacts.md"
+  "parallelism.md"
+  "profiles.md"
+  "run-context.md"
+  "security-categories.md"
+  "severity.md"
+  "skill-patterns-convention.md"
+  "stack-detection.md"
+  "storage-mode.md"
+)
+
 # Download commands
 echo -e "${BLUE}Downloading Ship pipeline commands...${NC}"
 for cmd in "${COMMANDS[@]}"; do
@@ -129,6 +144,16 @@ for cmd in "${AUDIT_COMMANDS[@]}"; do
   skill_name="${cmd%.md}"
   download_file "${SHIP_REPO}/plugins/ship/skills/ship:audit:${skill_name}/SKILL.md" "${COMMANDS_DIR}/audit/${cmd}" "audit/${cmd}" || true
 done
+
+# Download pattern files (required by skills via @ references)
+echo -e "${BLUE}Downloading Ship pattern files...${NC}"
+mkdir -p "ship/patterns"
+for f in "${PATTERN_FILES[@]}"; do
+  download_file "${SHIP_REPO}/ship/patterns/${f}" "ship/patterns/${f}" "patterns/${f}" || true
+done
+download_file "${SHIP_REPO}/ship/report-templates.md"     "ship/report-templates.md"     "report-templates.md"     || true
+download_file "${SHIP_REPO}/ship/shared-patterns.md"      "ship/shared-patterns.md"      "shared-patterns.md"      || true
+download_file "${SHIP_REPO}/ship/linear-audit-template.md" "ship/linear-audit-template.md" "linear-audit-template.md" || true
 
 # Append Ship section to CLAUDE.md if not already present
 if [ -f "$CLAUDE_MD" ]; then
