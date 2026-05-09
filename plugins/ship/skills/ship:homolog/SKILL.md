@@ -32,11 +32,10 @@ Check if you are running inside the `/ship:run` pipeline:
 
 ### 1. Load all artifacts
 
-1. Use `mcp__linear-server__get_issue` to fetch the task issue details (title, description, acceptance criteria, status, labels)
-2. Use `mcp__linear-server__get_project` to get the project context
-3. Use `mcp__linear-server__list_documents` + `mcp__linear-server__get_document` to read the **Proposal** document (requirements and acceptance criteria)
-4. Use `mcp__linear-server__list_documents` + `mcp__linear-server__get_document` to read the **Design** document (technical decisions)
-5. Read temporary local findings files (these are always local, created by the pipeline):
+1. In parallel: use `mcp__linear-server__get_issue` to fetch the task issue details (title, description, acceptance criteria, status, labels) AND `mcp__linear-server__get_project` to get the project context
+2. Use `mcp__linear-server__list_documents` **once** to list all documents linked to the project
+3. In parallel: use `mcp__linear-server__get_document` to read the **Proposal** document AND `mcp__linear-server__get_document` to read the **Design** document (both IDs come from the single `list_documents` result above)
+4. Read temporary local findings files (these are always local, created by the pipeline):
    - `ship/changes/<feature>/perf-findings.md` (or `perf-findings-<task-id>.md`)
    - `ship/changes/<feature>/security-findings.md` (or `security-findings-<task-id>.md`)
    - `ship/changes/<feature>/review-findings.md` (or `review-findings-<task-id>.md`)
@@ -73,27 +72,22 @@ Ask the user:
 
 After approval, execute ALL of the following steps without skipping any:
 
-> **MANDATORY STEP A — Post quality report comment**
+> **MANDATORY STEPS A + B — Post quality report comment AND set issue status to Done (run in parallel)**
 >
-> Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue.
-> Update the Homologation section to:
-> ```
-> - [x] User has reviewed all changes
-> - [x] User has verified acceptance criteria
-> - [x] User approves for PR — Approved on YYYY-MM-DD
-> ```
-> The issue MUST have this detailed report comment. Do not skip this step.
-
-> **MANDATORY STEP B — Set issue status to Done**
+> In parallel:
+> - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
+>   ```
+>   - [x] User has reviewed all changes
+>   - [x] User has verified acceptance criteria
+>   - [x] User approves for PR — Approved on YYYY-MM-DD
+>   ```
+> - Call `mcp__linear-server__save_issue` to update the task issue status to **"Done"**.
 >
-> Call `mcp__linear-server__save_issue` to update the task issue status to **"Done"**.
-> This must always happen after approval — whether running standalone or inside the pipeline.
-> Do not skip this step under any circumstances.
+> Both MUST be executed. Do not skip either step under any circumstances.
 
 > **MANDATORY STEP C — Verify both steps completed**
 >
-> Call `mcp__linear-server__list_comments` to confirm the quality report comment was posted.
-> Call `mcp__linear-server__get_issue_status` to confirm the status is "Done".
+> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue_status` to confirm the status is "Done".
 > If either check fails, retry the corresponding step before continuing.
 
 3. Clean up temporary local findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.

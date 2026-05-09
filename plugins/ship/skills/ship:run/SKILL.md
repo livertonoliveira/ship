@@ -358,10 +358,10 @@ After acceptance:
 > **MANDATORY — Verify the full Linear lifecycle was completed**
 >
 > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-> You MUST verify both happened:
+> In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
 >
-> 1. Call `mcp__linear-server__get_issue_status` — if status is NOT "Done", call `mcp__linear-server__save_issue` to set it to "Done" now.
-> 2. Call `mcp__linear-server__list_comments` — if the quality report comment is NOT present (i.e., no comment with a Summary table), call `mcp__linear-server__save_comment` to post it now.
+> 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+> 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
 >
 > Both the "Done" status AND the quality report comment are required before the task is considered complete.
 

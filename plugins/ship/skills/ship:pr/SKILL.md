@@ -33,9 +33,8 @@ Identify the feature:
 ### 1. Verify acceptance
 
 **Linear mode:**
-- Use `mcp__linear-server__get_issue` to fetch the task issue
-- Use `mcp__linear-server__list_comments` to find the quality report comment
-- Verify the Homologation section in the comment contains:
+- In parallel: use `mcp__linear-server__get_issue` to fetch the task issue AND `mcp__linear-server__list_comments` to fetch all issue comments — **cache this result** for reuse throughout this skill (Load artifacts, Quality Report Aggregation, and Step C below)
+- Verify the Homologation section in the cached comments contains:
   ```
   - [x] User approves for PR
   ```
@@ -61,7 +60,7 @@ Run `git status` to check the repository state.
 **Linear mode:**
 
 Follow @ship/patterns/load-artifacts.md, then additionally load:
-- Use `mcp__linear-server__list_comments` to read the quality report comment posted during homolog
+- Use the **cached `list_comments` result** from Prerequisites to read the quality report comment posted during homolog — do NOT call `list_comments` again
 
 **Local mode:**
 
@@ -154,7 +153,7 @@ Build the PR body using the artifacts (from Linear documents or local files) and
 Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md for each phase (perf, security, review).
 For the exact rendering format (Lazy Mode — PASS table vs WARN/FAIL expanded block), see @ship/report-templates.md#lazy-mode.
 
-- **Linear mode:** extract each phase's findings from the quality report comment on the issue (use `mcp__linear-server__list_comments`). The link for each phase is the URL of that Linear comment.
+- **Linear mode:** extract each phase's findings from the quality report comment using the **cached `list_comments` result** from Prerequisites — do NOT call `list_comments` again. The link for each phase is the URL of that Linear comment.
 - **Local mode:** read `ship/changes/<feature>/report-<task-id>.md`. The path for each phase is `ship/changes/<feature>/report-<task-id>.md`.
 
 Follow @ship/report-templates.md#pr-body for the PR body template.
@@ -182,11 +181,9 @@ EOF
 
 > **MANDATORY STEP C — Verify both quality report AND PR link exist on issue**
 >
-> Call `mcp__linear-server__list_comments` and verify the issue has:
-> 1. A quality report comment (posted during homolog — contains the Summary table with Performance/Security/Code Review gates)
-> 2. A PR link comment (just posted above)
->
-> Both MUST be present. If the quality report comment is missing, it means homolog did not complete properly — warn the user before continuing.
+> The quality report comment was already verified via the cached result from Prerequisites — no extra call needed for it.
+> Use the **cached `list_comments` result** to confirm the quality report is present. If it is missing, warn the user (homolog did not complete properly).
+> The PR link comment was just posted above (Step B) — trust it succeeded unless the call returned an error.
 >
 > Do NOT change the issue status — it was already set to "Done" during homolog approval.
 
