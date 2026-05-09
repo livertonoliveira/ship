@@ -146,12 +146,12 @@ mkdir -p "ship/patterns"
 for f in "${PATTERN_FILES[@]}"; do
   dest="ship/patterns/${f}"
   touch "$dest" 2>/dev/null || true
-  download_and_overwrite "${SHIP_REPO}/ship/patterns/${f}" "$dest" "patterns/${f}"
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/patterns/${f}" "$dest" "patterns/${f}"
 done
 for f in "report-templates.md" "shared-patterns.md" "linear-audit-template.md"; do
   dest="ship/${f}"
   touch "$dest" 2>/dev/null || true
-  download_and_overwrite "${SHIP_REPO}/ship/${f}" "$dest" "${f}"
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/${f}" "$dest" "${f}"
 done
 
 echo ""
