@@ -36,7 +36,7 @@ No diff checks, no prompts.
 The update script cannot update global plugin files. Instruct the user to run the following command in their terminal and restart Claude Code:
 
 ```bash
-claude plugin update ship
+claude plugin update ship@ship-marketplace
 ```
 
 This will pull the latest version from the `livertonoliveira/ship` GitHub repository and replace all skill files in the global plugin cache. A Claude Code restart is required for the changes to take effect.
@@ -117,4 +117,4 @@ Replace `[enabled|disabled]` with the values from the table above for the detect
 curl -sL https://raw.githubusercontent.com/livertonoliveira/ship/main/install.sh | bash
 ```
 
-**Using the global plugin install** — Use `claude plugin update ship` in the terminal instead of the update script. See Step 1 above.
+**Using the global plugin install** — Use `claude plugin update ship@ship-marketplace` in the terminal instead of the update script. See Step 1 above.
