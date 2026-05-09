@@ -76,6 +76,21 @@ AUDIT_COMMANDS=(
   "tests.md"
 )
 
+PATTERN_FILES=(
+  "gates.md"
+  "language.md"
+  "lazy-load-findings.md"
+  "load-artifacts.md"
+  "parallelism.md"
+  "profiles.md"
+  "run-context.md"
+  "security-categories.md"
+  "severity.md"
+  "skill-patterns-convention.md"
+  "stack-detection.md"
+  "storage-mode.md"
+)
+
 UPDATED=()
 FAILED=()
 
@@ -123,6 +138,20 @@ for cmd in "${AUDIT_COMMANDS[@]}"; do
   touch "$dest" 2>/dev/null || true
   skill_name="${cmd%.md}"
   download_and_overwrite "${SHIP_REPO}/plugins/ship/skills/ship:audit:${skill_name}/SKILL.md" "$dest" "audit/${cmd}"
+done
+
+echo ""
+echo -e "${BLUE}Pattern files:${NC}"
+mkdir -p "ship/patterns"
+for f in "${PATTERN_FILES[@]}"; do
+  dest="ship/patterns/${f}"
+  touch "$dest" 2>/dev/null || true
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/patterns/${f}" "$dest" "patterns/${f}"
+done
+for f in "report-templates.md" "shared-patterns.md" "linear-audit-template.md"; do
+  dest="ship/${f}"
+  touch "$dest" 2>/dev/null || true
+  download_and_overwrite "${SHIP_REPO}/plugins/ship/${f}" "$dest" "${f}"
 done
 
 echo ""
