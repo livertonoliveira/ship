@@ -4,6 +4,7 @@ description: "Creates a PR with atomic commits and an aggregated quality report.
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "haiku"
 ---
 
 # Ship PR — Pull Request Creation
