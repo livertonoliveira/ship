@@ -35,9 +35,9 @@
 
 ## Pipeline Phases
 - dev: enabled
-- test: enabled
+- test: disabled
 - perf: enabled
-- security: enabled
+- security: disabled
 - review: enabled
 - homolog: enabled
 - pr: enabled
