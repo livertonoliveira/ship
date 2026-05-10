@@ -415,6 +415,25 @@ Methodology: <Next.js 5-heuristic | Generic 11-category>
 - Any `medium` finding (no critical/high) → **Gate: WARN**
 - Only `low` or no findings → **Gate: PASS**
 
+### Return JSON summary
+
+After writing the report, output the following JSON block as the **very last content** of your tool result. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
+
+See @ship/patterns/audit-summary-schema.md for field definitions and scoring table.
+
+```json
+{
+  "audit": "frontend",
+  "gate": "<PASS|WARN|FAIL>",
+  "score": "<A|B|C|D|F>",
+  "counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+  "top_findings": [
+    {"id": "<ID>", "severity": "<critical|high|medium|low>", "title": "<title>", "file": "<file:line>"}
+  ],
+  "report_path": "ship/audits/frontend-<YYYY-MM-DD>.md"
+}
+```
+
 ---
 
 ## Rules

@@ -85,10 +85,12 @@ Each agent writes its own report file:
 
 ### 5. Consolidate results
 
-After all agents complete, use the **Agent** tool to consolidate results. Pass `model: "haiku"` to this consolidation agent — it performs template/report aggregation, not reasoning.
+After all agents complete, each agent's tool result contains a JSON summary block (see @ship/patterns/audit-summary-schema.md). Extract those summaries directly from the tool results — **do NOT re-read the markdown report files**.
 
-Instruct the consolidation agent to:
-1. Read each report file written by the audit agents in Step 4
+Use the **Agent** tool to consolidate results. Pass `model: "haiku"` to this consolidation agent — it performs template/report aggregation, not reasoning.
+
+Pass the extracted JSON summaries **inline** in the consolidation agent's prompt. Instruct the agent to:
+1. Use the provided JSON summaries (already included in the prompt — no file reads needed)
 2. Evaluate the consolidated gate logic (see below)
 3. Return the full consolidated summary report as its output
 

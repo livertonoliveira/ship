@@ -193,6 +193,27 @@ See @ship/patterns/gates.md for gate reference.
 
 > Note: This audit intentionally uses WARN (not FAIL) for HIGH findings. Uncovered acceptance criteria represent a quality gap to be addressed, not a pipeline-blocking vulnerability.
 
+### Return JSON summary
+
+After writing the report, output the following JSON block as the **very last content** of your tool result. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
+
+See @ship/patterns/audit-summary-schema.md for field definitions and scoring table.
+
+> **Note:** Gate for this audit is capped at `PASS|WARN` — never `FAIL`. The `score` field follows the standard scoring table but `F` is not applicable here.
+
+```json
+{
+  "audit": "tests",
+  "gate": "<PASS|WARN>",
+  "score": "<A|B|C|D>",
+  "counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+  "top_findings": [
+    {"id": "<ID>", "severity": "<high|medium>", "title": "<title>", "file": "<file:line>"}
+  ],
+  "report_path": "ship/audits/tests-<YYYY-MM-DD>.md"
+}
+```
+
 ---
 
 ## Rules

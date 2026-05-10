@@ -318,6 +318,25 @@ See @ship/patterns/severity.md (## Performance).
 
 See @ship/patterns/gates.md.
 
+### Return JSON summary
+
+After writing the report, output the following JSON block as the **very last content** of your tool result. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
+
+See @ship/patterns/audit-summary-schema.md for field definitions and scoring table.
+
+```json
+{
+  "audit": "backend",
+  "gate": "<PASS|WARN|FAIL>",
+  "score": "<A|B|C|D|F>",
+  "counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+  "top_findings": [
+    {"id": "<ID>", "severity": "<critical|high|medium|low>", "title": "<title>", "file": "<file:line>"}
+  ],
+  "report_path": "ship/audits/backend-<YYYY-MM-DD>.md"
+}
+```
+
 ---
 
 ## Rules
