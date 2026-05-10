@@ -152,7 +152,11 @@ See @ship/report-templates.md#finding-entry (Code Review pipeline). Uses `Princi
 
 See @ship/report-templates.md#finding-schema for the JSON block to accompany each finding.
 
-See @ship/patterns/severity.md (## Code Review) for severity definitions.
+**Severity classification (Code Review):**
+- **critical**: Architectural issue that will cause significant problems if not addressed (e.g., circular dependency, broken abstraction that leaks implementation details across the entire system)
+- **high**: Significant design issue that will make the code hard to maintain/extend (e.g., god class, tight coupling between modules)
+- **medium**: Code smell that should be addressed but does not block (e.g., duplicated logic, overly complex conditional)
+- **low**: Minor improvement opportunity (e.g., naming could be clearer, slightly long function)
 
 ### 5. Write report
 
@@ -177,7 +181,10 @@ Format:
 [findings here, ordered by severity]
 ```
 
-See @ship/patterns/gates.md for gate rules.
+**Gate rules (inline):** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
+
+In pipeline mode (called from `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
+In standalone mode: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ---
 

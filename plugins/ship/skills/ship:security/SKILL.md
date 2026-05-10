@@ -175,7 +175,11 @@ See @ship/report-templates.md#finding-entry (Security pipeline). Categories: `IN
 
 See @ship/report-templates.md#finding-schema for the JSON block (includes `owasp` and `cwe` extra fields).
 
-See @ship/patterns/severity.md (## Security) for severity definitions.
+**Severity classification (Security):**
+- **critical**: Remote exploitation without authentication, unrestricted access to sensitive data. Requires immediate fix.
+- **high**: Exploitation possible with authentication or specific conditions. Significant impact risk.
+- **medium**: Hard to exploit but relevant impact, or easy to exploit with limited impact.
+- **low**: Theoretical risk, defense-in-depth, or best practice not followed.
 
 ### 4. Write report
 
@@ -200,7 +204,10 @@ Format:
 [findings here, ordered by severity]
 ```
 
-See @ship/patterns/gates.md for gate rules.
+**Gate rules (inline):** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
+
+In pipeline mode (called from `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
+In standalone mode: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ---
 
