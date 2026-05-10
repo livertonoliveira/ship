@@ -36,14 +36,15 @@ Check if you are running inside the `/ship:run` pipeline:
 1. In parallel: use `mcp__linear-server__get_issue` to fetch the task issue details (title, description, acceptance criteria, status, labels) AND `mcp__linear-server__get_project` to get the project context
 2. Use `mcp__linear-server__list_documents` **once** to list all documents linked to the project
 3. In parallel: use `mcp__linear-server__get_document` to read the **Proposal** document AND `mcp__linear-server__get_document` to read the **Design** document (both IDs come from the single `list_documents` result above)
-4. Read temporary local findings files (these are always local, created by the pipeline):
-   - `ship/changes/<feature>/perf-findings.md` (or `perf-findings-<task-id>.md`)
-   - `ship/changes/<feature>/security-findings.md` (or `security-findings-<task-id>.md`)
-   - `ship/changes/<feature>/review-findings.md` (or `review-findings-<task-id>.md`)
+4. Read `.context/ship-run/<task-id>/phase-status.md` to get the gate status for each phase from the structured table (Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes). Take the **last row** for each phase — it is the most recent run.
+5. For each phase where gate = WARN or FAIL: read the corresponding findings file. Do **NOT** open findings files for phases with gate = PASS.
+   - `perf-findings-<task-id>.md` (or `perf-findings.md`)
+   - `security-findings-<task-id>.md` (or `security-findings.md`)
+   - `review-findings-<task-id>.md` (or `review-findings.md`)
 
 ### 2. Consolidate quality report — lazy-load findings
 
-Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md to each phase (perf, security, review).
+Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md — which uses `phase-status.md` as the canonical gate index (already loaded in step 1.4). Only WARN/FAIL phases have their findings files opened.
 For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see @ship/report-templates.md#lazy-mode.
 
 Follow @ship/report-templates.md#quality-report for the full report structure.
@@ -101,15 +102,17 @@ After approval, execute ALL of the following steps without skipping any:
 ### 1. Load all artifacts
 
 Follow @ship/patterns/load-artifacts.md for Local mode artifact loading, then additionally load:
-- `ship/changes/<feature>/report.md` — Quality report (if already consolidated)
-- `ship/changes/<feature>/perf-findings.md` — Performance findings (if separate file exists)
-- `ship/changes/<feature>/security-findings.md` — Security findings (if separate file exists)
-- `ship/changes/<feature>/review-findings.md` — Code review findings (if separate file exists)
-- `ship/changes/<feature>/tracking.md` — Issue tracking (if it exists)
+1. `ship/changes/<feature>/report.md` — Quality report (if already consolidated)
+2. `ship/changes/<feature>/tracking.md` — Issue tracking (if it exists)
+3. Read `.context/ship-run/<task-id>/phase-status.md` to determine the gate for each phase from the structured table. Take the **last row** per phase — it is the most recent run. If a phase has no row, treat as FAIL (safe default).
+4. For each phase where gate = WARN or FAIL: read the corresponding findings file. Do **NOT** open findings files for phases with gate = PASS.
+   - `perf-findings.md` (or `perf-findings-<task-id>.md`)
+   - `security-findings.md` (or `security-findings-<task-id>.md`)
+   - `review-findings.md` (or `review-findings-<task-id>.md`)
 
 ### 2. Consolidate report.md — lazy-load findings
 
-Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md to each phase (perf, security, review).
+Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md — `phase-status.md` is already loaded in step 1.3 and serves as the canonical gate index. Only WARN/FAIL phases have their findings files opened.
 For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see @ship/report-templates.md#lazy-mode.
 
 Follow @ship/report-templates.md#quality-report for the full report structure.
