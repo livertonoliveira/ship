@@ -115,3 +115,27 @@ a1b2c3d4e5f6...
 
 The parent directory `.context/ship-run/` may hold multiple `<task-id>/` subdirs if
 parallel pipelines are running — never remove the parent, only the completed task's subdir.
+
+---
+
+## Inline context slicing (fan-out optimization)
+
+When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh conversation with no shared prompt cache. Passing large shared artifacts (diff, Design, proposal) to every agent multiplies token costs: **N × file size + N × cache miss**.
+
+**Pattern:** the orchestrator reads each shared artifact **once**, slices it into per-agent subsets, and passes the slice **inline** in each agent's prompt. Agents must never re-read the original file.
+
+### Slicing rules
+
+- Always include enough surrounding context for the agent to understand scope:
+  - For diffs: include the `diff --git a/...` file header + the full `@@ ... @@` hunk header + ±3 surrounding context lines for each included hunk.
+  - For design/proposal docs: include the full subsection (heading + body) relevant to the agent's scope.
+- If a hunk or section does not clearly belong to any agent's scope, include it in **all** agents' slices (conservative fallback).
+- The orchestrator must not truncate content that agents need to make correct decisions — smaller is better, but correctness comes first.
+
+### Which phases use this pattern
+
+| Phase | Shared artifact sliced | Slice dimension |
+|-------|------------------------|-----------------|
+| `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
+| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
+| `ship:develop` | Design document | by module / independent implementation unit |
