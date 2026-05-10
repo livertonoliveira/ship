@@ -187,7 +187,7 @@ Avoid wasted Reads — they are the dominant token sink in this phase.
 - **Use the project's patterns**: if the project uses factories, use factories. If it uses fixtures, use fixtures.
 - **Do not install test frameworks**: use what is already configured in the project
 - **Acceptance criteria guide the tests**: each criterion from proposal.md must have at least one corresponding test
-- **Language**: See @ship/patterns/language.md.
+- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Respect `Test Scope`**: only launch agents for layers that are `enabled` in `ship/config.md → ## Test Scope`. If the section is absent, default all layers to `enabled`.
 - **ALWAYS launch 3 agents in parallel when all layers are enabled**: even if one of them concludes there are no tests to generate for its type, it must report this
 - **ALWAYS use `--pool=threads`** when invoking vitest directly (e.g. `vitest run --pool=threads`). Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
