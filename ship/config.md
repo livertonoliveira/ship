@@ -50,6 +50,14 @@
 - integration: disabled
 - e2e: disabled
 
+## Sensitive Paths
+# Optional — paths that force 'normal' classification even for trivial diffs.
+# Format: one path prefix per line (relative to repo root).
+# Defaults if section is absent: auth/, payment/, query, migrations/
+# - auth/
+# - payment/
+# - migrations/
+
 ## Conventions
 - Artifact language: pt-BR (specs, issues, docs, milestones, reports, PR descriptions, Linear comments)
 - Prompt language: en (LLM system prompts — hardcoded, not configurable)
