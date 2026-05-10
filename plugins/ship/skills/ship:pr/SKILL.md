@@ -117,20 +117,32 @@ Read `ship/config.md` and extract `Pipeline Profile → profile`.
 
 **If `profile: strict`:**
 
-Invoke `/ship:audit:run` (use the Skill tool) and await the consolidated result.
+> **NOTE — audit commands MUST NOT be invoked from within the pipeline.**
+> Audit commands (`/ship:audit:*`) are project-wide and must be triggered by the user separately.
+> In strict mode, `ship:pr` enforces that the user has already run `/ship:audit:run` before creating the PR.
 
-Evaluate the consolidated gate returned by the audit run:
+Inform the user:
+```
+Profile: strict — a full project audit is required before PR creation.
+Please run /ship:audit:run now, then share here:
+1. The consolidated gate result (PASS / WARN / FAIL)
+2. A brief summary of findings by severity (e.g., "2 critical, 1 high, 3 medium" or "no findings")
+```
 
-- **Gate = FAIL**: Block PR creation immediately. Display the full consolidated audit report (every critical and high finding with title, severity, file, and description). Inform the user:
+Wait for the user to provide both the gate result and the findings summary. Accept only one of the following literal values for the gate result: `PASS`, `WARN`, or `FAIL` (case-insensitive). If the user provides only the gate word without a findings summary, ask them to also share the findings count or confirm "no findings". If the gate result is ambiguous, ask them to clarify.
+
+Evaluate the gate result provided by the user:
+
+- **Gate = FAIL**: Block PR creation immediately. Inform the user:
   ```
   PR creation blocked — audit gate: FAIL
   Resolve all critical and high findings before retrying /ship:pr.
   ```
   STOP — do not proceed to step 6.
 
-- **Gate = WARN**: Pause. Display the full list of medium findings (title, severity, file, description for each). Then ask:
+- **Gate = WARN**: Pause. Ask the user to share the list of WARN (medium) findings from the audit report. Once they have shared the findings, present the confirmation:
   ```
-  Audit gate: WARN — medium findings detected (listed above).
+  Audit gate: WARN — medium findings were detected (listed above).
   Answer exactly "yes" to proceed with PR creation, or "no" to stop.
   ```
   Accept only the literal word `yes` or `no` — ignore any other content.
@@ -141,7 +153,7 @@ Evaluate the consolidated gate returned by the audit run:
 
 **If `profile: lite` or `profile: standard` (or profile is not set):**
 
-Skip this step entirely — no audit is invoked.
+Skip this step entirely — no audit gate is enforced.
 
 ---
 
