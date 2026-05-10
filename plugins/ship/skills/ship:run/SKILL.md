@@ -112,6 +112,69 @@ Log to the user:
 Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 ```
 
+### 0.7. Diff Classification
+
+> See @ship/patterns/diff-classifier.md for the full heuristic reference.
+
+Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
+
+**Step 1 — Compute metrics** (run inline bash, no agent needed):
+
+```bash
+DIFF=".context/ship-run/<task-id>/diff.md"
+
+# Total changed lines (+/- excluding headers)
+LINES=$(grep -E '^[+-]' "$DIFF" | grep -Ev '^(\+\+\+|---)' | wc -l | tr -d ' ')
+
+# Logical files modified (excluding doc/config extensions)
+LOGICAL_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
+  | grep -Ev '\.(md|json|lock|txt|ya?ml)$' | sort -u | wc -l | tr -d ' ')
+
+# All modified files (to detect trivial-only)
+ALL_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' | sort -u | wc -l | tr -d ' ')
+DOC_ONLY_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
+  | grep -E '\.(md|json|lock|txt|ya?ml)$' | sort -u | wc -l | tr -d ' ')
+
+# New endpoint patterns
+NEW_ENDPOINTS=$(grep '^+' "$DIFF" | grep -Ev '^\+\+\+' \
+  | grep -cE 'route\(|app\.(get|post|put|patch|delete)\(|@(Get|Post|Put|Patch|Delete)\(' || true)
+```
+
+**Step 2 — Read sensitive paths** from `ship/config.md`:
+- If `## Sensitive Paths` section is present, parse non-comment lines starting with `- ` and strip the `- ` prefix → use as sensitive prefixes.
+- If section is absent, use defaults: `auth/`, `payment/`, `query`, `migrations/`.
+
+**Step 3 — Check sensitive path matches**:
+
+```bash
+SENSITIVE_HITS=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
+  | grep -cE '^(auth/|payment/|query|migrations/)' || true)
+# (replace the grep -E pattern with the actual sensitive prefixes from step 2)
+```
+
+**Step 4 — Classify** (first match wins):
+
+| Check | Class |
+|-------|-------|
+| `ALL_FILES == DOC_ONLY_FILES` AND `SENSITIVE_HITS == 0` AND `LINES < 50` | `trivial` |
+| `LINES > 1000` OR `LOGICAL_FILES > 10` | `large` |
+| `LINES < 100` AND `LOGICAL_FILES <= 1` AND `NEW_ENDPOINTS == 0` | `minor` |
+| (everything else) | `normal` |
+
+**Step 5 — Write result**:
+
+```bash
+echo "<class>" > .context/ship-run/<task-id>/diff-class.txt
+```
+
+**Step 6 — Log to user**:
+
+```
+Diff class: <class> (<reason>)
+```
+
+Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines, no sensitive paths`).
+
 ### 1. Load task context
 
 **Linear mode:**
@@ -190,7 +253,19 @@ If any test fails after fix attempts:
 
 > **Pre-quality snapshot:** The snapshot `.context/ship-run/<task-id>/pre-quality-snapshot.sha` was already captured in step 0.5. All quality agents and the PR agent can read the HEAD SHA from that file. See `ship/patterns/gates.md → Snapshot pré-fix` for format details and lifecycle rules.
 
-Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases):
+**Read diff class** before launching agents:
+
+```bash
+DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
+```
+
+Apply the following adjustments **on top of** the effective phase set:
+
+- **`trivial`**: Skip all quality phases (`perf`, `security`, `review`). Log: `Diff trivial — fases de qualidade puladas`. Append a PASS row for each skipped phase to `phase-status.md` with notes `diff trivial — pulado`. Proceed directly to Phase 5 (gate=PASS).
+- **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
+- **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
+
+Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases not skipped by diff class):
 
 **Agent 1 — Performance** *(only if `perf` is `enabled`)*:
 - Read `.claude/commands/ship/perf.md` for full instructions
