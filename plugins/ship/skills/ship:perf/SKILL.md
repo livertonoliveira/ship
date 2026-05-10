@@ -151,7 +151,11 @@ See @ship/report-templates.md#finding-entry (Performance pipeline). Categories: 
 
 See @ship/report-templates.md#finding-schema for the JSON block to accompany each finding.
 
-See @ship/patterns/severity.md (## Performance) for severity definitions.
+**Severity classification (Performance):**
+- **critical**: Will cause visible performance degradation in production (e.g., N+1 on every request, full table scan on large table)
+- **high**: Likely to cause issues under load (e.g., missing pagination on growing dataset)
+- **medium**: Suboptimal but will not cause immediate issues (e.g., missing cache on moderately accessed data)
+- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint)
 
 ### 5. Write report
 
@@ -176,7 +180,10 @@ Format:
 [findings here, ordered by severity]
 ```
 
-See @ship/patterns/gates.md for gate rules.
+**Gate rules (inline):** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
+
+In pipeline mode (called from `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
+In standalone mode: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ---
 
