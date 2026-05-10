@@ -4,6 +4,7 @@ description: "Updates all Ship command files to the latest version."
 argument-hint: ""
 allowed-tools: Read, Write, Bash
 user-invocable: true
+model: "haiku"
 ---
 
 # Ship Update
