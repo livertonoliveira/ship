@@ -96,3 +96,11 @@ ship/
 ### Integration with Global Skills
 - The `/ship:audit:*` commands incorporate the methodology from global skills (`backend-performance-audit`, `security-audit`, `mongodb-audit`, `frontend-performance-audit`, `nextjs-performance-audit`) translated to English and adapted to Ship conventions.
 - `/ship:pr` can replace the default PR workflow by adding the aggregated quality report
+
+## Model Routing
+
+Ship routes sub-agents to the appropriate model tier to minimize cost without sacrificing quality.
+Template phases (`ship:homolog`, `ship:pr`, `ship:update`) use `model: "haiku"` — declared in SKILL.md frontmatter.
+Reasoning phases inherit the parent session model.
+
+See `plugins/ship/patterns/model-routing.md` for the full policy and phase classification table.
