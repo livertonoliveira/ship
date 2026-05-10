@@ -195,6 +195,6 @@ In standalone mode: apply severity overrides from `ship/config.md → Severity O
 - **Stack-specific**: adapt the analysis based on the stack from config.md. Do not recommend React patterns for a Vue project.
 - **Suggestions with code**: when possible, show what the corrected code would look like
 - **ALWAYS adapt to the project type**: monorepo launches agents per workspace, backend focuses on DB/algo, frontend focuses on bundle/render
-- **Language**: See @ship/patterns/language.md.
+- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Linear mode**: read design context from Linear document instead of local file; findings are still written to a local temporary file
 - **Local mode**: read design context from local `design.md`; findings are written to local file

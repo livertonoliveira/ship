@@ -220,6 +220,6 @@ In standalone mode: apply severity overrides from `ship/config.md → Severity O
 - **Consider the context**: an internal API has a different threat model than a public API
 - **Do not recommend security theater**: avoid suggestions that add complexity without real benefit
 - **ALWAYS launch 3 agents in parallel**: each one focuses on its attack category
-- **Language**: See @ship/patterns/language.md.
+- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Linear mode**: read design context from Linear document instead of local file; findings are still written to a local temporary file
 - **Local mode**: read design context from local `design.md`; findings are written to local file

@@ -192,6 +192,8 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
       - Example (no overrides): `Profile: lite → fases ativas: dev, pr | puladas por profile: test, perf, security, review, homolog`
       - Example (with override): `Profile: lite | override: test: enabled → fases ativas: dev, test, pr | puladas por profile: perf, security, review, homolog`
 
+6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `@ship/patterns/language.md`.
+
 > **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
 >
 > Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
@@ -202,7 +204,7 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 Follow @ship/patterns/load-artifacts.md for the Local mode artifact loading steps.
 
 Additionally:
-- Apply step 5 above (effective phase set resolution) — it is not Linear-specific.
+- Apply steps 5–6 above (effective phase set resolution and artifact_language extraction) — they are not Linear-specific.
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
@@ -218,6 +220,7 @@ Use the **Agent** tool to execute development. Instruct the agent to:
 4. Implement the code described in the task
 5. Run typecheck (if configured)
 6. Verify the change is under 400 lines: run `git diff --stat` and check
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -236,6 +239,7 @@ Use the **Agent** tool to execute tests. Instruct the agent to:
 1. Read `.claude/commands/ship/test.md` for full instructions
 2. Use the task's acceptance criteria to guide test generation
 3. Generate and run tests scoped to THIS task only
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **The agent MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
@@ -272,18 +276,21 @@ Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (onl
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Agent 2 — Security** *(only if `security` is `enabled`)*:
 - Read `.claude/commands/ship/security.md` for full instructions
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Agent 3 — Code Review** *(only if `review` is `enabled`)*:
 - Read `.claude/commands/ship/review.md` for full instructions
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 ### 5. GATE CHECK
 
@@ -369,7 +376,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). Include `Artifact language: <artifact_language>` in each re-run agent's prompt, same as in Phase 4. Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -391,6 +398,7 @@ Use the **Agent** tool to execute drift detection. Instruct the agent to:
 5. Pass results to the Correlation Engine
 6. Generate the drift report + compute gate
 7. Persist `drift-report.md` and `drift-findings.json` to scratch dir
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -421,6 +429,7 @@ Use the **Agent** tool to execute acceptance. Instruct the agent to:
 2. Consolidate findings into a quality report
 3. Present the report for this task
 4. Wait for user approval
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -473,7 +482,7 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
-- **Language**: See @ship/patterns/language.md for language rules.
+- **Language**: Read `Artifact language` from `ship/config.md → Conventions` once in step 1.6 and inject the resolved value into every phase agent prompt. Phase SKILL.md files use this injected value and do not re-load `@ship/patterns/language.md` during pipeline execution.
 - **Shared scratch dir**: See @ship/patterns/run-context.md for the `.context/ship-run/<task-id>/` structure and lifecycle.
 - **Linear mode = zero local artifacts**: When Linear is configured, do NOT create `ship/changes/` directories. Task context comes from Linear, quality reports go as comments.
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.

@@ -159,7 +159,7 @@ After approval:
 - **Do not make decisions for the user**: present the data and let the user approve or reject
 - **Be transparent with warnings**: do not minimize medium-level findings. Present them clearly.
 - **Acceptance criteria belong to the user**: present them as a checklist for manual verification, not as automated tests
-- **Language**: See @ship/patterns/language.md for language rules.
+- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Do not proceed without approval**: acceptance is a manual gate, never automatic
 - **Linear mode**: quality report is posted as a comment on the task issue, no local report.md is created
 - **Local mode**: quality report is written to report.md in the feature directory

@@ -143,7 +143,7 @@ Avoid wasted Reads — they are the dominant token sink in this phase.
 - **Do not add dependencies unnecessarily**: if the project already has a library that does X, use it instead of installing another
 - **Do not add comments, docstrings, or type annotations to code you did not modify**: touch only what is necessary
 - **Each file created/modified must be functional on its own**: do not leave TODOs or partial implementations
-- **Language**: See @ship/patterns/language.md.
+- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Maximize parallelism**: if there are independent modules, ALWAYS use parallel agents
 - **Linear mode**: read task details and design from Linear, no local artifact updates
 - **Local mode**: read from and update local markdown files in `ship/changes/<feature>/`
