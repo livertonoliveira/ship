@@ -96,6 +96,9 @@ ship/
 - `/ship:audit:run` launches all applicable audits in parallel and produces a consolidated gate report.
 - `/ship:analyze` detects drift only within the **enabled** Test Scope layers; `/ship:audit:tests` audits **all** layers project-wide regardless of pipeline config.
 
+> **STRICT RULE — audit commands MUST NOT be invoked from within `ship:run`.**
+> `ship:run` is a diff-scoped development pipeline. Audit commands (`audit:backend`, `audit:frontend`, `audit:database`, `audit:security`, `audit:tests`, `audit:run`) are project-wide and must be triggered by the user separately at planned moments (pre-release, periodic health checks). Any SKILL.md or command file that calls an `audit:*` command from inside the pipeline is a bug.
+
 ### Test Scope Configuration
 
 The `Test Scope` section in `ship/config.md` controls which test layers `/ship:test` generates during the pipeline:
