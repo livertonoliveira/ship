@@ -67,13 +67,27 @@ Security focus: <category> (<n>/10 OWASP categorias ativas)
 
 Store the active OWASP IDs in a local variable to pass as context to each agent in step 2.
 
+### 1.6. Slice diff by category
+
+Before launching agents, partition the diff (loaded in step 1) into three category-scoped slices. Always include the `diff --git a/...` file header and the full `@@ ... @@` hunk header for each hunk, plus ±3 surrounding context lines, so each agent has enough scope to understand the change.
+
+| Agent | Include hunks from files matching (case-insensitive) |
+|-------|------------------------------------------------------|
+| **A — Injection** | `*controller*`, `*route*`, `*resolver*`, `*handler*`, `*parser*`, `*validator*`, `*dto*`, `*schema*`, `*query*`, `*repository*`, `*repo*` |
+| **B — Auth** | `*guard*`, `*middleware*`, `*auth*`, `*session*`, `*jwt*`, `*permission*`, `*role*`, `*policy*`, `*cors*`, `*interceptor*` |
+| **C — Data/Config** | `*encrypt*`, `*crypto*`, `*log*`, `*config*`, `*setting*`, `*.env*`, `*cookie*`, `*header*`, `*secret*`, `*hash*`, `*password*` |
+
+If a hunk does not match any category, include it in **all three** slices. Pass each slice as an inline block in the respective agent's prompt — do NOT instruct agents to read `diff.md` or run `git diff` themselves.
+
 ### 2. Launch 3 agents in parallel
 
-Use the **Agent** tool to launch **3 agents in parallel in a SINGLE call**. Pass the active OWASP IDs (from step 1.5) as context so each agent focuses only on vulnerabilities mapped to those categories:
+Use the **Agent** tool to launch **3 agents in parallel in a SINGLE call**. Pass the active OWASP IDs (from step 1.5) as context so each agent focuses only on vulnerabilities mapped to those categories. Each agent receives only its category-scoped diff slice inline (prepared in step 1.6) — do not include instructions to read `diff.md`.
 
 ---
 
 ### Agent A — Injection + Input Validation
+
+> **Inline context**: the injection-category diff slice is provided inline in your prompt. Do not read `diff.md` or run `git diff`.
 
 Analyze ONLY the new/modified code looking for:
 
@@ -100,6 +114,8 @@ Analyze ONLY the new/modified code looking for:
 
 ### Agent B — Auth + Access Control
 
+> **Inline context**: the auth-category diff slice is provided inline in your prompt. Do not read `diff.md` or run `git diff`.
+
 Analyze ONLY the new/modified code looking for:
 
 | Vulnerability | What to look for |
@@ -125,6 +141,8 @@ Analyze ONLY the new/modified code looking for:
 ---
 
 ### Agent C — Data Exposure + Configuration
+
+> **Inline context**: the data/config-category diff slice is provided inline in your prompt. Do not read `diff.md` or run `git diff`.
 
 Analyze ONLY the new/modified code looking for:
 

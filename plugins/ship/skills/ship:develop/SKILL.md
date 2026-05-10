@@ -79,11 +79,13 @@ For each file/module to implement:
 
 ### 5. Parallelism by module (when applicable)
 
+Before launching agents, extract the relevant section of the Design document for each module (e.g., the subsection describing module X's files, interfaces, and logic). Pass only that section inline in each agent's prompt — the agent must NOT re-read the full Design document.
+
 If independent modules were identified, launch **parallel agents** via the Agent tool:
 
 Each agent receives:
 - The specific module to implement (which files, which logic)
-- The full context (config.md, task details, Design document)
+- The module-specific Design section (extracted and passed inline by the orchestrator — do NOT re-read the full Design document)
 - Instruction to read existing patterns before writing (each pattern file at most ONCE; do not re-Read after Edit/Write; if the orchestrator already quoted file content in this prompt, use it instead of opening the file)
 
 Each agent must:

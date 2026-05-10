@@ -49,6 +49,18 @@ Before generating any test, explore the project to understand:
 - **Setup/teardown**: factories, fixtures, test databases, cleanup patterns
 - **Naming**: how tests are named ("should X when Y", "test_X_returns_Y", etc.)
 
+### 2.5. Extract ACs by layer
+
+Before launching agents, extract from `proposal.md` (already read in step 1) the acceptance criteria relevant to each enabled test layer:
+
+- **Unit ACs**: criteria that describe isolated function/service behavior — pure logic, transformations, edge cases, error handling.
+- **Integration ACs**: criteria that describe endpoint behavior, database operations, module interactions, request/response contracts.
+- **E2E ACs**: criteria that describe complete user flows across the UI or API surface.
+
+If a criterion is ambiguous, assign it to all relevant layers.
+
+Pass each AC subset inline in the respective agent's prompt — do NOT instruct agents to re-read `proposal.md` or `design.md`.
+
 ### 3. Generate tests (up to 3 agents in parallel)
 
 > **Layer guard**: Before launching, check the resolved `Test Scope` from step 1.
@@ -66,6 +78,7 @@ Launch agents in parallel using the Agent tool (only for enabled layers):
 **Agent A — Unit Tests:**
 
 > **Skip this agent if `unit` is `disabled` in `## Test Scope` of `ship/config.md`.**
+> **Inline context**: the unit-layer ACs and relevant file list are provided inline in your prompt by the orchestrator. Do not re-read `proposal.md` or `design.md`.
 
 Responsibility: test isolated units (services, utilities, pure functions, helpers).
 
@@ -75,7 +88,7 @@ Responsibility: test isolated units (services, utilities, pure functions, helper
    - **Happy path**: expected behavior with valid inputs
    - **Edge cases**: empty inputs, nulls, boundary values, incorrect types
    - **Error cases**: what happens when something fails (exceptions, rejections)
-   - **Acceptance criteria**: tests that directly validate the criteria from proposal.md
+   - **Acceptance criteria**: tests that directly validate the criteria provided inline in your prompt
 3. Use mocks/stubs to isolate external dependencies (DB, APIs, etc.)
 4. Follow existing test patterns in the project — do not invent new patterns
 5. Run the tests and verify they pass
@@ -84,6 +97,7 @@ Responsibility: test isolated units (services, utilities, pure functions, helper
 **Agent B — Integration Tests:**
 
 > **Skip this agent if `integration` is `disabled` in `## Test Scope` of `ship/config.md`.**
+> **Inline context**: the integration-layer ACs and relevant file list are provided inline in your prompt by the orchestrator. Do not re-read `proposal.md` or `design.md`.
 
 Responsibility: test interactions between modules, API endpoints, database operations.
 
@@ -102,6 +116,7 @@ Responsibility: test interactions between modules, API endpoints, database opera
 **Agent C — E2E Tests (if applicable):**
 
 > **Skip this agent if `e2e` is `disabled` in `## Test Scope` of `ship/config.md`.**
+> **Inline context**: the e2e-layer ACs and relevant file list are provided inline in your prompt by the orchestrator. Do not re-read `proposal.md` or `design.md`.
 
 Responsibility: test critical end-to-end user flows.
 
@@ -130,24 +145,26 @@ After all 3 agents complete:
 
 3. If any test failed after fix attempts: clearly report which ones failed and why.
 
-4. **Write `test-failures.md` to the shared scratch dir** (always — even if all tests passed):
+### 5. Write test-failures.md
 
-   - Collect all files that have failing tests from the output of the test runners (unit, integration, e2e).
-   - Write to `.context/ship-run/<task-id>/test-failures.md`:
-     - **If there are failures**, list them in this format:
-       ```markdown
-       # Test Failures
+Always write this file after all agents complete — even if all tests passed:
 
-       - src/auth/auth.service.ts (3 failures)
-       - src/users/users.repo.ts (1 failure)
-       ```
-     - **If zero failures**, write only the header (absence of list items signals all tests passed):
-       ```markdown
-       # Test Failures
-       ```
-   - This file signals to downstream phases (e.g., review) which modules need extra attention.
-   - `<task-id>` is the Linear issue ID (e.g., `MOB-1149`) or feature slug in local mode.
-   - **Standalone mode**: if running outside `/ship:run` (no scratch dir initialized), skip this step entirely.
+- Collect all files that have failing tests from the output of the test runners (unit, integration, e2e).
+- Write to `.context/ship-run/<task-id>/test-failures.md`:
+  - **If there are failures**, list them in this format:
+    ```markdown
+    # Test Failures
+
+    - src/auth/auth.service.ts (3 failures)
+    - src/users/users.repo.ts (1 failure)
+    ```
+  - **If zero failures**, write only the header (absence of list items signals all tests passed):
+    ```markdown
+    # Test Failures
+    ```
+- This file signals to downstream phases (e.g., review) which modules need extra attention.
+- `<task-id>` is the Linear issue ID (e.g., `MOB-1149`) or feature slug in local mode.
+- **Standalone mode**: if running outside `/ship:run` (no scratch dir initialized), skip this step entirely.
 
 ### 6. Read efficiency
 
