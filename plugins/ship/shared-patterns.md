@@ -24,9 +24,9 @@ Navigation index for human reference. **Do not reference this file from command 
 |---------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | develop.md | ✓ | ✓ | | | ✓ | ✓ | | | | | |
 | test.md | ✓ | ✓ | | | ✓ | ✓ | | | | | |
-| perf.md | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | | | |
-| security.md | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | | | ✓ |
-| review.md | ✓ | ✓ | ✓ | ✓ | | ✓ | | | | | |
+| perf.md | ✓ | ✓ | | | ✓ | ✓ | ✓ | | | | |
+| security.md | ✓ | ✓ | | | ✓ | ✓ | ✓ | | | | ✓ |
+| review.md | ✓ | ✓ | | | | ✓ | | | | | |
 | homolog.md | ✓ | ✓ | | | | ✓ | | | ✓ | ✓ | |
 | run.md | ✓ | ✓ | | | ✓ | ✓ | ✓ | ✓ | | ✓ | |
 | pr.md | ✓ | ✓ | | | | ✓ | | | ✓ | ✓ | |
@@ -60,3 +60,31 @@ For full details, format, and lifecycle rules: see `ship/patterns/gates.md → S
 - **WARN / FAIL**: embed all critical/high/medium findings in full; aggregate low findings into a single count line.
 - For the exact rendering format: `@ship/report-templates.md#lazy-mode`
 - For the decision algorithm: `@ship/patterns/lazy-load-findings.md`
+
+---
+
+## Orchestrator vs Sub-agent Pattern
+
+Gate and severity classification belong to the **orchestrator**, not to sub-agents.
+
+### Rule
+
+Sub-agents spawned by `ship:perf`, `ship:security`, and `ship:review` must NOT reference `@ship/patterns/gates.md` or `@ship/patterns/severity.md`. These files are loaded once in the orchestrator's context; spreading them to every sub-agent multiplies token cost with no benefit (e.g., in a fan-out of 3, `gates.md` + `severity.md` would be read 3× each).
+
+### Implementation
+
+- **Sub-agents** (Agent A/B/C in security, Backend/Frontend in perf, module agents in review): use inline minimal severity labels (critical/high/medium/low) and return raw findings only.
+- **Skill orchestrator** (ship:perf, ship:security, ship:review consolidation steps): uses inline condensed severity definitions and gate rules — NOT `@`-referenced files.
+- **Standalone fallback**: when a skill runs outside `ship:run`, it applies severity overrides from `ship/config.md` and computes the gate inline.
+- **Pipeline mode**: the skill computes a preliminary gate for the report; `ship:run` re-evaluates after applying severity overrides.
+
+### Patterns NOT needed by sub-agents
+
+| Pattern | Needed by | NOT needed by |
+|---------|-----------|---------------|
+| `gates.md` | ship:run orchestrator | perf/security/review sub-agents |
+| `severity.md` | ship:run orchestrator | perf/security/review sub-agents |
+| `storage-mode.md` | Each skill entry point | Internal sub-agents |
+| `run-context.md` | ship:run + skill entry points | Internal sub-agents |
+| `parallelism.md` | Each skill entry point | Internal sub-agents |
+| `lazy-load-findings.md` | homolog, pr | Quality phase skills |
