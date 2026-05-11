@@ -105,6 +105,20 @@ Both agents write their results to the scratch dir or return them inline. Step 3
 
 **Goal:** Map each requirement to code files (implementation confidence) and each criterion to test files (coverage confidence).
 
+**Jaccard cache check (before computing):**
+
+> **Pipeline mode guard**: only perform steps 1–3 below if a scratch dir is available (i.e., you were invoked in pipeline mode with a valid `<task-id>`). In standalone mode (no scratch dir), skip this block entirely — always compute and never write `jaccard.json`.
+
+1. Compute `diff_hash`: SHA-256 of the full diff content (read from `diff.md` or the inline diff string).
+2. Compute `spec_hash`: SHA-256 of the concatenated spec text (all REQ-XX and AC-XX descriptions, in order).
+3. Check if `.context/ship-run/<task-id>/jaccard.json` exists:
+   - If it exists: attempt to parse it as JSON.
+     - If parsing **fails** (corrupted or truncated file) → treat as cache miss, compute normally (continue below).
+     - If parsing succeeds: compare stored `diff_hash` and `spec_hash` against the computed values.
+       - If **both match** → use the cached `matrix` directly. Skip all Jaccard computations below and proceed to Step 4 with the cached matrix.
+       - If **either differs** → discard cache and compute normally (continue below).
+   - If it **does not exist** → compute normally (continue below).
+
 **Requirement → code mapping (keyword Jaccard similarity):**
 
 For each `REQ-XX`:
@@ -132,6 +146,23 @@ For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
       - Layer confidence = highest Jaccard score across all files in this layer.
 
 Overall AC coverage confidence: use the **best match across ALL enabled layers only**.
+
+**Jaccard cache save (after computing):**
+
+> **Pipeline mode guard**: only perform the save below if you are in pipeline mode (scratch dir available). Skip in standalone mode.
+
+After all Jaccard computations complete (this block is skipped if the cache was reused above), write `.context/ship-run/<task-id>/jaccard.json`:
+
+```json
+{
+  "diff_hash": "<sha256 of diff content>",
+  "spec_hash": "<sha256 of concatenated spec text>",
+  "matrix": {
+    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
+    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 }
+  }
+}
+```
 
 > **Edge case — all layers disabled:** if `unit`, `integration`, and `e2e` are all `disabled`, no TEST-category findings are emitted. All ACs land in `informational_disabled_layers`. The gate evaluates only IMPL/DRIFT findings (REQ-XX). This is intentional — the behavior mirrors what `/ship:test` does when all layers are disabled.
 

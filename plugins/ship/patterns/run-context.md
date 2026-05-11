@@ -28,6 +28,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
+| `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
 
 ### `stack.md` format
 
@@ -88,6 +89,28 @@ Single-line file with the commit SHA:
 ```
 a1b2c3d4e5f6...
 ```
+
+### `jaccard.json` format
+
+Written and read by the `analyze` agent (pipeline mode only). Invalidated whenever `diff_hash` or `spec_hash` changes.
+
+```json
+{
+  "diff_hash": "<sha256 of diff.md content>",
+  "spec_hash": "<sha256 of concatenated REQ-XX/AC-XX descriptions>",
+  "matrix": {
+    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
+    "REQ-02": { "code": ["src/bar.ts:55"], "score": 0.3 },
+    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
+    "AC-02":  { "tests": [], "score": 0.0 }
+  }
+}
+```
+
+- `diff_hash` and `spec_hash` are used as a compound cache key. If either changes, the entire matrix is recomputed.
+- `matrix` maps each REQ-XX/AC-XX ID to its best-match file(s) and highest Jaccard score.
+- `code` lists matched source file locations (`<path>:<line>`); `tests` lists matched test file locations.
+- Absent file means the cache was computed in standalone mode (no scratch dir) — no `jaccard.json` is written in that case.
 
 ---
 
