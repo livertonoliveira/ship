@@ -60,7 +60,11 @@ Run `git status` to check the repository state.
 
 **Linear mode:**
 
-Follow @ship/patterns/load-artifacts.md, then additionally load:
+Before calling `list_documents`/`get_document`, check whether `.context/ship-run/<task-id>/linear-cache.json` exists:
+- **Cache hit**: read the file. Each document entry contains only `id` and `title` — use the `id` to call `get_document` for each key present (Proposal and/or Design), skipping `list_documents` entirely. Log the `cached_at` timestamp for traceability (e.g. "Using Linear cache from <cached_at>") but do not gate on it — the cache reflects documents at homolog-approval time and Linear docs may have changed since then.
+- **Cache miss** (file absent or unreadable): fall through to the full flow in @ship/patterns/load-artifacts.md as usual.
+
+Then additionally load:
 - Use the **cached `list_comments` result** from Prerequisites to read the quality report comment posted during homolog — do NOT call `list_comments` again
 
 **Local mode:**
