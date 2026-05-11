@@ -92,8 +92,17 @@ After approval, execute ALL of the following steps without skipping any:
 > In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue_status` to confirm the status is "Done".
 > If either check fails, retry the corresponding step before continuing.
 
-3. Clean up temporary local findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.
-4. Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
+3. **Write Linear document cache** — write `.context/ship-run/<task-id>/linear-cache.json` so that `ship:pr` can skip redundant `list_documents`/`get_document` calls. Build the JSON using the Proposal and Design documents loaded in Step 1, omitting any key whose document was not found:
+   ```json
+   {
+     "cached_at": "<ISO 8601 timestamp of this write>",
+     "proposal": { "id": "...", "title": "..." },
+     "design":   { "id": "...", "title": "..." }
+   }
+   ```
+   The `cached_at` field records the moment the cache was written (homolog approval time). `ship:pr` should log it for traceability but must not gate on it — Linear docs may have changed since homolog. Omit any key whose document was not found — do **not** write `null` values. Write the file with `mkdir -p .context/ship-run/<task-id>` then use the Bash tool to write the JSON. This step is best-effort: if writing fails for any reason, log a warning and continue — it must never block the homolog phase.
+4. Clean up temporary local findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.
+5. Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
 
 ---
 
