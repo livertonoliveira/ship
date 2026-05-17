@@ -30,7 +30,7 @@ Read:
 1. `ship/config.md` — Test framework, commands, conventions, and **`Test Scope`** section
 2. `ship/changes/<feature>/proposal.md` — Acceptance criteria (guide the tests)
 3. `ship/changes/<feature>/design.md` — Files created/modified
-4. `ship/changes/<feature>/tasks.md` — Testing section to update
+4. `ship/changes/<feature>/tasks.md` — Testing section to update, **and the `#### Scenarios` Gherkin block per task** (Linear mode: the task issue body carries the full `## Scenarios` Gherkin — already in the orchestrator-injected context)
 
 **Resolve active test layers from `Test Scope`:**
 After reading `ship/config.md`, extract the `## Test Scope` section. For each layer (`unit`, `integration`, `e2e`), check if it is `enabled` or `disabled`. If the section is absent, treat all three layers as `enabled` (backward-compatible default).
@@ -49,17 +49,14 @@ Before generating any test, explore the project to understand:
 - **Setup/teardown**: factories, fixtures, test databases, cleanup patterns
 - **Naming**: how tests are named ("should X when Y", "test_X_returns_Y", etc.)
 
-### 2.5. Extract ACs by layer
+### 2.5. Resolve scenarios by layer
 
-Before launching agents, extract from `proposal.md` (already read in step 1) the acceptance criteria relevant to each enabled test layer:
+Before launching agents, parse the task's `## Scenarios` Gherkin block (from the issue body in Linear mode, or the `#### Scenarios` block in `tasks.md` in local mode). Each `Scenario` / `Scenario Outline` is tagged `@SC-XX`, `@AC-YY`, and exactly one layer tag (`@unit` | `@integration` | `@e2e`).
 
-- **Unit ACs**: criteria that describe isolated function/service behavior — pure logic, transformations, edge cases, error handling.
-- **Integration ACs**: criteria that describe endpoint behavior, database operations, module interactions, request/response contracts.
-- **E2E ACs**: criteria that describe complete user flows across the UI or API surface.
+- Group scenarios strictly by their declared `@layer` tag. **Do NOT re-derive happy/edge/error cases or re-classify by guessing the layer** — the scenario set is authoritative and the layer is already declared. This is the work the spec phase already did; it is now input, not work.
+- Pass each layer's `@SC-XX` subset (full Given/When/Then + any `Examples` table) inline in the respective agent's prompt. Do NOT instruct agents to re-read `proposal.md`, `design.md`, or the issue.
 
-If a criterion is ambiguous, assign it to all relevant layers.
-
-Pass each AC subset inline in the respective agent's prompt — do NOT instruct agents to re-read `proposal.md` or `design.md`.
+**Fallback (backward compatibility):** if a layer is enabled but the task has **zero** `@SC-XX` scenarios tagged for it (e.g., spec authored at `Scenario Depth: none`, or a legacy scenario-free spec), fall back to the previous behavior **for that layer only**: extract the relevant acceptance criteria from `proposal.md` and let the agent derive happy/edge/error tests. If the spec has no scenarios at all, the entire phase behaves exactly as before this feature.
 
 ### 3. Generate tests (up to 3 agents in parallel)
 
@@ -84,11 +81,8 @@ Responsibility: test isolated units (services, utilities, pure functions, helper
 
 0. **Read efficiency**: each test pattern / source file at most ONCE per agent. Do not re-Read after Edit/Write — those tools validate. If a snippet was already quoted in this prompt, reuse it instead of reopening.
 1. Identify all services, utilities, and functions created/modified in the feature
-2. For each one, generate tests covering:
-   - **Happy path**: expected behavior with valid inputs
-   - **Edge cases**: empty inputs, nulls, boundary values, incorrect types
-   - **Error cases**: what happens when something fails (exceptions, rejections)
-   - **Acceptance criteria**: tests that directly validate the criteria provided inline in your prompt
+2. **Scenario mode (normal case — `@SC-XX` scenarios provided inline):** for each provided `@SC-XX`, generate **exactly one** test where arrange = the scenario's `Given`/`Background`, act = the `When`, assert = the `Then`. A `Scenario Outline` → one parameterized/table-driven test iterating its `Examples` rows. Tag every test with a `// TEST-SC-XX` marker comment and name it after the scenario (referencing SC-XX). Translate Gherkin steps into the project's **native** test framework — do NOT assume Cucumber/step-defs unless the project already uses them. Do not invent scenarios beyond those provided; if a provided scenario obviously implies a sub-case, still tag it with the same parent `// TEST-SC-XX`.
+   **Fallback mode (no scenarios provided for this layer):** generate tests covering — **Happy path** (valid inputs), **Edge cases** (empty/null/boundary/wrong types), **Error cases** (exceptions/rejections), and **Acceptance criteria** (directly validate the ACs provided inline).
 3. Use mocks/stubs to isolate external dependencies (DB, APIs, etc.)
 4. Follow existing test patterns in the project — do not invent new patterns
 5. Run the tests and verify they pass
@@ -103,12 +97,8 @@ Responsibility: test interactions between modules, API endpoints, database opera
 
 0. **Read efficiency**: each test pattern / source file at most ONCE per agent. Do not re-Read after Edit/Write — those tools validate. If a snippet was already quoted in this prompt, reuse it instead of reopening.
 1. Identify the endpoints, repositories, and module interactions of the feature
-2. For each endpoint/interaction, generate tests covering:
-   - **Request/Response**: correct status codes, correct body, headers
-   - **Validation**: invalid inputs return appropriate errors
-   - **Authentication/Authorization**: protected endpoints reject unauthorized access (if applicable)
-   - **Database operations**: data is created/read/updated/deleted correctly
-   - **Error handling**: internal errors return appropriate responses to the client
+2. **Scenario mode (normal case — `@SC-XX` scenarios provided inline):** for each provided `@SC-XX`, generate **exactly one** test (arrange=`Given`, act=`When`, assert=`Then`; `Scenario Outline` → one parameterized test over its `Examples`). Tag each with `// TEST-SC-XX` and name it after the scenario. Translate Gherkin into the project's native integration setup — do NOT assume Cucumber.
+   **Fallback mode (no scenarios provided for this layer):** for each endpoint/interaction, generate tests covering — **Request/Response** (status codes, body, headers), **Validation** (invalid inputs → appropriate errors), **Authentication/Authorization** (protected endpoints reject unauthorized access, if applicable), **Database operations** (CRUD correctness), **Error handling** (internal errors → appropriate client responses).
 3. Use the existing integration test setup in the project (test database, supertest, httptest, etc.)
 4. Run the tests and verify they pass
 5. If any fail: fix (up to 2 iterations)
@@ -124,9 +114,8 @@ Responsibility: test critical end-to-end user flows.
 1. Check if the project has an e2e framework configured (Playwright, Cypress, etc.) via config.md
 2. If there is NO e2e framework: **do not generate e2e tests**. Report (in artifact language) that e2e was skipped due to no framework detected — distinguish this clearly from a config-disabled skip. Example: "E2E pulado: nenhum framework e2e detectado no projeto (Playwright, Cypress, etc.). Para ativar, configure um framework e2e (ex: Playwright ou Cypress)."
 3. If there IS an e2e framework:
-   - Identify the critical user flows affected by the feature
-   - Generate tests that simulate the user interacting with the application
-   - Use page objects/selectors consistent with those existing in the project
+   - **Scenario mode (normal case — `@SC-XX` scenarios provided inline):** generate **exactly one** e2e test per provided `@SC-XX` (arrange=`Given`, act=`When`, assert=`Then`; `Scenario Outline` → one parameterized test over its `Examples`). Tag each with `// TEST-SC-XX` and name it after the scenario. Use page objects/selectors consistent with the project; translate Gherkin into the project's native e2e framework — do NOT assume Cucumber.
+   - **Fallback mode (no scenarios provided):** identify the critical user flows affected by the feature and generate tests that simulate the user interacting with the application, using consistent page objects/selectors.
    - Run the tests and verify they pass
    - If any fail: fix (up to 2 iterations)
 
@@ -186,7 +175,7 @@ Avoid wasted Reads — they are the dominant token sink in this phase.
 - **Tests must be deterministic**: no dependency on timestamps, random values, or uncontrolled external state
 - **Use the project's patterns**: if the project uses factories, use factories. If it uses fixtures, use fixtures.
 - **Do not install test frameworks**: use what is already configured in the project
-- **Acceptance criteria guide the tests**: each criterion from proposal.md must have at least one corresponding test
+- **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one corresponding `// TEST-SC-XX`-tagged test (a `Scenario Outline` counts as one parameterized test). ACs are covered transitively through their scenarios. Only in the fallback case (no scenarios for a layer) does the rule become "each acceptance criterion from proposal.md must have at least one corresponding test".
 - **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Respect `Test Scope`**: only launch agents for layers that are `enabled` in `ship/config.md → ## Test Scope`. If the section is absent, default all layers to `enabled`.
 - **ALWAYS launch 3 agents in parallel when all layers are enabled**: even if one of them concludes there are no tests to generate for its type, it must report this
