@@ -53,6 +53,7 @@ Because Ship is purely a set of Claude Code slash commands (prompt-toolkit), it 
 | Feature planning in free-form chat | Linear project with granular tasks (<400 lines each) |
 | "Please review this" | 3 parallel agents: performance + security + SOLID/DRY/KISS |
 | Ad-hoc test coverage | Unit + integration + e2e generated in parallel |
+| Test cases re-derived every session | Gherkin @SC-XX scenarios defined at spec time, consumed by develop, test, and analyze |
 | Manual OWASP eyeballing | Automated security scan on every diff with policy gate |
 | "Initial commit" × 20 | Atomic Conventional Commits by design |
 | Session crashes mid-pipeline | Persistent artifacts in Linear or local markdown |
@@ -144,14 +145,14 @@ That's the complete flow. Each step builds on the previous one: `spec` creates s
 | Command | Purpose |
 |---------|---------|
 | `/ship:init` | Initialize Ship in a project — detects stack, conventions, configures Linear, creates `ship/config.md` |
-| `/ship:spec` | Deep specification: decompose a feature into granular tasks (<400 lines), create Linear project with milestones and issues |
+| `/ship:spec` | Deep specification: decompose a feature into granular tasks (<400 lines), define Gherkin @SC-XX scenarios per AC, create Linear project with milestones and issues |
 | `/ship:run` | Full development pipeline for a task: develop → test → perf → security → review → analyze → homolog |
 | `/ship:develop` | Implement code following project conventions (can run standalone or inside `/ship:run`) |
-| `/ship:test` | Generate and run tests — unit, integration, and e2e — with 3 parallel agents |
+| `/ship:test` | Generate and run tests — unit, integration, and e2e — using predefined @SC-XX scenarios; 3 parallel agents |
 | `/ship:perf` | Performance analysis of the diff — detects project type and adapts agents accordingly |
 | `/ship:security` | OWASP (Open Web Application Security Project) security scan of the diff with 3 parallel agents by attack category |
 | `/ship:review` | Code review focused on SOLID, DRY, KISS, Clean Code, and project consistency |
-| `/ship:analyze` | Drift detection: map spec→code→tests, detect gaps, gate PASS/WARN/FAIL |
+| `/ship:analyze` | Drift detection: map spec→code→tests, correlate @SC-XX scenarios to tests, detect gaps, gate PASS/WARN/FAIL |
 | `/ship:homolog` | Final quality report + user acceptance approval |
 | `/ship:pr` | Create PR (Pull Request) with atomic Conventional Commits and aggregated quality report |
 | `/ship:update` | Update all Ship command files to the latest version |
@@ -167,7 +168,7 @@ Audit commands are **project-wide** — they scan the entire codebase for system
 | `/ship:audit:database` | Project-wide database audit — routes to MongoDB, PostgreSQL, or MySQL methodology |
 | `/ship:audit:security` | Project-wide AppSec (Application Security) audit — OWASP Top 10, CWE mapping, A-F score, PoC for critical/high |
 | `/ship:audit:run` | Run all applicable audits in parallel; produces a consolidated gate report |
-| `/ship:audit:tests` | Project-wide test coverage audit — maps AC/REQ ↔ existing tests, reports gaps by layer |
+| `/ship:audit:tests` | Project-wide test coverage audit — maps AC/REQ ↔ existing tests, correlates @SC-XX scenarios project-wide, reports gaps by layer |
 
 ---
 
@@ -208,6 +209,14 @@ After `/ship:init`, Ship creates `ship/config.md` in your project root. This fil
 - Artifact language: en  # Language for specs, issues, docs, milestones, reports
 - Commit style: Conventional Commits
 - Atomic commits: one logical change per commit
+
+## Test Scope
+- unit: enabled
+- integration: enabled
+- e2e: disabled
+
+## Scenario Depth
+- depth: full            # none | light | full
 ```
 
 ### Pipeline Profiles
@@ -260,6 +269,30 @@ The `Test Scope` section in `ship/config.md` controls which test layers `/ship:t
 Disabled layers are **not** generated during the pipeline. Use `/ship:audit:tests` to audit and backfill coverage for disabled layers project-wide.
 
 > **Note:** `/ship:analyze` detects drift only within the **enabled** Test Scope layers; `/ship:audit:tests` audits **all** layers project-wide regardless of pipeline config.
+
+### Scenario Depth
+
+The `Scenario Depth` section in `ship/config.md` controls how many Gherkin BDD (Behavior-Driven Development) scenarios `/ship:spec` generates per acceptance criterion:
+
+```markdown
+## Scenario Depth
+- depth: full            # none | light | full
+```
+
+| Value | Behavior |
+|-------|----------|
+| `none` | No Gherkin scenarios generated — spec contains only ACs and requirements |
+| `light` | Happy-path scenario only per AC |
+| `full` | Full scenario set per AC: happy path + edge cases + error cases (default) |
+
+When `depth` is `light` or `full`, `/ship:spec` tags each scenario with `@SC-XX`, `@AC-YY`, and the owning test layer. These tags are then consumed throughout the pipeline:
+
+- **`/ship:develop`** — implements code to satisfy every `@SC-XX`
+- **`/ship:test`** — generates one `TEST-SC-XX`-tagged test per scenario instead of re-deriving cases
+- **`/ship:analyze`** — correlates `@SC-XX` scenarios to tests and adds a Scenarios Status table to the drift report
+- **`/ship:audit:tests`** — correlates scenarios project-wide per layer
+
+Gherkin step prose follows the configured `Artifact language`; keywords (`Given`, `When`, `Then`), tags (`@SC-XX`, `@AC-YY`), and markers (`TEST-SC-XX`, `IMPL-SC-XX`) stay in English.
 
 ---
 
