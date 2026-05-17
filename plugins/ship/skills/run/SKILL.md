@@ -194,6 +194,8 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 
 6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `@ship/patterns/language.md`.
 
+7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
+
 > **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
 >
 > Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
