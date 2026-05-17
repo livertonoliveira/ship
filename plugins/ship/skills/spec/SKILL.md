@@ -78,8 +78,23 @@ With the results from both agents, build the specification:
 For each requirement:
 - Assign an ID (REQ-01, REQ-02, ...)
 - Write a detailed description including context, expected behavior, edge cases, and constraints
-- Define specific, testable acceptance criteria (each must have a clear pass/fail condition)
+- Define specific, testable acceptance criteria — assign each an explicit ID (`AC-01`, `AC-02`, ... sequential across the whole spec) with a clear pass/fail condition
 - Identify which area it belongs to (backend, frontend, shared, infrastructure)
+
+#### Scenario enumeration
+
+Resolve the scenario rigor first: read `ship/config.md` → `## Scenario Depth` → `depth`. If the section is absent, treat it as `full`.
+
+- `none`  — skip scenario enumeration entirely. Do not emit a Scenarios section anywhere. The pipeline then behaves exactly as it did before this feature existed.
+- `light` — for each `AC-XX`, write at least the nominal scenario plus the dominant error scenario.
+- `full`  — for each `AC-XX`, write the nominal, the key edge, and the dominant error scenario. Use `Scenario Outline` + `Examples` to collapse combinatorial edge/error variants into a single scenario instead of repeating near-identical ones.
+
+When depth is `light` or `full`, enumerate **behavioral scenarios in Gherkin** that prove each acceptance criterion:
+- Assign each `Scenario` / `Scenario Outline` a spec-global `@SC-XX` ID (sequential across the whole spec — stable, never renumbered when tasks are re-split).
+- Tag every scenario with the `@AC-YY` it proves and exactly one owning test layer: `@unit`, `@integration`, or `@e2e`.
+- Use `Background:` for preconditions shared across scenarios of the same task.
+- Scenarios must be concrete, testable instances — never restatements of the AC text.
+- One `Feature` per task. A task's scenarios are the subset of `@SC-XX` whose `@AC-YY` belongs to that task.
 
 #### Technical design
 
@@ -179,8 +194,15 @@ Business context. Who benefits and how. Not a one-liner.>
 edge cases, and constraints.>
 
 **Acceptance Criteria:**
-- [ ] <Specific, testable criterion with clear pass/fail>
-- [ ] <Another criterion>
+- [ ] **AC-01**: <Specific, testable criterion with clear pass/fail>
+- [ ] **AC-02**: <Another criterion>
+
+**Scenario Index:** <Compact index only — the full Gherkin lives in the
+issues/tasks (single source of truth). SC IDs here MUST match the issue
+Gherkin. Omit this entire block when Scenario Depth is `none`.>
+- SC-01 → AC-01 · unit · <one-line scenario title>
+- SC-02 → AC-01 · unit · <one-line scenario title>
+- SC-03 → AC-02 · integration · <one-line scenario title>
 
 ### REQ-02: <Requirement Name>
 ...
@@ -298,11 +320,49 @@ to start without asking questions. Include:
 
 ## Acceptance Criteria
 <Objective, verifiable checkboxes. Each must be testable/observable
-by whoever does the code review.>
-- [ ] <Specific behavior 1>
-- [ ] <Specific behavior 2>
+by whoever does the code review. Each carries an explicit AC-XX ID.>
+- [ ] **AC-01**: <Specific behavior 1>
+- [ ] **AC-02**: <Specific behavior 2>
 - [ ] Typecheck passes
 - [ ] Tests pass
+
+## Scenarios
+<Behavioral scenarios in Gherkin. One Feature per task. Each
+Scenario / Scenario Outline is tagged @SC-XX (spec-global, stable),
+@AC-YY (the criterion it proves), and exactly one owning test layer
+(@unit | @integration | @e2e). Background = shared Given. Use
+Scenario Outline + Examples to collapse combinatorial cases into a
+single SC. This block is the contract for /ship:develop and
+/ship:test — keep it concrete and testable, not a restatement of
+the ACs. Omit this entire section when Scenario Depth is `none`.>
+
+```gherkin
+Feature: <task capability>
+
+  Background:
+    Given <shared precondition>
+
+  @SC-01 @AC-01 @unit
+  Scenario: <nominal name>
+    Given <state>
+    When <action>
+    Then <observable outcome>
+
+  @SC-02 @AC-01 @unit
+  Scenario Outline: <edge/error family>
+    When <action with "<input>">
+    Then <"<result>">
+    Examples:
+      | input        | result          |
+      | empty string | ValidationError |
+      | null         | ValidationError |
+
+  @SC-03 @AC-02 @integration
+  Scenario: <name>
+    Given <state>
+    When <action>
+    Then <outcome>
+```
 
 ## Notes
 - Estimated lines: ~<n> (must be < 400)
@@ -314,7 +374,7 @@ by whoever does the code review.>
 **Milestone:** Link to the appropriate milestone
 **Project:** Link to the project
 
-After all issues are created, update descriptions with cross-references to related/dependent issues.
+After all issues are created, update descriptions with cross-references to related/dependent issues. In the same pass, verify that every `SC-XX` listed in the Proposal **Scenario Index** appears in exactly one issue's `## Scenarios` Gherkin with a matching `@AC-YY`, and that no issue Gherkin references an `SC-XX`/`AC-YY` absent from the Proposal. Reconcile any mismatch before finishing.
 
 ---
 
@@ -357,8 +417,31 @@ Same content as the Linear Design document above, written to `ship/changes/<feat
 <Same rich detail>
 
 #### Acceptance Criteria
-- [ ] <criterion>
-- [ ] <criterion>
+- [ ] **AC-01**: <criterion>
+- [ ] **AC-02**: <criterion>
+
+#### Scenarios
+<Gherkin. One Feature per task. Each Scenario/Scenario Outline tagged
+@SC-XX (spec-global, stable), @AC-YY, and one of @unit|@integration|@e2e.
+Background = shared Given. Scenario Outline+Examples = collapse
+combinatorial cases into one SC. Contract for /ship:develop and
+/ship:test. Omit this section when Scenario Depth is `none`.>
+
+```gherkin
+Feature: <task capability>
+
+  @SC-01 @AC-01 @unit
+  Scenario: <nominal name>
+    Given <state>
+    When <action>
+    Then <observable outcome>
+
+  @SC-02 @AC-02 @integration
+  Scenario: <name>
+    Given <state>
+    When <action>
+    Then <outcome>
+```
 
 ---
 
@@ -414,7 +497,12 @@ After creating everything:
 - **Tasks MUST be < 400 lines each**: This is non-negotiable. If a task would exceed this, split it further.
 - **Tasks must be independently implementable**: Each task should compile/build on its own.
 - **Issue descriptions must be rich**: Follow the Context → What to do → Acceptance Criteria → Notes structure. A developer should be able to start without asking questions.
-- **Acceptance criteria must be testable**: Each one has a clear pass/fail condition.
+- **Acceptance criteria must be testable**: Each one has a clear pass/fail condition and an explicit `AC-XX` ID (sequential across the whole spec).
+- **Scenarios are testable instances, not restatements**: Each `@SC-XX` must encode concrete state/action/outcome (Given/When/Then), not paraphrase the AC text. When Scenario Depth is `light` or `full`, every `AC-XX` must have ≥1 scenario.
+- **SC IDs are spec-global and stable**: Number `@SC-XX` sequentially across the entire spec. Never renumber when tasks are split or merged — an SC keeps its ID for its whole life.
+- **Gherkin lives in the issue, not the code budget**: Scenario Gherkin counts toward issue/task *readability*, never toward the <400-line code-change budget. Do not shrink scenarios to protect the line limit.
+- **Proposal index mirrors issue Gherkin**: The Proposal carries only the compact Scenario Index; the full Gherkin is single-sourced in the issues/tasks. SC IDs must match between the two (verified in the cross-reference pass).
+- **Scenario Depth `none` = pre-feature behavior**: Emit no Scenarios section anywhere; downstream phases detect the absence of `SC-XX` and behave exactly as before this feature.
 - **Never fabricate requirements**: If the input is vague, ask the user. Do not assume.
 - **Technical context must reference real code**: Cite existing files and patterns, not generic examples.
 - **Milestones represent deliverable value**: Not time-based sprints. Each milestone should produce something demonstrable.

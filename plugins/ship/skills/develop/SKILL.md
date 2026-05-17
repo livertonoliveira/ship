@@ -46,6 +46,9 @@ Resolve stack and diff using the following priority:
 - If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
 - Otherwise → fallback: run `git diff` to obtain the diff (current behavior)
 
+**Scenarios:**
+- Also load the task's `## Scenarios` Gherkin block (the issue body in Linear mode; the `#### Scenarios` block in `tasks.md` in local mode). These tagged `@SC-XX` scenarios are the behavioral contract this implementation must satisfy. If the task has no scenarios (Scenario Depth `none` / legacy spec), proceed exactly as before — implement against the ACs only.
+
 ### 2. Mark issue as In Progress
 
 > **MANDATORY — LINEAR MODE ONLY — DO THIS BEFORE ANY CODE IS WRITTEN**
@@ -76,6 +79,8 @@ For each file/module to implement:
 2. **Implement following exactly the existing patterns** — do not introduce new patterns without reason
 3. **Follow the Design document**: technical decisions have already been made, do not re-decide them
 4. **Follow config.md conventions**: naming, folder structure, imports
+5. **Satisfy every scenario**: implement so that each `@SC-XX` mapped to this task is satisfied by the code path — treat each scenario's `Then` (and every `Examples` row of a `Scenario Outline`) as a behavior the implementation MUST produce. Do NOT write tests here — scenarios guide the implementation; `/ship:test` writes the tests from the same scenarios.
+6. **Drop marker comments where naming diverges**: when the code implementing a scenario/requirement uses naming that diverges from the spec wording (so Jaccard correlation in `/ship:analyze` would miss it), add an `// IMPL-SC-XX` (or `// IMPL-REQ-XX`) comment at the implementation site.
 
 ### 5. Parallelism by module (when applicable)
 
@@ -86,6 +91,7 @@ If independent modules were identified, launch **parallel agents** via the Agent
 Each agent receives:
 - The specific module to implement (which files, which logic)
 - The module-specific Design section (extracted and passed inline by the orchestrator — do NOT re-read the full Design document)
+- The `@SC-XX` scenarios whose behavior the module must satisfy (passed inline by the orchestrator — do NOT re-read the issue/tasks.md)
 - Instruction to read existing patterns before writing (each pattern file at most ONCE; do not re-Read after Edit/Write; if the orchestrator already quoted file content in this prompt, use it instead of opening the file)
 
 Each agent must:
@@ -139,6 +145,7 @@ Avoid wasted Reads — they are the dominant token sink in this phase.
 ## Rules
 
 - **Never add features beyond scope**: implement ONLY what is in the Proposal/Design documents or proposal.md/design.md
+- **Do NOT write tests in develop**: scenarios guide implementation only; `/ship:test` (Phase 3) writes the tests from the same `@SC-XX` scenarios. This preserves Ship's develop→test phase separation.
 - **Follow existing patterns**: if the project uses classes, use classes. If it uses functions, use functions. Do not impose your own style.
 - **Do not add dependencies unnecessarily**: if the project already has a library that does X, use it instead of installing another
 - **Do not add comments, docstrings, or type annotations to code you did not modify**: touch only what is necessary

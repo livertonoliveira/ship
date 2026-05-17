@@ -18,7 +18,7 @@ You are the Ship initialization agent. Your mission is to analyze the current pr
 
 Check if `ship/config.md` already exists at the project root.
 - If it exists: inform the user and ask if they want to reconfigure.
-  - If reconfiguring: read the existing file and **preserve the `Test Scope` section** if present — do not overwrite it. Extract the existing values to pre-populate the interactive prompt.
+  - If reconfiguring: read the existing file and **preserve the `Test Scope` and `Scenario Depth` sections** if present — do not overwrite them. Extract the existing values to pre-populate the interactive prompt.
 - If it does not exist: proceed with initialization.
 
 ### 2. Explore the project (2 agents in parallel)
@@ -113,6 +113,14 @@ With the results from both agents, create:
 - integration: [default based on project type]
 - e2e: [default based on project type]
 
+## Scenario Depth
+# How rigorously /ship:spec captures Gherkin scenarios per acceptance
+# criterion, threaded through develop/test/analyze.
+#   none  — no Scenarios section; pipeline behaves exactly as pre-feature
+#   light — every AC gets >=1 scenario (nominal + dominant error)
+#   full  — nominal + key edge + error per AC (Scenario Outline for combinatorics)
+- depth: full
+
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
@@ -152,6 +160,12 @@ Substitute `[default based on project type]` placeholders in the `Test Scope` se
 
 **Preservation rule:** If `ship/config.md` already exists and already contains a `## Test Scope` section, keep those existing values verbatim — do not overwrite with defaults.
 
+#### Scenario Depth default
+
+`## Scenario Depth → depth` defaults to `full` for **all** project types (no per-type table). Write `- depth: full` unless the user changes it in question 5.
+
+**Preservation rule:** If `ship/config.md` already exists and already contains a `## Scenario Depth` section, keep the existing value verbatim — do not overwrite with the default.
+
 > **Gate Behavior options:**
 > - `on_fail` — what to do when the gate finds critical/high issues:
 >   - `ask` (default): prompt the user before fixing
@@ -185,7 +199,15 @@ Ask the user the following questions **one block at a time** (present all at onc
 
 If the existing `ship/config.md` already contains a `## Test Scope` section, skip question 4 and display a note: "Test Scope already configured — preserving existing values."
 
-Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, and the `Test Scope` values in the config based on the user's answers.
+> **5. Scenario Depth** — How thoroughly should `/ship:spec` capture Gherkin scenarios per acceptance criterion? Default: `full`.
+> - **full** — nominal + key edge + error scenario per AC (recommended)
+> - **light** — nominal + dominant error scenario per AC
+> - **none** — no scenarios; pipeline behaves exactly as before this feature
+> Press Enter to keep `full`, or reply with `light` / `none`.
+
+If the existing `ship/config.md` already contains a `## Scenario Depth` section, skip question 5 and display a note: "Scenario Depth already configured — preserving existing value."
+
+Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, the `Test Scope` values, and `Scenario Depth → depth` in the config based on the user's answers.
 
 ### 6. Present to the user
 

@@ -139,12 +139,14 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Field | Type | Description |
 |-------|------|-------------|
 | Severity | critical \| high \| medium \| low | See severity.md — Drift domain |
-| Category | IMPL \| TEST \| DRIFT | IMPL = implementation gap, TEST = test coverage gap, DRIFT = low-confidence match |
+| Category | IMPL \| TEST \| SCENARIO \| DRIFT | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match |
 | File | path or — | Source file where the issue was detected |
 | Description | string | What is missing or mismatched |
 | Suggestion | string | How to fix: implement the req, add a test, or add an override marker |
 | Requirement ID | REQ-XX or — | Linked requirement, if applicable |
 | Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
+| Scenario ID | SC-XX or — | Linked scenario, if applicable |
+| Layer | unit \| integration \| e2e or — | Scenario's tagged test layer (SCENARIO findings only) |
 
 ### Severity Mapping
 
@@ -153,7 +155,8 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | critical | Requirement with 0 code matches | FAIL |
 | high | Requirement confidence < 0.5 | FAIL |
 | medium | Acceptance criterion with 0 test matches | WARN |
-| low | Criterion confidence < 0.5 | PASS |
+| medium | Scenario with 0 test matches in its tagged enabled layer | WARN |
+| low | Criterion or scenario confidence < 0.5 | PASS |
 
 ### Example Reports
 

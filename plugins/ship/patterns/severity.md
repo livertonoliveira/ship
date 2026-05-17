@@ -52,13 +52,17 @@ Uses Core Web Vitals thresholds:
 | critical | Requirement has zero code matches (confidence = 0) — completely unimplemented | REQ-05 not found anywhere in diff |
 | high | Requirement has low confidence match (0 < confidence < 0.5) — implementation uncertain | REQ-03 found in loosely related file, confidence 0.2 |
 | medium | Acceptance criterion has zero test matches — criterion not tested | AC-07 not covered by any test |
+| medium | Scenario has zero test matches in its tagged enabled layer — scenario not tested | SC-09 (@integration) not covered by any test |
 | low | Acceptance criterion has low confidence test match — coverage uncertain | AC-12 mentioned in unrelated test, confidence 0.1 |
+| low | Scenario has low confidence test match — coverage uncertain | SC-04 loosely matched, confidence 0.2 |
 
 ### Override Markers
 
 To assert known-correct coverage and bypass keyword matching:
 - `IMPL-REQ-XX` in source code → forces requirement confidence to 1.0 (implemented)
-- `TEST-REQ-XX` in test file → forces criterion confidence to 1.0 (tested)
+- `IMPL-SC-XX` in source code → hint that a scenario's behavior lives in divergently-named code (does not by itself prove a test exists)
+- `TEST-REQ-XX` / `TEST-AC-XX` in test file → forces criterion confidence to 1.0 (tested); grants child scenarios 0.8 partial credit
+- `TEST-SC-XX` in test file → forces scenario `SC-XX` confidence to 1.0 (tested)
 
 Use override markers when requirement names don't match code naming conventions (e.g., spec says "cache invalidation" but code uses "eviction").
 
