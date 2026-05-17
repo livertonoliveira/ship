@@ -59,6 +59,10 @@ Determine how you were invoked:
 - A **requirement** is any line or block matching `REQ-\d+` followed by a description (e.g., `REQ-01: User authentication via OAuth`).
 - An **acceptance criterion** is any line or block matching `AC-\d+` followed by a description (e.g., `AC-03: Login must complete in < 2s`).
 - If no REQ-XX or AC-XX markers are found, infer them from the proposal's functional requirements and acceptance criteria sections and assign IDs sequentially.
+- A **scenario** is a Gherkin `Scenario` / `Scenario Outline` in the issue/task `## Scenarios` block, tagged `@SC-\d+`, `@AC-\d+`, and exactly one layer tag (`@unit` | `@integration` | `@e2e`). In Linear mode the full Gherkin lives in the **issue body** (already fetched via `get_issue`); the Proposal carries only a compact Scenario Index — parse `SC-XX` from the issue, not the index. In Local mode parse it from the task `#### Scenarios` block in `tasks.md`.
+  - Record per scenario: `sc.id`, `sc.ac` (parent AC-YY), `sc.layer`.
+  - **Gherkin-aware keyword set (critical for Jaccard signal):** from each scenario, take ONLY the `When` and `Then` step text plus any `Examples` column headers. **Exclude** the `Given`/`Background` steps (state setup = noise), all Gherkin keywords (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), every `@tag`, table `|` pipes, and `<placeholder>` angle brackets. Then tokenize the remaining identifiers the same way as code (camelCase/snake_case/PascalCase → lowercased tokens).
+- **Backward compatibility:** if the spec contains no `@SC-\d+` scenarios at all, the scenario tier is empty and analyze behaves exactly as before this feature (AC-only correlation).
 
 ---
 
@@ -84,8 +88,8 @@ Determine how you were invoked:
 3. For each test file, extract: test names (strings in `it(`, `test(`, `describe(` blocks) and build a keyword set.
 
 **Override marker detection:**
-- Scan all changed source files for comments containing `IMPL-REQ-\d+` (e.g., `// IMPL-REQ-05`).
-- Scan all test files for comments containing `TEST-REQ-\d+` or `TEST-AC-\d+` (e.g., `// TEST-REQ-03` or `// TEST-AC-03`).
+- Scan all changed source files for comments containing `IMPL-REQ-\d+` or `IMPL-SC-\d+` (e.g., `// IMPL-REQ-05`, `// IMPL-SC-12`).
+- Scan all test files for comments containing `TEST-REQ-\d+`, `TEST-AC-\d+`, or `TEST-SC-\d+` (e.g., `// TEST-REQ-03`, `// TEST-AC-03`, `// TEST-SC-08`).
 - Record these markers — they bypass keyword matching in Step 3.
 
 ---
@@ -110,7 +114,7 @@ Both agents write their results to the scratch dir or return them inline. Step 3
 > **Pipeline mode guard**: only perform steps 1–3 below if a scratch dir is available (i.e., you were invoked in pipeline mode with a valid `<task-id>`). In standalone mode (no scratch dir), skip this block entirely — always compute and never write `jaccard.json`.
 
 1. Compute `diff_hash`: SHA-256 of the full diff content (read from `diff.md` or the inline diff string).
-2. Compute `spec_hash`: SHA-256 of the concatenated spec text (all REQ-XX and AC-XX descriptions, in order).
+2. Compute `spec_hash`: SHA-256 of the concatenated spec text — all REQ-XX and AC-XX descriptions **followed by every `@SC-XX` scenario block (heading + When + Then + Examples + layer tag)**, in order. Including the scenario blocks is correctness-critical: editing a scenario without touching its AC must invalidate the cache.
 3. Check if `.context/ship-run/<task-id>/jaccard.json` exists:
    - If it exists: attempt to parse it as JSON.
      - If parsing **fails** (corrupted or truncated file) → treat as cache miss, compute normally (continue below).
@@ -147,6 +151,16 @@ For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
 
 Overall AC coverage confidence: use the **best match across ALL enabled layers only**.
 
+**Scenario → test mapping (per scenario, only its tagged layer):**
+
+Skip this tier entirely if the spec has no `@SC-\d+` scenarios. Otherwise, for each `SC-XX` evaluate **only the single layer named in its `@layer` tag** (the scenario already declares its owning layer — this is more precise than the AC heuristic across all layers):
+
+1. If that layer is **disabled** in `test_scope` → do NOT emit a finding. Record the SC-ID in `informational_disabled_layers[layer]` alongside any ACs. Skip further matching for this scenario.
+2. If the layer is **enabled**:
+   a. If a `TEST-SC-XX` marker is found in any test file in this layer → scenario confidence = 1.0.
+   b. Else if a `TEST-AC-YY` or `TEST-REQ` marker for this scenario's parent AC (`sc.ac`) is found in this layer → scenario confidence = 0.8 (AC-level coverage gives partial credit; scenario-specificity is unverified). This preserves backward compatibility for teams already using AC markers.
+   c. Otherwise: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
+
 **Jaccard cache save (after computing):**
 
 > **Pipeline mode guard**: only perform the save below if you are in pipeline mode (scratch dir available). Skip in standalone mode.
@@ -159,7 +173,8 @@ After all Jaccard computations complete (this block is skipped if the cache was 
   "spec_hash": "<sha256 of concatenated spec text>",
   "matrix": {
     "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
-    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 }
+    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
+    "SC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9, "layer": "unit", "ac": "AC-01" }
   }
 }
 ```
@@ -184,7 +199,9 @@ After all Jaccard computations complete (this block is skipped if the cache was 
 | critical | REQ-XX has confidence = 0 (zero code matches) | IMPL |
 | high | REQ-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 | medium | AC-XX has confidence = 0 (zero test matches) | TEST |
+| medium | SC-XX has confidence = 0 in its tagged enabled layer | SCENARIO |
 | low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
+| low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 
 See @ship/patterns/severity.md (## Drift) for full definitions.
 See @ship/report-templates.md#finding-entry for finding format (Drift Analysis domain).
@@ -213,7 +230,12 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 | Criteria covered (≥ 0.5) | N |
 | Criteria uncertain (< 0.5) | N |
 | Criteria uncovered (= 0) | N |
+| Scenarios analyzed | N |
+| Scenarios covered (≥ 0.5) | N |
+| Scenarios uncovered (= 0) | N |
 | **Gate** | PASS / WARN / FAIL |
+
+> The three `Scenarios …` rows appear only when the spec contains `@SC-XX` scenarios. Omit them entirely for legacy scenario-free specs.
 
 ## Requirements Status
 
@@ -230,6 +252,16 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 | AC-01 | <description> | 0.90 | src/auth/login.test.ts | ✓ Covered |
 | AC-02 | <description> | 0.40 | src/utils/helpers.test.ts | ⚠ Uncertain |
 | AC-03 | <description> | 0.00 | — | ✗ Uncovered |
+
+## Scenarios Status
+
+<Omit this entire section for legacy specs with no @SC-XX scenarios.>
+
+| ID | AC | Layer | Description | Test Confidence | Test File | Status |
+|----|----|-------|-------------|-----------------|-----------|--------|
+| SC-01 | AC-01 | unit | <scenario name> | 1.00 | src/auth/login.test.ts | ✓ Covered |
+| SC-02 | AC-01 | unit | <scenario name> | 0.40 | src/auth/login.test.ts | ⚠ Uncertain |
+| SC-03 | AC-02 | integration | <scenario name> | 0.00 | — | ✗ Uncovered |
 
 ## Gaps
 
@@ -252,17 +284,25 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 - **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador `TEST-AC-03`.
 - **Criterion ID:** AC-03
 
+### [MEDIUM] Cenário sem cobertura: SC-03
+- **Categoria:** SCENARIO
+- **Camada:** integration
+- **Descrição:** O cenário "SC-03 → AC-02: <scenario name>" não possui teste identificado na camada `integration`.
+- **Sugestão:** Crie um teste para o cenário SC-03 ou adicione o marcador `TEST-SC-03` no teste correspondente.
+- **Scenario ID:** SC-03
+- **Criterion ID:** AC-02
+
 ## Disabled Layers — Informational (does not affect gate)
 
 The layers below are disabled in `Test Scope` and were not evaluated.
 To audit coverage for these layers, run `/ship:audit:run`.
 
-| Layer | ACs not evaluated |
+| Layer | ACs / SCs not evaluated |
 |-------|-----------------|
-| integration | AC-03, AC-07 |
-| e2e | AC-01, AC-03, AC-05, AC-07 |
+| integration | AC-03, AC-07, SC-03 |
+| e2e | AC-01, AC-03, AC-05, AC-07, SC-09 |
 
-> This section appears **only** when `informational_disabled_layers` is non-empty (i.e., at least one AC-XX was recorded for a disabled layer). Omit entirely if all layers are enabled or `informational_disabled_layers` is empty.
+> This section appears **only** when `informational_disabled_layers` is non-empty (i.e., at least one AC-XX or SC-XX was recorded for a disabled layer). Omit entirely if all layers are enabled or `informational_disabled_layers` is empty.
 
 ## Summary
 - Critical: X
@@ -323,9 +363,9 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 
 3. **Confidence thresholds**: confidence ≥ 0.5 = implemented/tested; 0 < confidence < 0.5 = uncertain; confidence = 0 = unimplemented/uncovered.
 
-4. **IMPL-REQ-XX override**: if the marker `IMPL-REQ-XX` is found in any source file in the diff, set confidence = 1.0 for REQ-XX without running keyword matching. This is the canonical way to assert known-correct implementation when naming conventions diverge.
+4. **IMPL-REQ-XX / IMPL-SC-XX override**: if `IMPL-REQ-XX` is found in any source file in the diff, set confidence = 1.0 for REQ-XX without keyword matching. `IMPL-SC-XX` is an optional hint that the scenario's behavior lives in code whose naming diverges — it does not by itself prove a test exists. This is the canonical way to assert known-correct implementation when naming conventions diverge.
 
-5. **TEST-XX override**: if the marker `TEST-REQ-XX` or `TEST-AC-XX` is found in any test file, set test confidence = 1.0 for the corresponding criterion. Use `TEST-REQ-XX` when the criterion ID follows the `REQ-XX` format; use `TEST-AC-XX` when it follows the `AC-XX` format. Same rationale as IMPL-REQ-XX.
+5. **TEST-XX override**: if `TEST-REQ-XX`, `TEST-AC-XX`, or `TEST-SC-XX` is found in any test file, set test confidence = 1.0 for the corresponding item. `TEST-SC-XX` forces scenario `SC-XX` to 1.0. A `TEST-AC-YY`/`TEST-REQ` marker for a scenario's parent AC grants that scenario **0.8** partial credit (not 1.0) — scenario-specificity is unverified. Same rationale as IMPL-REQ-XX.
 
 6. **Gate enforcement**: gate FAIL → pipeline blocks before `homolog`; gate WARN → pipeline pauses and asks the user before continuing; gate PASS → continue to `homolog`. Respect `on_fail` and `on_warn` settings from `ship/config.md → Gate Behavior`.
 
@@ -333,7 +373,9 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 
 8. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
 
-9. **Test Scope awareness**: Before emitting any coverage finding (category: TEST), check whether the test layer is enabled in `ship/config.md → Test Scope`. Disabled layers never generate MEDIUM/WARN findings — they appear only in the informational block (`## Disabled Layers — Informational`). If `Test Scope` is absent from config, treat all layers as enabled (preserve existing behavior).
+9. **Test Scope awareness**: Before emitting any coverage finding (category: TEST or SCENARIO), check whether the test layer is enabled in `ship/config.md → Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in the informational block (`## Disabled Layers — Informational`). If `Test Scope` is absent from config, treat all layers as enabled (preserve existing behavior).
+
+10. **Scenario backward compatibility**: detection is presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before this feature. Never infer or fabricate scenarios.
 
 ---
 
@@ -388,8 +430,8 @@ function evictCacheOnUpdate(entityId: string) { ... }
 
 Test uses:
 ```typescript
-// TEST-AC-07
+// TEST-SC-07
 it('should evict cache when entity is updated', () => { ... })
 ```
 
-Result: REQ-07 gets confidence = 1.0 (IMPL-REQ-07 marker found). AC linked to REQ-07 gets test confidence = 1.0 (TEST-REQ-07 marker found). No gaps reported for REQ-07.
+Result: REQ-07 gets confidence = 1.0 (IMPL-REQ-07 marker found). SC-07 gets scenario confidence = 1.0 (TEST-SC-07 marker found); its parent AC is covered transitively. No gaps reported for REQ-07 or SC-07.
