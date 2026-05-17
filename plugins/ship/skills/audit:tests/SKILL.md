@@ -62,10 +62,12 @@ Use the **Agent** tool to launch **2 agents in parallel in a SINGLE call**.
 **Extraction rules:**
 - A **requirement** matches `REQ-\d+` followed by a description (e.g., `REQ-01: User can log in via OAuth`).
 - An **acceptance criterion** matches `AC-\d+` followed by a description (e.g., `AC-03: Login must complete in < 2s`).
+- A **scenario** is a Gherkin `Scenario`/`Scenario Outline` tagged `@SC-\d+`, `@AC-\d+`, and one layer tag (`@unit`|`@integration`|`@e2e`). In Linear mode the full Gherkin lives in the issue body (`get_issue`); the Proposal carries only a compact Scenario Index. In Local mode it lives in the `#### Scenarios` block of `tasks.md`. Apply the **Gherkin-aware keyword extractor from `/ship:analyze`** (When+Then+Examples headers only; exclude Given/Background, Gherkin keywords, `@tags`, table pipes, `<placeholders>`). Record `{ id, ac, layer, keywords[] }`.
 - If no markers are found, infer from functional requirements / acceptance criteria sections and assign IDs sequentially.
 - For each item, build a keyword set: split identifier tokens (camelCase → `camel`, `case`; snake_case → `snake`, `case`; PascalCase → `Pascal`, `Case`). Lowercase all tokens.
+- **Backward compatibility:** if the spec has no `@SC-\d+` scenarios, the scenario list is empty and this audit behaves exactly as before this feature (AC/REQ-only).
 
-**Output:** Structured list of `{ id, description, keywords[] }` for each REQ-XX and AC-XX found.
+**Output:** Structured list of `{ id, description, keywords[] }` for each REQ-XX and AC-XX found, plus `{ id, ac, layer, keywords[] }` for each SC-XX.
 
 ---
 
@@ -89,7 +91,7 @@ Exclude `node_modules/`, `.cache/`, `dist/`, `build/` directories.
    - Files in `__tests__/integration/`, `*.integration.test.*`, `*.e2e-spec.*` (NestJS) → `integration`
    - Files in `__tests__/e2e/`, `*.e2e.test.*`, Cypress/Playwright files → `e2e`
    - If layer is ambiguous → `unit` (conservative)
-3. Check for explicit coverage markers: `TEST-REQ-XX` or `TEST-AC-XX` in comments or test names.
+3. Check for explicit coverage markers: `TEST-REQ-XX`, `TEST-AC-XX`, or `TEST-SC-XX` in comments or test names.
 4. Build a keyword set per test: split test name tokens + file path tokens. Lowercase all.
 
 **Output:** Structured list of `{ file, layer, markers[], testNames[], keywords[] }` for each test file.
@@ -111,15 +113,17 @@ After both agents complete, run correlation for each enabled Test Scope layer.
 | Jaccard similarity 0.3–0.49 | 0.3–0.49 (uncertain) |
 | No test match (Jaccard < 0.3) | 0.0 |
 
+**Scenario → test correlation:** apply the SC→test tier from `/ship:analyze` Step 3 for each `SC-XX`, evaluating **only the single layer named in its `@layer` tag** (1.0 if `TEST-SC-XX` marker; 0.8 if a `TEST-AC`/`TEST-REQ` marker for its parent AC; else Jaccard within that layer). Skip the scenario tier entirely if the spec has no `@SC-XX`.
+
 **Layer handling:**
-- **Enabled layer:** run full correlation; produce findings per uncovered/uncertain AC.
-- **Disabled layer:** mark all ACs as `disabled (not evaluated)` — do NOT produce findings; does not affect gate.
+- **Enabled layer:** run full correlation; produce findings per uncovered/uncertain AC and per uncovered/uncertain SC.
+- **Disabled layer:** mark all ACs and SCs as `disabled (not evaluated)` — do NOT produce findings; does not affect gate.
 
 **Finding classification (enabled layers only):**
 
 | Condition | Severity |
 |-----------|----------|
-| Confidence = 0.0 (uncovered AC in enabled layer) | HIGH |
+| Confidence = 0.0 (uncovered AC **or SC** in enabled layer) | HIGH |
 | Confidence 0.3–0.49 (uncertain coverage in enabled layer) | MEDIUM |
 | Confidence >= 0.5 | No finding — covered |
 
@@ -143,6 +147,10 @@ Produce findings per @ship/report-templates.md#finding-entry with the Test Cover
 - Covered (≥0.5): X (XX%)
 - Uncertain (0.3–0.49): X
 - Uncovered (0.0): X
+- Total Scenarios: X  <!-- omit these 4 SC lines if the spec has no @SC-XX -->
+- Scenarios covered (≥0.5): X (XX%)
+- Scenarios uncertain (0.3–0.49): X
+- Scenarios uncovered (0.0): X
 - Layers evaluated: unit | integration | e2e
 - Layers skipped (disabled): <layer> | none
 - **Gate: PASS | WARN**
@@ -162,11 +170,18 @@ Produce findings per @ship/report-templates.md#finding-entry with the Test Cover
 | AC-01 | <desc> | 1.0 | path/to/file.test.ts | covered |
 | AC-02 | <desc> | 0.0 | — | UNCOVERED |
 
+#### Scenarios (unit)
+<Omit this sub-table when the spec has no @SC-XX scenarios for this layer.>
+| SC | AC | Description | Confidence | Test File | Status |
+|----|----|-------------|-----------|-----------|--------|
+| SC-01 | AC-01 | <scenario name> | 1.0 | path/to/file.test.ts | covered |
+| SC-02 | AC-01 | <scenario name> | 0.0 | — | UNCOVERED |
+
 ### Integration
-[same table format]
+[same table format, including the per-layer Scenarios sub-table]
 
 ### E2E
-[same table format]
+[same table format, including the per-layer Scenarios sub-table]
 
 ## Findings
 
@@ -223,7 +238,8 @@ See @ship/patterns/audit-summary-schema.md for field definitions and scoring tab
 - **Test Scope respected**: disabled layers are informational only and do not affect gate.
 - **Evidence required**: cite file and test name for every covered AC; cite absence of match for every uncovered AC.
 - **Jaccard reference**: use the algorithm from `/ship:analyze` (`.claude/commands/ship/analyze.md`). Do not reimplement independently.
-- **HIGH → WARN (not FAIL)**: this audit uses a softer gate than security/backend audits.
+- **HIGH → WARN (not FAIL)**: this audit uses a softer gate than security/backend audits. Uncovered scenarios (SC-XX) follow the same HIGH→WARN cap.
+- **Scenario backward compatibility**: detection is presence-based. No `@SC-XX` in the spec → omit all scenario rows/sub-tables and behave exactly as before this feature. Never fabricate scenarios.
 - **ALWAYS launch 2 agents in parallel** — never sequentially. Single Agent tool call.
 - **Language**: See @ship/patterns/language.md.
 - For diff-scoped coverage analysis during the pipeline, use `/ship:analyze`.
