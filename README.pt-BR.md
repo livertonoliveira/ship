@@ -53,6 +53,7 @@ Como a Ship é puramente um conjunto de slash commands do Claude Code (prompt-to
 | Planejamento de feature em chat livre | Projeto Linear com tarefas granulares (<400 linhas cada) |
 | "Por favor, revise isso" | 3 agentes em paralelo: performance + segurança + SOLID/DRY/KISS |
 | Cobertura de testes ad-hoc | Unit + integration + e2e gerados em paralelo |
+| Casos de teste rederivados a cada sessão | Cenários Gherkin @SC-XX definidos no spec, consumidos por develop, test e analyze |
 | Análise OWASP manual | Scan de segurança automatizado em cada diff com gate de política |
 | "Initial commit" × 20 | Conventional Commits atômicos por design |
 | Sessão cai no meio da pipeline | Artefatos persistidos no Linear ou em markdown local |
@@ -144,14 +145,14 @@ Esse é o fluxo completo. Cada etapa se apoia na anterior: `spec` cria tarefas e
 | Comando | Propósito |
 |---------|-----------|
 | `/ship:init` | Inicializar a Ship no projeto — detecta stack, convenções, configura o Linear, cria `ship/config.md` |
-| `/ship:spec` | Especificação detalhada: decompor uma feature em tarefas granulares (<400 linhas), criar projeto Linear com milestones e issues |
+| `/ship:spec` | Especificação detalhada: decompor uma feature em tarefas granulares (<400 linhas), definir cenários Gherkin @SC-XX por AC, criar projeto Linear com milestones e issues |
 | `/ship:run` | Pipeline completa para uma tarefa: develop → test → perf → security → review → analyze → homolog |
 | `/ship:develop` | Implementar código seguindo as convenções do projeto (pode rodar standalone ou dentro do `/ship:run`) |
-| `/ship:test` | Gerar e executar testes — unit, integration e e2e — com 3 agentes em paralelo |
+| `/ship:test` | Gerar e executar testes — unit, integration e e2e — usando cenários @SC-XX predefinidos; 3 agentes em paralelo |
 | `/ship:perf` | Análise de performance do diff — detecta o tipo de projeto e adapta os agentes |
 | `/ship:security` | Scan de segurança OWASP (Open Web Application Security Project) do diff com 3 agentes em paralelo por categoria de ataque |
 | `/ship:review` | Revisão de código focada em SOLID, DRY, KISS, Clean Code e consistência do projeto |
-| `/ship:analyze` | Detecção de drift: mapear spec→código→testes, detectar lacunas, gate PASS/WARN/FAIL |
+| `/ship:analyze` | Detecção de drift: mapear spec→código→testes, correlacionar cenários @SC-XX com testes, detectar lacunas, gate PASS/WARN/FAIL |
 | `/ship:homolog` | Relatório final de qualidade + aprovação de aceite pelo usuário |
 | `/ship:pr` | Criar PR (Pull Request) com Conventional Commits atômicos e relatório de qualidade agregado |
 | `/ship:update` | Atualizar todos os arquivos de comando da Ship para a versão mais recente |
@@ -167,7 +168,7 @@ Os comandos de auditoria são **abrangentes ao projeto** — eles escaneiam toda
 | `/ship:audit:database` | Auditoria de banco de dados para todo o projeto — roteia para metodologia MongoDB, PostgreSQL ou MySQL |
 | `/ship:audit:security` | Auditoria AppSec (Application Security) para todo o projeto — OWASP Top 10, mapeamento CWE, pontuação A-F, PoC para críticos/altos |
 | `/ship:audit:run` | Executar todas as auditorias aplicáveis em paralelo; produz um relatório de gate consolidado |
-| `/ship:audit:tests` | Auditoria de cobertura de testes para todo o projeto — mapeia AC/REQ ↔ testes existentes, reporta lacunas por camada |
+| `/ship:audit:tests` | Auditoria de cobertura de testes para todo o projeto — mapeia AC/REQ ↔ testes existentes, correlaciona cenários @SC-XX em todo o projeto, reporta lacunas por camada |
 
 ---
 
@@ -208,6 +209,14 @@ Após o `/ship:init`, a Ship cria o arquivo `ship/config.md` na raiz do seu proj
 - Artifact language: pt-BR  # Idioma para specs, issues, docs, milestones, relatórios
 - Commit style: Conventional Commits
 - Atomic commits: one logical change per commit
+
+## Test Scope
+- unit: enabled
+- integration: enabled
+- e2e: disabled
+
+## Scenario Depth
+- depth: full            # none | light | full
 ```
 
 ### Perfis de Pipeline
@@ -260,6 +269,30 @@ A seção `Test Scope` no `ship/config.md` controla quais camadas de teste o `/s
 Camadas desabilitadas **não** são geradas durante a pipeline. Use `/ship:audit:tests` para auditar e preencher a cobertura de camadas desabilitadas em todo o projeto.
 
 > **Observação:** O `/ship:analyze` detecta drift apenas nas camadas habilitadas do Test Scope; o `/ship:audit:tests` audita **todas** as camadas em todo o projeto, independente da configuração da pipeline.
+
+### Scenario Depth
+
+A seção `Scenario Depth` no `ship/config.md` controla quantos cenários Gherkin BDD (Behavior-Driven Development) o `/ship:spec` gera por critério de aceite:
+
+```markdown
+## Scenario Depth
+- depth: full            # none | light | full
+```
+
+| Valor | Comportamento |
+|-------|---------------|
+| `none` | Nenhum cenário Gherkin gerado — spec contém apenas ACs e requisitos |
+| `light` | Apenas o cenário de caminho feliz por AC |
+| `full` | Conjunto completo por AC: caminho feliz + casos de borda + casos de erro (padrão) |
+
+Quando `depth` é `light` ou `full`, o `/ship:spec` tageia cada cenário com `@SC-XX`, `@AC-YY` e a camada de teste responsável. Essas tags são consumidas ao longo de toda a pipeline:
+
+- **`/ship:develop`** — implementa o código para satisfazer cada `@SC-XX`
+- **`/ship:test`** — gera um teste tagueado com `TEST-SC-XX` por cenário, em vez de rederivá-los
+- **`/ship:analyze`** — correlaciona cenários `@SC-XX` com testes e adiciona uma tabela de status de cenários ao relatório de drift
+- **`/ship:audit:tests`** — correlaciona cenários em todo o projeto por camada
+
+A prosa dos steps Gherkin segue o `Artifact language` configurado; keywords (`Given`, `When`, `Then`), tags (`@SC-XX`, `@AC-YY`) e marcadores (`TEST-SC-XX`, `IMPL-SC-XX`) permanecem em inglês.
 
 ---
 
