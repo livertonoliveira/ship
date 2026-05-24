@@ -237,18 +237,24 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:develop` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so Claude Code automatically runs it in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline with the Skill invocation:
+Invoke the `ship-develop` named agent via the **Agent tool** with `subagent_type: ship-develop`. Pass the following context inline:
 
-- Use the task description as the implementation spec (not the full feature — just THIS task)
-- Read `ship/config.md` for project conventions
-- Implement the code described in the task
-- Run typecheck (if configured)
-- Verify the change is under 400 lines: run `git diff --stat` and check
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+## Spec
+<inline: issue description + ACs>
+
+## Design
+<inline: full design document content>
+```
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-**The forked skill MUST use parallel sub-agents** for independent modules when applicable.
+**The agent MUST use parallel sub-agents** for independent modules when applicable.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -292,19 +298,46 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
-Invoke **up to 3 phase skills in parallel** via the **Skill tool** (one Skill call per enabled phase, dispatched in a SINGLE assistant turn so they fork concurrently). Each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent with full reasoning — do NOT wrap any of them in an `Agent` tool call. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
+- **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
+- **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-security` (named agent, runs with full Sonnet reasoning).
+- **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-**Skill 1 — `ship:perf`** *(only if `perf` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
-**Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-perf`. Pass all context inline:
+
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Project Type: <project-type>
+Stack: <stack>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
+
+**Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-security`. Pass all context inline:
+
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Stack: <stack>
+Security Focus: <security-focus-category>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
@@ -396,7 +429,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
