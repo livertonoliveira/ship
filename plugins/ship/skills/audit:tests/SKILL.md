@@ -103,7 +103,7 @@ Exclude `node_modules/`, `.cache/`, `dist/`, `build/` directories.
 
 After both agents complete, run correlation for each enabled Test Scope layer.
 
-**Algorithm:** Use the same Jaccard similarity algorithm as `/ship:analyze` to compute confidence scores. Reference `.claude/commands/ship/analyze.md` for the exact algorithm.
+**Algorithm:** Use the same Jaccard similarity algorithm as `/ship:analyze` to compute confidence scores. Reference the `ship:analyze` skill (invokable via Skill tool) for the exact algorithm.
 
 **Confidence assignment per AC/REQ item:**
 
@@ -238,7 +238,7 @@ See @ship/patterns/audit-summary-schema.md for field definitions and scoring tab
 - **Read-only**: do NOT create, modify, or delete any test files or source files.
 - **Test Scope respected**: disabled layers are informational only and do not affect gate.
 - **Evidence required**: cite file and test name for every covered AC; cite absence of match for every uncovered AC.
-- **Jaccard reference**: use the algorithm from `/ship:analyze` (`.claude/commands/ship/analyze.md`). Do not reimplement independently.
+- **Jaccard reference**: use the algorithm from the `ship:analyze` skill (invokable via Skill tool). Do not reimplement independently.
 - **HIGH → WARN (not FAIL)**: this audit uses a softer gate than security/backend audits. Uncovered scenarios (SC-XX) follow the same HIGH→WARN cap.
 - **Scenario backward compatibility**: detection is presence-based. No `@SC-XX` in the spec → omit all scenario rows/sub-tables and behave exactly as before this feature. Never fabricate scenarios.
 - **ALWAYS launch 2 agents in parallel** — never sequentially. Single Agent tool call.

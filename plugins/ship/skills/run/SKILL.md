@@ -217,7 +217,7 @@ Additionally:
 
 Use the **Agent** tool to execute development. **Pass `model: "sonnet"` to the Agent tool call** — implementation requires full reasoning. Instruct the agent to:
 
-1. Read `.claude/commands/ship/develop.md` for full instructions
+1. Invoke the `ship:develop` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 2. Use the task description as the implementation spec (not the full feature — just THIS task)
 3. Read `ship/config.md` for project conventions
 4. Implement the code described in the task
@@ -239,7 +239,7 @@ Use the **Agent** tool to execute development. **Pass `model: "sonnet"` to the A
 
 Use the **Agent** tool to execute tests. **Pass `model: "sonnet"` to the Agent tool call** — test generation requires full reasoning. Instruct the agent to:
 
-1. Read `.claude/commands/ship/test.md` for full instructions
+1. Invoke the `ship:test` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 2. Use the task's acceptance criteria to guide test generation
 3. Generate and run tests scoped to THIS task only
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
@@ -275,21 +275,21 @@ Apply the following adjustments **on top of** the effective phase set:
 Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases not skipped by diff class). **For each Agent dispatched below, pass `model: "sonnet"` to the Agent tool call** — perf/security/review are analysis work that requires full reasoning. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
 **Agent 1 — Performance** *(only if `perf` is `enabled`)*:
-- Read `.claude/commands/ship/perf.md` for full instructions
+- Invoke the `ship:perf` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Agent 2 — Security** *(only if `security` is `enabled`)*:
-- Read `.claude/commands/ship/security.md` for full instructions
+- Invoke the `ship:security` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Agent 3 — Code Review** *(only if `review` is `enabled`)*:
-- Read `.claude/commands/ship/review.md` for full instructions
+- Invoke the `ship:review` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -394,7 +394,7 @@ Continue automatically.
 
 Use the **Agent** tool to execute drift detection. **Pass `model: "sonnet"` to the Agent tool call** — drift correlation (spec↔code↔tests) requires full reasoning. Instruct the agent to:
 
-1. Read `.claude/commands/ship/analyze.md` for full instructions
+1. Invoke the `ship:analyze` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 2. Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
 3. Use the code diff from `.context/ship-run/<task-id>/diff.md`
 4. Run spec extraction and code/test extraction **in parallel** (2 agents)
@@ -428,7 +428,7 @@ Use the **Agent** tool to execute drift detection. **Pass `model: "sonnet"` to t
 
 Use the **Agent** tool to execute acceptance. Instruct the agent to:
 
-1. Read `.claude/commands/ship/homolog.md` for full instructions
+1. Invoke the `ship:homolog` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
 2. Consolidate findings into a quality report
 3. Present the report for this task
 4. Wait for user approval
