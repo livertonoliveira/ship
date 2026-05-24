@@ -29,7 +29,6 @@ PIPELINE_SKILLS=(
   "ship:pr"
   "ship:spec"
   "ship:init"
-  "ship:update"
 )
 
 SKILLS_BASE="${REPO_ROOT}/plugins/ship/skills"

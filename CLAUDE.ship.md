@@ -103,7 +103,7 @@ ship/
 ## Model Routing
 
 Ship routes sub-agents to the appropriate model tier to minimize cost without sacrificing quality.
-Template phases (`ship:homolog`, `ship:pr`, `ship:update`) use `model: "haiku"` — declared in SKILL.md frontmatter.
+Template phases (`ship:homolog`, `ship:pr`) use `model: "haiku"` — declared in SKILL.md frontmatter.
 Reasoning phases inherit the parent session model.
 
 See `plugins/ship/patterns/model-routing.md` for the full policy and phase classification table.
