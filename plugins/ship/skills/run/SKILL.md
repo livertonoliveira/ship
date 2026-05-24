@@ -423,7 +423,8 @@ Apply the following adjustments **on top of** the effective phase set:
 
 Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
-- **`security`** and **`review`** (if enabled): dispatch via **Skill tool** — each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent automatically. Do NOT wrap them in an `Agent` tool call.
+- **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-security` (named agent, runs with full Sonnet reasoning).
+- **`review`** (if enabled): dispatch via **Skill tool** — the skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
 The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
@@ -444,11 +445,22 @@ Severity Overrides: <severity-overrides or "none">
 <inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
 
-**Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+**Phase 2 — `ship-security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-security`. Pass all context inline:
+
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Stack: <stack>
+Security Focus: <security-focus-category from ship/config.md, or "all" if absent>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
@@ -540,7 +552,11 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** (in parallel if multiple, following the same setup as Phase 4):
+      - `perf`: **Agent tool** with `subagent_type: ship-perf`
+      - `security`: **Agent tool** with `subagent_type: ship-security`
+      - `review`: **Skill tool** (skill forks itself via `context: fork`)
+      Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
