@@ -5,6 +5,8 @@ argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
+context: fork
+agent: general-purpose
 ---
 
 <!-- IMPL-REQ-01: read Test Scope from ship/config.md to filter enabled/disabled layers -->

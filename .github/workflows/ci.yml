@@ -26,3 +26,6 @@ jobs:
             exit 1
           fi
           echo "✓ No harness references found in plugins/"
+
+      - name: Check no Agent tool wraps Skill(ship:X) invocations
+        run: ./scripts/check-no-agent-wraps-skill.sh

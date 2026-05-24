@@ -72,13 +72,13 @@ Launching <N> audits in parallel...
 
 ### 4. Launch all applicable audits in parallel
 
-Use the **Agent** tool to launch all applicable audit agents **in a SINGLE parallel call**. Each agent should be instructed to run its respective audit command logic:
+Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
 
-- **audit:backend agent**: run the full `/ship:audit:backend` analysis (read that command's instructions) and return the findings report
-- **audit:database agent**: run the full `/ship:audit:database` analysis and return the findings report
-- **audit:frontend agent**: run the full `/ship:audit:frontend` analysis and return the findings report
-- **audit:security agent**: run the full `/ship:audit:security` analysis and return the findings report
-- **audit:tests agent**: run the full `/ship:audit:tests` analysis and return the findings report
+- **`ship:audit:backend`**: returns the findings report from the full backend audit
+- **`ship:audit:database`**: returns the findings report from the full database audit
+- **`ship:audit:frontend`**: returns the findings report from the full frontend audit
+- **`ship:audit:security`**: returns the findings report from the full security audit
+- **`ship:audit:tests`**: returns the findings report from the full test coverage audit
 
 Each agent writes its own report file:
 - `ship/audits/backend-<YYYY-MM-DD>.md`
