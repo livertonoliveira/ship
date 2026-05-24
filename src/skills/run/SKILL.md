@@ -429,32 +429,37 @@ Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `cont
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-### 8. Task completion
+### 8. MANDATORY STOP — Await user confirmation for PR
 
-After acceptance:
+After homolog approval:
 
-**Linear mode:**
+1. **Verify Linear lifecycle completion** (quality report comment + "Done" status).
 
-> **MANDATORY — Verify the full Linear lifecycle was completed**
->
-> The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-> In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
->
-> 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
-> 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
->
-> Both the "Done" status AND the quality report comment are required before the task is considered complete.
+   **Linear mode:**
 
-3. Clean up temporary findings files
+   > **MANDATORY — Verify the full Linear lifecycle was completed**
+   >
+   > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
+   > In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
+   >
+   > 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+   > 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
+   >
+   > Both the "Done" status AND the quality report comment are required before the task is considered complete.
 
-**Local mode:**
-1. Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
-2. Mark the task as `done` in `tasks.md`
-3. Clean up temporary findings files
+   **Local mode:**
+   - Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
+   - Mark the task as `done` in `tasks.md`
 
-**Both modes:**
-- If working on multiple tasks: ask "Task '<name>' complete. Continue to the next task '<next-name>', or stop here?"
-- If single task or user stops: inform "Task complete! Run `/ship:pr` when ready to create a Pull Request."
+   **Both modes:** clean up temporary findings files.
+
+2. Inform the user:
+   - If working on multiple tasks: ask "Task '<name>' complete. Continue to the next task '<next-name>', or stop here?"
+   - Otherwise: "**Task complete!** Run `/ship:pr` when ready to create a Pull Request."
+
+3. **STOP HERE** — Do NOT invoke `/ship:pr` automatically.
+
+4. Only proceed with PR creation when the user explicitly calls `/ship:pr`.
 
 ---
 
