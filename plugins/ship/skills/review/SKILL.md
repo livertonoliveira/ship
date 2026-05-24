@@ -5,6 +5,8 @@ argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
+context: fork
+agent: general-purpose
 ---
 
 # Ship Review — Principles-Based Code Review
