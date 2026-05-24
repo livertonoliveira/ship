@@ -31,3 +31,6 @@ ship/.tmp/
 
 # Ship run-context scratch (shared between pipeline agents — never commit)
 .context/ship-run/
+
+# Ship plugin build artifacts
+plugins/ship/dist/
