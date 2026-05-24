@@ -1,0 +1,50 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'plugins/ship/skills/**'
+      - 'plugins/ship/scripts/**'
+      - 'plugins/ship/package.json'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Ship plugin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Ship plugin
+        working-directory: plugins/ship
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -d plugins/ship/skills || (echo "::error::plugins/ship/skills not produced" && exit 1)
+          if grep -r "@ship/" plugins/ship/skills/ >/dev/null 2>&1; then
+            echo "::error::@ship/ reference found in built skills/ — inliner did not fully expand patterns"
+            exit 1
+          fi
+
+      - name: Verify build is in-sync with src/
+        run: |
+          if ! git diff --exit-code plugins/ship/skills/; then
+            echo "::error::plugins/ship/skills/ está desatualizado em relação a src/. Rode 'cd plugins/ship && npm run build' e commite o resultado."
+            exit 1
+          fi

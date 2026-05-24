@@ -1,0 +1,10 @@
+{
+  "name": "ship-plugin-build",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Build pipeline para o plugin Ship (inliner de patterns).",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "prepublishOnly": "npm run build"
+  }
+}

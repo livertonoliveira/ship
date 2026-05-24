@@ -29,11 +29,9 @@ PIPELINE_SKILLS=(
   "ship:pr"
   "ship:spec"
   "ship:init"
-  "ship:update"
 )
 
-SKILLS_BASE="${REPO_ROOT}/plugins/ship/skills"
-COMMANDS_BASE="${REPO_ROOT}/.claude/commands/ship"
+SKILLS_BASE="${REPO_ROOT}/src/skills"
 
 VIOLATIONS=0
 
@@ -85,15 +83,6 @@ for skill in "${PIPELINE_SKILLS[@]}"; do
   check_file "$skill_file" "$skill_file"
 done
 
-echo "Checking legacy command files for audit:* invocations..."
-echo ""
-
-if [[ -d "$COMMANDS_BASE" ]]; then
-  for skill in "${PIPELINE_SKILLS[@]}"; do
-    cmd_file="${COMMANDS_BASE}/${skill#ship:}.md"
-    check_file "$cmd_file" "$cmd_file"
-  done
-fi
 
 if [[ "$VIOLATIONS" -eq 0 ]]; then
   echo "OK — no audit:* invocations found in pipeline skill files."

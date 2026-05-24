@@ -62,14 +62,14 @@ Como a Ship é puramente um conjunto de slash commands do Claude Code (prompt-to
 
 ## Instalação
 
-### Plugin (método principal)
+Instale via marketplace do Claude Code:
 
 ```bash
 claude plugin marketplace add livertonoliveira/ship
 claude plugin install ship
 ```
 
-O plugin registra todos os slash commands `/ship:*` no Claude Code automaticamente. Nenhuma configuração adicional é necessária para começar.
+É só isso. Os skills já incluem todos os patterns necessários inlined em tempo de build — sem configuração manual, sem arquivos copiados para o seu projeto.
 
 ### Atualização
 
@@ -77,15 +77,9 @@ O plugin registra todos os slash commands `/ship:*` no Claude Code automaticamen
 claude plugin update ship@ship-marketplace
 ```
 
+Reinicie o Claude Code após atualizar.
+
 > **Atenção:** `claude plugin update ship` falha com "Plugin not found". O nome completo com a fonte `ship@ship-marketplace` é obrigatório.
-
-### curl (alternativa)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/livertonoliveira/ship/main/install.sh | bash
-```
-
-Este comando coloca os arquivos de comando em `.claude/commands/ship/` no seu projeto e os registra no Claude Code.
 
 ### Zero dependências
 
@@ -95,26 +89,6 @@ A Ship **não** requer:
 - Nenhum binário ou runtime instalado
 
 É um prompt-toolkit puro: slash commands que instruem agentes do Claude Code. O único requisito é o próprio Claude Code.
-
----
-
-## Atualizando a Ship
-
-O método de atualização depende de como você instalou a Ship:
-
-**Instalação global via plugin:**
-
-```bash
-claude plugin update ship@ship-marketplace
-```
-
-Reinicie o Claude Code após atualizar.
-
-**Instalação local (curl):**
-
-```
-/ship:update
-```
 
 ---
 
@@ -155,7 +129,6 @@ Esse é o fluxo completo. Cada etapa se apoia na anterior: `spec` cria tarefas e
 | `/ship:analyze` | Detecção de drift: mapear spec→código→testes, correlacionar cenários @SC-XX com testes, detectar lacunas, gate PASS/WARN/FAIL |
 | `/ship:homolog` | Relatório final de qualidade + aprovação de aceite pelo usuário |
 | `/ship:pr` | Criar PR (Pull Request) com Conventional Commits atômicos e relatório de qualidade agregado |
-| `/ship:update` | Atualizar todos os arquivos de comando da Ship para a versão mais recente |
 
 ### Comandos de Auditoria
 

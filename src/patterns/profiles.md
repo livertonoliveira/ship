@@ -55,4 +55,4 @@ When `profile: strict`, `/ship:pr` automatically triggers `/ship:audit:run` **be
 
 This guarantees that no PR is merged from a `strict` project with unresolved critical or high audit findings. For `lite` and `standard` profiles, no audit is triggered automatically during `/ship:pr`.
 
-See `.claude/commands/ship/pr.md` § "Strict-exclusive" for the full decision tree and exact user-facing messages.
+See the `ship:pr` skill § "Strict-exclusive" for the full decision tree and exact user-facing messages.
