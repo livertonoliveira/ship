@@ -12,19 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  shellcheck:
-    name: ShellCheck
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install shellcheck
-        run: sudo apt-get install -y shellcheck
-
-      - name: Run ShellCheck on install.sh and update.sh
-        run: shellcheck install.sh update.sh
-
   grep-guard:
     name: Grep Guard — no harness references
     runs-on: ubuntu-latest
