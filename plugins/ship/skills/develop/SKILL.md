@@ -149,6 +149,11 @@ Avoid wasted Reads — they are the dominant token sink in this phase.
 - **Follow existing patterns**: if the project uses classes, use classes. If it uses functions, use functions. Do not impose your own style.
 - **Do not add dependencies unnecessarily**: if the project already has a library that does X, use it instead of installing another
 - **Do not add comments, docstrings, or type annotations to code you did not modify**: touch only what is necessary
+- **No unnecessary comments**: do not add inline comments that merely describe what the code does — the code must be self-explanatory through naming. Only three types of comments are allowed:
+  1. **JSDoc/TSDoc** on public exports (functions, classes, types exposed outside the module)
+  2. **"Why" comments** for non-obvious decisions: workarounds, third-party limitations, non-intuitive behavior
+  3. **`// IMPL-SC-XX` / `// IMPL-REQ-XX` markers** as defined in step 4.6 above
+  Everything else must be expressed through clear naming and structure — never through comments.
 - **Each file created/modified must be functional on its own**: do not leave TODOs or partial implementations
 - **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Maximize parallelism**: if there are independent modules, ALWAYS use parallel agents
