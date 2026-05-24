@@ -32,5 +32,7 @@ ship/.tmp/
 # Ship run-context scratch (shared between pipeline agents — never commit)
 .context/ship-run/
 
-# Ship plugin build artifacts
-plugins/ship/dist/
+# Ship plugin source lives in src/ (committed). Built output is
+# plugins/ship/skills/ — also committed, since the marketplace ships
+# whatever is in git. Run `npm run build` in plugins/ship/ after
+# editing anything under src/.

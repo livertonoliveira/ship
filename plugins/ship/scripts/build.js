@@ -6,8 +6,10 @@ const fs = require('fs');
 const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
-const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
-const DIST_DIR = path.join(PLUGIN_ROOT, 'dist');
+const REPO_ROOT = path.resolve(PLUGIN_ROOT, '..', '..');
+const SOURCE_ROOT = path.join(REPO_ROOT, 'src');
+const SOURCE_SKILLS = path.join(SOURCE_ROOT, 'skills');
+const OUTPUT_SKILLS = path.join(PLUGIN_ROOT, 'skills');
 
 const MAX_DEPTH = 10;
 
@@ -46,7 +48,7 @@ function resolveRefs(content, skillRelPath) {
     }
 
     result = result.replace(/@ship\/([^\s)]+\.md)/g, (match, ref) => {
-      const refPath = path.join(PLUGIN_ROOT, ref);
+      const refPath = path.join(SOURCE_ROOT, ref);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);
         process.exit(1);
@@ -62,25 +64,25 @@ function resolveRefs(content, skillRelPath) {
 }
 
 function main() {
-  fs.rmSync(DIST_DIR, { recursive: true, force: true });
+  fs.rmSync(OUTPUT_SKILLS, { recursive: true, force: true });
 
-  const skillFiles = walkSkillFiles(SKILLS_DIR);
+  const skillFiles = walkSkillFiles(SOURCE_SKILLS);
   let count = 0;
 
   for (const skillPath of skillFiles) {
-    const skillRelPath = path.relative(PLUGIN_ROOT, skillPath);
+    const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
     const raw = fs.readFileSync(skillPath, 'utf8');
 
     const substituted = resolveRefs(raw, skillRelPath);
 
-    const distPath = path.join(DIST_DIR, skillRelPath);
-    fs.mkdirSync(path.dirname(distPath), { recursive: true });
-    fs.writeFileSync(distPath, substituted, 'utf8');
+    const outPath = path.join(OUTPUT_SKILLS, skillRelPath);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, substituted, 'utf8');
     console.log(`✓ ${skillRelPath}`);
     count++;
   }
 
-  console.log(`\nBuild concluído. ${count} SKILL.md gerados.`);
+  console.log(`\nBuild concluído. ${count} SKILL.md gerados em ${path.relative(REPO_ROOT, OUTPUT_SKILLS)}/.`);
 }
 
 main();
