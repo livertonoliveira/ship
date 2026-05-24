@@ -4,6 +4,7 @@ description: "Ship Audit: meta-command that runs all applicable audits based on 
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "haiku"
 ---
 
 # Ship Audit — Run All
