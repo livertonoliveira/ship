@@ -237,18 +237,24 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:develop` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so Claude Code automatically runs it in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline with the Skill invocation:
+Invoke the `ship-develop` named agent via the **Agent tool** with `subagent_type: ship-develop`. Pass the following context inline:
 
-- Use the task description as the implementation spec (not the full feature — just THIS task)
-- Read `ship/config.md` for project conventions
-- Implement the code described in the task
-- Run typecheck (if configured)
-- Verify the change is under 400 lines: run `git diff --stat` and check
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+## Spec
+<inline: issue description + ACs>
+
+## Design
+<inline: full design document content>
+```
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-**The forked skill MUST use parallel sub-agents** for independent modules when applicable.
+**The agent MUST use parallel sub-agents** for independent modules when applicable.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
