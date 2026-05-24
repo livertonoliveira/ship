@@ -36,11 +36,7 @@ You are the Ship specification agent. Your mission is to transform raw input (a 
 
 ### 2. Determine storage mode
 
-See # Storage Mode
-
-Read `ship/config.md` and check the `Linear Integration` section:
-- If `Configured: yes` → **Linear mode** (artifacts live in Linear)
-- If `Configured: no` → **Local mode** (artifacts live in `ship/changes/`).
+See @ship/patterns/storage-mode.md.
 
 ### 3. Gather context (2 agents in parallel)
 
@@ -49,21 +45,7 @@ Launch **2 agents in parallel** using the Agent tool:
 **Agent A — Source Data:**
 
 If the input is a Linear issue:
-See # Load Artifacts
-
-Matrix of artifact loading by context and storage mode:
-
-| Context | Linear mode | Local mode |
-|---------|------------|------------|
-| **Spec** (`/ship:spec`) | `get_issue` + `list_comments` + linked documents | free text (no prior artifacts to load) |
-| **Pipeline phase** (develop, perf, security, review) | `get_issue` + `get_document(Design)` + optionally `get_document(Proposal)` | `proposal.md` + `design.md` + `tasks.md` |
-| **Orchestration** (run, homolog) | `get_issue` + `list_documents` → `get_document(Proposal)` + `get_document(Design)` | `proposal.md` + `design.md` + `tasks.md` + `report.md` |
-| **PR** (`/ship:pr`) | `get_issue` + `get_document(Proposal, Design)` (via cache if available, else `list_documents`) + `list_comments` | `proposal.md` + `design.md` + `tasks.md` + `report.md` |
-| **Audit** | `ship/config.md` only | `ship/config.md` only |
-
-All contexts also read `ship/config.md` for stack and conventions.
-
-**Pipeline phases only** (perf, security, review): after loading artifacts, run `git diff` to get the full diff of new/modified code — this is the primary analysis input. for context loading (also fetch `mcp__linear-server__list_comments` for discussion). Extract:
+See @ship/patterns/load-artifacts.md for context loading (also fetch `mcp__linear-server__list_comments` for discussion). Extract:
 - Explicit and implicit functional requirements
 - Acceptance criteria (if mentioned)
 - Constraints and dependencies
@@ -526,22 +508,7 @@ After creating everything:
 - **Technical context must reference real code**: Cite existing files and patterns, not generic examples.
 - **Milestones represent deliverable value**: Not time-based sprints. Each milestone should produce something demonstrable.
 - **Labels reflect the area of work**: Use labels from `ship/config.md`. In monorepos, workspace names become labels.
-- **Language**: See # Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above..
+- **Language**: See @ship/patterns/language.md.
 - **Always use parallel agents**: The data gathering phase MUST use parallel agents.
 - **Line estimation is critical**: Be conservative. If unsure, estimate higher and split the task.
 - **Linear mode = zero local files**: When Linear is configured, do NOT create `ship/changes/` directories. Everything lives in Linear.
