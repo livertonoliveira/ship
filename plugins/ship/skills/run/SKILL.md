@@ -697,33 +697,24 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:develop` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so Claude Code automatically runs it in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline with the Skill invocation:
+Invoke the `ship-develop` named agent via the **Agent tool** with `subagent_type: ship-develop`. Pass the following context inline:
 
-- Use the task description as the implementation spec (not the full feature — just THIS task)
-- Read `ship/config.md` for project conventions
-- Implement the code described in the task
-- Run typecheck (if configured)
-- Verify the change is under 400 lines: run `git diff --stat` and check
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
 
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
+## Spec
+<inline: issue description + ACs>
 
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+## Design
+<inline: full design document content>
+```
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-**The forked skill MUST use parallel sub-agents** for independent modules when applicable.
+**The agent MUST use parallel sub-agents** for independent modules when applicable.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
