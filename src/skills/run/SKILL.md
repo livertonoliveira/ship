@@ -276,13 +276,28 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
-Invoke **up to 3 phase skills in parallel** via the **Skill tool** (one Skill call per enabled phase, dispatched in a SINGLE assistant turn so they fork concurrently). Each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent with full reasoning — do NOT wrap any of them in an `Agent` tool call. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
+- **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
+- **`security`** and **`review`** (if enabled): dispatch via **Skill tool** — each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent automatically. Do NOT wrap them in an `Agent` tool call.
 
-**Skill 1 — `ship:perf`** *(only if `perf` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+
+**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-perf`. Pass all context inline:
+
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Project Type: <project-type>
+Stack: <stack>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
 
 **Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
