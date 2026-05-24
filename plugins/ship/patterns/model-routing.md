@@ -4,13 +4,17 @@
 
 ## Principle
 
-Ship sub-agents inherit the model tier from the parent session. Template phases (report
-rendering, findings aggregation, PR expansion) run deterministic work that does not benefit
-from a high-tier model. Forcing `model: "haiku"` on these phases cuts 15–30% of pipeline cost
-at zero quality loss.
+Ship pins the model per skill instead of inheriting from the session. This decouples cost
+control from quality: users can pick Haiku as their session model to economize across the
+weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
+analysis, generation, correlation). Symmetrically, template/control-flow skills (report
+rendering, findings aggregation, PR expansion, orchestration) are pinned to Haiku because they
+gain nothing from a higher tier.
 
-Reasoning phases (analysis, implementation, security scan, code review) inherit the session
-tier so the user gets the quality they paid for.
+This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
+an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
+frontmatter `model:` field overrides the session tier, and an explicit `model:` parameter on
+an Agent tool dispatch overrides the frontmatter.
 
 ---
 
@@ -22,13 +26,17 @@ tier so the user gets the quality they paid for.
 
 2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
 
-3. **Reasoning phases declare no `model:` field** — they inherit from the parent session.
+3. **Reasoning phases declare `model: "sonnet"` in SKILL.md frontmatter.** They never inherit
+   from the parent session — Sonnet is pinned so the skill behaves identically whether invoked
+   standalone or via an orchestrator. Reasoning phases include: `develop`, `test`, `perf`,
+   `security`, `review`, `analyze`, `spec`, and all `audit:*` skills except `audit:run`.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
-   to the Agent tool call. This applies to every dispatch inside `ship:run` (develop, test,
-   perf, security, review, fix, analyze) and `ship:init` (stack/conventions detection). The
-   symmetric rule also holds: **consolidation/template agents inside Sonnet contexts** (e.g.,
-   the Step 5 agent in `ship:audit:run`) must pass `model: "haiku"` explicitly.
+   to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
+   but kept as a belt-and-suspenders so the dispatch site is self-documenting and any future
+   reasoning skill added without `model: "sonnet"` in frontmatter still runs on Sonnet when
+   dispatched. The symmetric rule also holds: **consolidation/template agents inside Sonnet
+   contexts** (e.g., the Step 5 agent in `ship:audit:run`) must pass `model: "haiku"` explicitly.
 
 ---
 
@@ -42,14 +50,14 @@ tier so the user gets the quality they paid for.
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:develop`        | session | Implementation — needs full reasoning           |
-| `ship:test`           | session | Test generation — needs full reasoning          |
-| `ship:perf`           | session | Performance analysis — needs full reasoning     |
-| `ship:security`       | session | Security analysis — needs full reasoning        |
-| `ship:review`         | session | Code review — needs full reasoning              |
-| `ship:analyze`        | session | Drift detection — needs full reasoning          |
-| `ship:spec`           | session | Deep specification — needs full reasoning       |
-| `ship:audit:*`        | session | Project-wide audits — needs full reasoning      |
+| `ship:develop`        | sonnet   | Implementation — needs full reasoning           |
+| `ship:test`           | sonnet   | Test generation — needs full reasoning          |
+| `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
+| `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
+| `ship:review`         | sonnet   | Code review — needs full reasoning              |
+| `ship:analyze`        | sonnet   | Drift detection — needs full reasoning          |
+| `ship:spec`           | sonnet   | Deep specification — needs full reasoning       |
+| `ship:audit:*`        | sonnet   | Project-wide audits — needs full reasoning      |
 
 ---
 
