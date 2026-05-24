@@ -4,6 +4,7 @@ description: "Ship Phase 3: generates and runs tests (unit, integration, e2e) wi
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Test — Test Generation and Execution

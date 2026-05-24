@@ -4,6 +4,7 @@ description: "Ship Phase 6: code review focused on SOLID, DRY, KISS, Clean Code,
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Review — Principles-Based Code Review

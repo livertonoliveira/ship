@@ -4,6 +4,7 @@ description: "Ship Phase 4: performance analysis of the diff. Detects project ty
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Performance — Performance Analysis

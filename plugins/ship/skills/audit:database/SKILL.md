@@ -4,6 +4,7 @@ description: "Ship Audit: project-wide database audit. Routes to MongoDB, Postgr
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 <!-- IMPL-REQ-01: file contains no references to src/audits/database/, databaseAuditModule, TypeScript modules, or ship binary -->

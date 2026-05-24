@@ -4,6 +4,7 @@ description: "Ship Audit: project-wide backend performance audit. Detects stack 
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 <!-- IMPL-REQ-01: file contains no references to src/audits/backend/index.ts, AuditReportSchema, or ship binary -->
