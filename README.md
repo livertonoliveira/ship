@@ -62,14 +62,14 @@ Because Ship is purely a set of Claude Code slash commands (prompt-toolkit), it 
 
 ## Installation
 
-### Plugin (primary method)
+Install via Claude Code marketplace:
 
 ```bash
 claude plugin marketplace add livertonoliveira/ship
 claude plugin install ship
 ```
 
-The plugin registers all `/ship:*` slash commands in Claude Code automatically. No configuration required to start.
+That's it. Skills include all required patterns inlined at build time — no manual setup, no files copied to your project.
 
 ### Updating
 
@@ -77,15 +77,9 @@ The plugin registers all `/ship:*` slash commands in Claude Code automatically. 
 claude plugin update ship@ship-marketplace
 ```
 
+Restart Claude Code after updating.
+
 > **Note:** `claude plugin update ship` will fail with "Plugin not found". The full source-qualified name `ship@ship-marketplace` is required.
-
-### curl (fallback)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/livertonoliveira/ship/main/install.sh | bash
-```
-
-This places the command files into `.claude/commands/ship/` in your project and registers them with Claude Code.
 
 ### Zero dependencies
 
@@ -95,26 +89,6 @@ Ship does **not** require:
 - Any installed binary or runtime
 
 It is a pure prompt-toolkit: slash commands that instruct Claude Code agents. The only requirement is Claude Code itself.
-
----
-
-## Updating Ship
-
-The update method depends on how you installed Ship:
-
-**Global plugin install:**
-
-```bash
-claude plugin update ship@ship-marketplace
-```
-
-Restart Claude Code after updating.
-
-**Local install (curl):**
-
-```
-/ship:update
-```
 
 ---
 
@@ -155,7 +129,6 @@ That's the complete flow. Each step builds on the previous one: `spec` creates s
 | `/ship:analyze` | Drift detection: map spec→code→tests, correlate @SC-XX scenarios to tests, detect gaps, gate PASS/WARN/FAIL |
 | `/ship:homolog` | Final quality report + user acceptance approval |
 | `/ship:pr` | Create PR (Pull Request) with atomic Conventional Commits and aggregated quality report |
-| `/ship:update` | Update all Ship command files to the latest version |
 
 ### Audit Commands
 
