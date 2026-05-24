@@ -5,6 +5,8 @@ argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
 model: "sonnet"
+context: fork
+agent: general-purpose
 ---
 
 # Ship Performance — Performance Analysis

@@ -215,19 +215,18 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Use the **Agent** tool to execute development. **Pass `model: "sonnet"` to the Agent tool call** — implementation requires full reasoning. Instruct the agent to:
+Invoke the `ship:develop` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so Claude Code automatically runs it in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline with the Skill invocation:
 
-1. Invoke the `ship:develop` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
-2. Use the task description as the implementation spec (not the full feature — just THIS task)
-3. Read `ship/config.md` for project conventions
-4. Implement the code described in the task
-5. Run typecheck (if configured)
-6. Verify the change is under 400 lines: run `git diff --stat` and check
+- Use the task description as the implementation spec (not the full feature — just THIS task)
+- Read `ship/config.md` for project conventions
+- Implement the code described in the task
+- Run typecheck (if configured)
+- Verify the change is under 400 lines: run `git diff --stat` and check
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-**The agent MUST use parallel sub-agents** for independent modules when applicable.
+**The forked skill MUST use parallel sub-agents** for independent modules when applicable.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -237,14 +236,13 @@ Use the **Agent** tool to execute development. **Pass `model: "sonnet"` to the A
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Use the **Agent** tool to execute tests. **Pass `model: "sonnet"` to the Agent tool call** — test generation requires full reasoning. Instruct the agent to:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-1. Invoke the `ship:test` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
-2. Use the task's acceptance criteria to guide test generation
-3. Generate and run tests scoped to THIS task only
+- Use the task's acceptance criteria to guide test generation
+- Generate and run tests scoped to THIS task only
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**The agent MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
+**The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -272,24 +270,21 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
-Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases not skipped by diff class). **For each Agent dispatched below, pass `model: "sonnet"` to the Agent tool call** — perf/security/review are analysis work that requires full reasoning. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+Invoke **up to 3 phase skills in parallel** via the **Skill tool** (one Skill call per enabled phase, dispatched in a SINGLE assistant turn so they fork concurrently). Each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent with full reasoning — do NOT wrap any of them in an `Agent` tool call. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
-**Agent 1 — Performance** *(only if `perf` is `enabled`)*:
-- Invoke the `ship:perf` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
+**Skill 1 — `ship:perf`** *(only if `perf` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**Agent 2 — Security** *(only if `security` is `enabled`)*:
-- Invoke the `ship:security` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
+**Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**Agent 3 — Code Review** *(only if `review` is `enabled`)*:
-- Invoke the `ship:review` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
+**Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -379,7 +374,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). **Pass `model: "sonnet"` to each re-run Agent dispatch** — re-runs repeat the same analysis work as Phase 4 and require full reasoning. Include `Artifact language: <artifact_language>` in each re-run agent's prompt, same as in Phase 4. Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -392,15 +387,14 @@ Continue automatically.
 
 > **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
 
-Use the **Agent** tool to execute drift detection. **Pass `model: "sonnet"` to the Agent tool call** — drift correlation (spec↔code↔tests) requires full reasoning. Instruct the agent to:
+Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so drift correlation (spec↔code↔tests) runs in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-1. Invoke the `ship:analyze` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
-2. Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
-3. Use the code diff from `.context/ship-run/<task-id>/diff.md`
-4. Run spec extraction and code/test extraction **in parallel** (2 agents)
-5. Pass results to the Correlation Engine
-6. Generate the drift report + compute gate
-7. Persist `drift-report.md` and `drift-findings.json` to scratch dir
+- Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
+- Use the code diff from `.context/ship-run/<task-id>/diff.md`
+- Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
+- Pass results to the Correlation Engine
+- Generate the drift report + compute gate
+- Persist `drift-report.md` and `drift-findings.json` to scratch dir
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -426,12 +420,11 @@ Use the **Agent** tool to execute drift detection. **Pass `model: "sonnet"` to t
 
 > **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
 
-Use the **Agent** tool to execute acceptance. Instruct the agent to:
+Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `context: fork` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-1. Invoke the `ship:homolog` skill via the **Skill tool** to load the phase's full instructions. The Skill tool resolves the skill by registered name (plugin marketplace) and does not depend on any specific file path.
-2. Consolidate findings into a quality report
-3. Present the report for this task
-4. Wait for user approval
+- Consolidate findings into a quality report
+- Present the report for this task
+- Wait for user approval
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
