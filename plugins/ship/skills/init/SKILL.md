@@ -72,7 +72,6 @@ an Agent tool dispatch overrides the frontmatter.
 |-----------------------|---------|-------------------------------------------------|
 | `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:update`         | haiku   | Config migration, file overwrite — no reasoning |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
