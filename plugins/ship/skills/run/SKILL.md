@@ -693,53 +693,9 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
-### Phase Logging Convention (MANDATORY)
-
-The orchestrator runs on Haiku and dispatches phase skills via the **Skill tool** with `context: fork`. Forked skills run in isolated subagents and **do not stream text back to the user** — only their final return value reaches the orchestrator. Without explicit logging, the user sees long silent gaps and has no idea which phase is running or which model is processing it.
-
-**Before invoking any phase Skill**, the orchestrator MUST emit a one-line start log to the user (plain text, not a tool call):
-
-```
-▶ Fase: <phase-name> | modelo: <tier> | iniciando…
-```
-
-Where `<tier>` is the model the forked skill will run on, read from that skill's SKILL.md frontmatter (`model:` field). Reference (per Model Routing Policy):
-
-| Phase | Model |
-|-------|-------|
-| develop | sonnet |
-| test | sonnet |
-| perf | sonnet |
-| security | sonnet |
-| review | sonnet |
-| analyze | sonnet |
-| homolog | haiku |
-| pr | haiku |
-
-**After the Skill returns**, the orchestrator MUST emit a one-line completion log:
-
-```
-✓ Fase: <phase-name> | gate=<pass|warn|fail> | critical=N high=N medium=N low=N
-```
-
-(For phases that don't produce findings — `develop`, `test`, `homolog`, `pr` — drop the finding counts and use a status word: `concluída`, `falhou`, `pulada`.)
-
-**When a phase is skipped** (disabled in effective phase set, or skipped by diff class), emit:
-
-```
-⊘ Fase: <phase-name> | pulada — <reason>
-```
-
-Where `<reason>` is e.g. `disabled em config`, `diff trivial`, `diff minor`, `override de profile`.
-
-These logs are **user-facing text** and follow `Artifact language` from `ship/config.md`. The labels above (`Fase`, `modelo`, `iniciando`, `gate`, `pulada`, `concluída`, `falhou`) translate accordingly; the phase names and tier names stay in English (technical identifiers).
-
 ### 2. PHASE: Development
 
-> **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), emit the skip log per § Phase Logging Convention and proceed to Phase 3.
-
-**Emit the start log per § Phase Logging Convention** before invoking the Skill:
-`▶ Fase: develop | modelo: sonnet | iniciando…`
+> **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
 Invoke the `ship:develop` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so Claude Code automatically runs it in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline with the Skill invocation:
 
@@ -773,13 +729,9 @@ When a phase is invoked directly (not via `ship:run`), it reads `Artifact langua
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
 
-**Emit completion log per § Phase Logging Convention**: `✓ Fase: develop | concluída`.
-
 ### 3. PHASE: Testing
 
-> **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), emit the skip log per § Phase Logging Convention and proceed to Phase 4.
-
-**Emit start log per § Phase Logging Convention** before invoking: `▶ Fase: test | modelo: sonnet | iniciando…`
+> **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
 Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
@@ -810,23 +762,11 @@ If any test fails after fix attempts:
 - The pipeline STOPS. Inform the user.
 - Ask if they want an automatic fix attempt.
 
-**Emit completion log per § Phase Logging Convention** when test phase ends: `✓ Fase: test | concluída` (or `falhou` if tests still failing).
-
 ### 4. PHASES: Quality Checks (PARALLEL)
 
 > **Phase check**: Check each quality phase individually against the **effective phase set** (resolved in step 1.5):
-> - If all three (`perf`, `security`, `review`) are `disabled`: emit the skip log for each (per § Phase Logging Convention) and proceed to Phase 5.
-> - If some are `disabled`: launch only the agents for enabled phases. Emit the skip log for each disabled one.
-
-**Emit start log per § Phase Logging Convention** for EACH enabled quality phase BEFORE dispatching the Skill calls in this turn. Example for a run with perf+security enabled, review disabled:
-
-```
-▶ Fase: perf | modelo: sonnet | iniciando…
-▶ Fase: security | modelo: sonnet | iniciando…
-⊘ Fase: review | pulada — disabled em config
-```
-
-The three start lines (or skip lines) MUST be emitted in the same assistant turn that dispatches the parallel Skill calls, so the user sees what is about to run.
+> - If all three (`perf`, `security`, `review`) are `disabled`: skip this step entirely and proceed to Phase 5.
+> - If some are `disabled`: launch only the agents for enabled phases. Skip the disabled ones.
 
 > **Pre-quality snapshot:** The snapshot `.context/ship-run/<task-id>/pre-quality-snapshot.sha` was already captured in step 0.5. All quality agents and the PR agent can read the HEAD SHA from that file. See `ship/patterns/gates.md → Snapshot pré-fix` for format details and lifecycle rules.
 
@@ -839,7 +779,7 @@ DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
 Apply the following adjustments **on top of** the effective phase set:
 
 - **`trivial`**: Skip all quality phases (`perf`, `security`, `review`). Log: `Diff trivial — fases de qualidade puladas`. Append a PASS row for each skipped phase to `phase-status.md` with notes `diff trivial — pulado`. Proceed directly to Phase 5 (gate=PASS).
-- **`minor`**: Skip `perf` and `review`. If `security` is `enabled` in the effective phase set, launch only 1 combined security agent (covers all OWASP categories in a single pass) and log: `Diff minor — security combinado, perf/review pulados`. If `security` is `disabled`, skip security as well and log: `Diff minor — security disabled em config, perf/review pulados, fase 4 inteiramente pulada`. Append PASS rows for `perf` and `review` (and `security` when also skipped due to config) to `phase-status.md` with notes `diff minor — pulado`.
+- **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
 Invoke **up to 3 phase skills in parallel** via the **Skill tool** (one Skill call per enabled phase, dispatched in a SINGLE assistant turn so they fork concurrently). Each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent with full reasoning — do NOT wrap any of them in an `Agent` tool call. The orchestrator itself runs on Haiku per # Model Routing Policy
@@ -1032,19 +972,6 @@ When a phase is invoked directly (not via `ship:run`), it reads `Artifact langua
 
 ### 5. GATE CHECK
 
-**Emit completion log per § Phase Logging Convention** for EACH quality phase that ran, in the same assistant turn, BEFORE evaluating the gate. Example:
-
-```
-✓ Fase: perf | gate=warn | critical=0 high=0 medium=2 low=1
-✓ Fase: security | gate=pass | critical=0 high=0 medium=0 low=0
-```
-
-Then emit an aggregated gate summary line so the user sees the consolidated decision before any auto-fix branch fires:
-
-```
-■ Gate agregado: <pass|warn|fail> | total findings: critical=N high=N medium=N low=N
-```
-
 After all 3 agents complete, apply severity overrides before gate evaluation:
 
 **Severity Overrides:**
@@ -1127,7 +1054,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`. **Emit start logs per § Phase Logging Convention** for each re-invoked phase BEFORE dispatching the Skill calls, suffixed with the re-run iteration: `▶ Fase: <phase> | modelo: <tier> | re-run #<N>…`. After they complete, emit the matching completion logs and a new aggregated gate summary line.
+   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -1136,9 +1063,7 @@ Continue automatically.
 
 ### 6. PHASE: Analyze (Drift Detection)
 
-> **Phase check**: If `analyze` is `disabled` in the **effective phase set** (resolved in step 1.5), emit the skip log per § Phase Logging Convention and proceed to Phase 7.
-
-**Emit start log per § Phase Logging Convention** before invoking: `▶ Fase: analyze | modelo: sonnet | iniciando…`. After completion: `✓ Fase: analyze | gate=<pass|warn|fail> | critical=N high=N medium=N low=N`.
+> **Phase check**: If `analyze` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 7.
 
 > **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
 
@@ -1188,9 +1113,7 @@ When a phase is invoked directly (not via `ship:run`), it reads `Artifact langua
 
 ### 7. PHASE: User Acceptance
 
-> **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), emit the skip log per § Phase Logging Convention and proceed to Phase 8.
-
-**Emit start log per § Phase Logging Convention** before invoking: `▶ Fase: homolog | modelo: haiku | iniciando…`. After completion: `✓ Fase: homolog | concluída`.
+> **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
 
 Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `context: fork` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
@@ -1216,32 +1139,37 @@ When a phase is invoked directly (not via `ship:run`), it reads `Artifact langua
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
-### 8. Task completion
+### 8. MANDATORY STOP — Await user confirmation for PR
 
-After acceptance:
+After homolog approval:
 
-**Linear mode:**
+1. **Verify Linear lifecycle completion** (quality report comment + "Done" status).
 
-> **MANDATORY — Verify the full Linear lifecycle was completed**
->
-> The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-> In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
->
-> 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
-> 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
->
-> Both the "Done" status AND the quality report comment are required before the task is considered complete.
+   **Linear mode:**
 
-3. Clean up temporary findings files
+   > **MANDATORY — Verify the full Linear lifecycle was completed**
+   >
+   > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
+   > In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
+   >
+   > 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+   > 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
+   >
+   > Both the "Done" status AND the quality report comment are required before the task is considered complete.
 
-**Local mode:**
-1. Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
-2. Mark the task as `done` in `tasks.md`
-3. Clean up temporary findings files
+   **Local mode:**
+   - Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
+   - Mark the task as `done` in `tasks.md`
 
-**Both modes:**
-- If working on multiple tasks: ask "Task '<name>' complete. Continue to the next task '<next-name>', or stop here?"
-- If single task or user stops: inform "Task complete! Run `/ship:pr` when ready to create a Pull Request."
+   **Both modes:** clean up temporary findings files.
+
+2. Inform the user:
+   - If working on multiple tasks: ask "Task '<name>' complete. Continue to the next task '<next-name>', or stop here?"
+   - Otherwise: "**Task complete!** Run `/ship:pr` when ready to create a Pull Request."
+
+3. **STOP HERE** — Do NOT invoke `/ship:pr` automatically.
+
+4. Only proceed with PR creation when the user explicitly calls `/ship:pr`.
 
 ---
 
