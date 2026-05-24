@@ -27,11 +27,7 @@ Check if `ship/config.md` exists at the project root.
 
 ### 2. Determine storage mode
 
-See # Storage Mode
-
-Read `ship/config.md` and check the `Linear Integration` section:
-- If `Configured: yes` → **Linear mode** (artifacts live in Linear)
-- If `Configured: no` → **Local mode** (artifacts live in `ship/changes/`).
+See @ship/patterns/storage-mode.md.
 
 ### 3. Check for specification
 
@@ -63,170 +59,7 @@ For each task, execute the following phases:
 
 ### 0.5. Initialize shared scratch dir
 
-> See # Run Context — Shared Scratch Between Agents
-
-Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review).
-
----
-
-## Root directory
-
-```
-.context/ship-run/<task-id>/
-```
-
-`<task-id>` is the Linear issue identifier (e.g., `MOB-1140`) or, in local mode,
-the feature slug (e.g., `my-feature`). The directory is ephemeral — never commit it
-(see `.gitignore`).
-
-> **`<task-id>` must contain only `[a-zA-Z0-9_-]`. Never use values containing `/`, `..`, or spaces.**
-
----
-
-## Canonical files
-
-| File | Written by | Read by | Content |
-|------|-----------|---------|---------|
-| `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
-| `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
-| `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
-| `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
-| `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
-
-### `stack.md` format
-
-```markdown
-# Stack
-
-- Language: TypeScript
-- Runtime: Node.js 20+
-- Framework: NestJS
-- Test runner: vitest
-- Package manager: npm
-```
-
-### `diff.md` format
-
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
-
-### `test-failures.md` format
-
-Always written by the test agent — even if all tests passed (header-only = zero failures):
-
-```markdown
-# Test Failures
-
-- src/auth/auth.service.ts (3 failures)
-- src/users/users.repo.ts (1 failure)
-```
-
-When all tests pass, the file contains only the header:
-
-```markdown
-# Test Failures
-```
-
-Header-only (no bullet items) or absent file both indicate all tests passed.
-
-### `phase-status.md` format
-
-Each phase appends one row when it completes. Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
-
-```markdown
-# Phase Status
-
-| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |
-|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|
-| develop | #1 | 2026-05-01T10:00:00Z | - | pass | 0 | 0 | 0 | 0 | |
-| test | #1 | 2026-05-01T10:01:00Z | - | pass | 0 | 0 | 0 | 0 | |
-| perf | #1 | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
-| security | #1 | 2026-05-01T10:02:00Z | src/runner.ts, config.ts | pass | 0 | 0 | 0 | 0 | |
-| review | #1 | 2026-05-01T10:02:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | |
-| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
-```
-
-### `pre-quality-snapshot.sha` format
-
-Single-line file with the commit SHA:
-
-```
-a1b2c3d4e5f6...
-```
-
-### `jaccard.json` format
-
-Written and read by the `analyze` agent (pipeline mode only). Invalidated whenever `diff_hash` or `spec_hash` changes.
-
-```json
-{
-  "diff_hash": "<sha256 of diff.md content>",
-  "spec_hash": "<sha256 of concatenated REQ-XX/AC-XX descriptions>",
-  "matrix": {
-    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
-    "REQ-02": { "code": ["src/bar.ts:55"], "score": 0.3 },
-    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
-    "AC-02":  { "tests": [], "score": 0.0 }
-  }
-}
-```
-
-- `diff_hash` and `spec_hash` are used as a compound cache key. If either changes, the entire matrix is recomputed.
-- `matrix` maps each REQ-XX/AC-XX ID to its best-match file(s) and highest Jaccard score.
-- `code` lists matched source file locations (`<path>:<line>`); `tests` lists matched test file locations.
-- Absent file means the cache was computed in standalone mode (no scratch dir) — no `jaccard.json` is written in that case.
-
----
-
-## Read/write conventions
-
-- **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
-  `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files.
-  The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
-- **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
-  header-only = all tests passed.
-- **No agent** may delete or overwrite files written by another agent.
-
----
-
-## Lifecycle
-
-| Moment | Action |
-|--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
-| During pipeline | Agents read and append as needed |
-| End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
-| `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
-
-The parent directory `.context/ship-run/` may hold multiple `<task-id>/` subdirs if
-parallel pipelines are running — never remove the parent, only the completed task's subdir.
-
----
-
-## Inline context slicing (fan-out optimization)
-
-When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh conversation with no shared prompt cache. Passing large shared artifacts (diff, Design, proposal) to every agent multiplies token costs: **N × file size + N × cache miss**.
-
-**Pattern:** the orchestrator reads each shared artifact **once**, slices it into per-agent subsets, and passes the slice **inline** in each agent's prompt. Agents must never re-read the original file.
-
-### Slicing rules
-
-- Always include enough surrounding context for the agent to understand scope:
-  - For diffs: include the `diff --git a/...` file header + the full `@@ ... @@` hunk header + ±3 surrounding context lines for each included hunk.
-  - For design/proposal docs: include the full subsection (heading + body) relevant to the agent's scope.
-- If a hunk or section does not clearly belong to any agent's scope, include it in **all** agents' slices (conservative fallback).
-- The orchestrator must not truncate content that agents need to make correct decisions — smaller is better, but correctness comes first.
-
-### Which phases use this pattern
-
-| Phase | Shared artifact sliced | Slice dimension |
-|-------|------------------------|-----------------|
-| `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
-| `ship:develop` | Design document | by module / independent implementation unit | for canonical file formats and lifecycle rules.
+> See @ship/patterns/run-context.md for canonical file formats and lifecycle rules.
 
 After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
 
@@ -236,54 +69,7 @@ mkdir -p .context/ship-run/<task-id>
 
 Then populate the canonical files in a single batch:
 
-1. **`stack.md`** — Run stack-detection (see # Stack Detection
-
-Read these fields from `ship/config.md` to understand the project's stack:
-
-- **Runtime**: Node.js, Python, Go, Java, Rust, Ruby, PHP, .NET, etc.
-- **Framework**: NestJS, Express, Fastify, Hono, Django, Flask, FastAPI, Gin, Echo, Spring Boot, Rails, Laravel, ASP.NET, etc.
-- **Database**: MongoDB, PostgreSQL, MySQL, Redis, SQLite, DynamoDB, etc.
-- **Frontend**: Next.js, React, Vue, Angular, Svelte, Astro, Nuxt, Remix, SolidJS, etc.
-- **Project Type**: `backend` | `frontend` | `fullstack` | `monorepo`
-- **Workspaces**: (monorepo only) list of workspaces and their types
-- **Build tool**: esbuild, webpack, vite, turbopack, tsc, gradle, maven, cargo, etc.
-- **Test framework**: Vitest, Jest, Mocha, pytest, go test, RSpec, PHPUnit, JUnit, Playwright, Cypress, etc.
-- **Package manager**: pnpm, npm, yarn, pip, poetry, go mod, cargo, maven, gradle, bundler, composer, etc.
-- **Lint command**: eslint, prettier, ruff, golangci-lint, rubocop, phpcs, etc.
-- **Typecheck command**: tsc --noEmit, pnpm typecheck, mypy, go vet, etc.
-
-## How to detect (when `ship/config.md` is absent or incomplete)
-
-Probe the project root for these signal files:
-
-| Signal file / dependency | Indicates |
-|--------------------------|-----------|
-| `package.json` | Node.js runtime; inspect `dependencies`/`devDependencies` for framework |
-| `package-lock.json` | npm |
-| `pnpm-lock.yaml` | pnpm |
-| `yarn.lock` | yarn |
-| `pnpm-workspace.yaml` / `lerna.json` / `nx.json` / `turbo.json` | monorepo |
-| `package.json → workspaces` field | monorepo |
-| `nest-cli.json` or `@nestjs/*` dep | NestJS |
-| `next.config.*` | Next.js |
-| `go.mod` | Go |
-| `Cargo.toml` | Rust |
-| `pyproject.toml` or `requirements.txt` | Python |
-| `pom.xml` or `build.gradle` | Java |
-| `Gemfile` | Ruby |
-| `composer.json` | PHP |
-| `*.csproj` | .NET |
-| `mongoose` / `@typegoose` dep | MongoDB |
-| `pg` / `prisma` / `typeorm` dep | PostgreSQL |
-| `mysql2` / `mysql` dep | MySQL |
-| `redis` / `ioredis` dep | Redis |
-| `vitest.config.*` or `vitest` dep | Vitest |
-| `jest.config.*` or `jest` dep | Jest |
-| `playwright.config.*` dep | Playwright |
-| `cypress.config.*` dep | Cypress |
-| `next.config.*` / `vite.config.*` / `angular.json` present, no server entry | `frontend` project type |
-| `package.json` with server entry (`main` points to a server file), no frontend config | `backend` project type |
-| Both a frontend config file and a server entry present | `fullstack` project type |): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
+1. **`stack.md`** — Run stack-detection (see @ship/patterns/stack-detection.md): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
 
    ```markdown
    # Stack
@@ -329,142 +115,7 @@ Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 
 ### 0.7. Diff Classification
 
-> See # Diff Classifier — Deterministic Heuristic
-
-Classifies the diff in `.context/ship-run/<task-id>/diff.md` into one of four classes
-and adjusts which quality agents run in Phase 4 of `/ship:run`.
-
-> **No LLM calls.** All classification is computed via bash-parseable rules only.
-
----
-
-## Classification Criteria
-
-### Line count
-
-Count changed lines (add `+` and remove `-` lines, excluding `+++`/`---` headers):
-
-```bash
-grep -E '^[+-]' diff.md | grep -Ev '^(\+\+\+|---)' | wc -l
-```
-
-### Logical file count
-
-Count unique modified source files, excluding documentation/config-only extensions:
-
-```bash
-grep '^+++ b/' diff.md | sed 's|^+++ b/||' \
-  | grep -Ev '\.(md|json|lock|txt|ya?ml)$' | sort -u | wc -l
-```
-
-### New endpoint detection
-
-Check for new route/endpoint patterns added by the diff:
-
-```bash
-grep '^+' diff.md | grep -Ev '^\+\+\+' \
-  | grep -E "route\(|app\.(get|post|put|patch|delete)\(|@(Get|Post|Put|Patch|Delete)\(" \
-  | wc -l
-```
-
-### Sensitive path detection
-
-Check if any added file in the diff touches a sensitive path:
-
-```bash
-grep '^+++ b/' diff.md | sed 's|^+++ b/||' \
-  | grep -E '^(auth/|payment/|query|migrations/)' | wc -l
-```
-
-Default sensitive prefixes: `auth/`, `payment/`, `query`, `migrations/`.
-Override by adding `## Sensitive Paths` to `ship/config.md` (see format below).
-
----
-
-## Classification Rules (evaluated top-down, first match wins)
-
-| Class | Conditions |
-|-------|-----------|
-| `trivial` | ALL of: (a) only files with ext `*.md`, `*.json`, `*.lock`, `*.txt`, `*.yml`, `*.yaml` modified; (b) zero sensitive path matches; (c) total diff < 50 lines |
-| `large` | total diff > 1000 lines OR logical files > 10 |
-| `minor` | total diff < 100 lines AND logical files ≤ 1 AND zero new endpoint patterns |
-| `normal` | everything else (default) |
-
-> `large` is checked before `minor` so a 1200-line single-file change is `large`, not `minor`.
-
----
-
-## Sensitive Paths Override (in `ship/config.md`)
-
-When the `## Sensitive Paths` section is present, its entries **replace** (not extend) the defaults:
-
-```markdown
-## Sensitive Paths
-# Optional — paths that force 'normal' classification even for trivial diffs.
-# Format: one path prefix per line (relative to repo root).
-# Defaults if section is absent: auth/, payment/, query, migrations/
-# - auth/
-# - payment/
-# - migrations/
-```
-
-Parse the section: extract non-comment lines starting with `- ` and strip the leading `- `.
-
----
-
-## Behavior per Class
-
-| Class | Quality agents | Log message |
-|-------|---------------|-------------|
-| `trivial` | Skip all (`perf`, `security`, `review`) — mark all as gate=PASS | `Diff trivial — fases de qualidade puladas` |
-| `minor` | Run 1 combined security agent only; skip `perf` and `review` | `Diff minor — security combinado, perf/review pulados` |
-| `normal` | Current behavior — up to 3 parallel agents | `Diff normal — fases de qualidade completas` |
-| `large` | Current behavior — up to 3 parallel agents | `Diff large — fases de qualidade completas` |
-
-### `trivial` — phase-status.md entries
-
-Append one PASS row for each skipped quality phase:
-
-```
-| perf     | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
-| security | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
-| review   | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
-```
-
-### `minor` — combined security agent
-
-Launch a single security agent instructed to cover all three OWASP categories
-(Injection + Auth + Data/Config) in one pass. Write findings to the same
-`security-findings-<task-id>.md` file as normal mode. `perf` and `review` rows
-in `phase-status.md` are written as gate=PASS with notes `diff minor — pulado`.
-
----
-
-## Output
-
-Write the classification result to:
-
-```
-.context/ship-run/<task-id>/diff-class.txt
-```
-
-Content: a single word — `trivial`, `minor`, `normal`, or `large`.
-
----
-
-## Compute & Log
-
-After writing `diff-class.txt`, log to the user:
-
-```
-Diff class: <class> (<reason>)
-```
-
-Where `<reason>` is a short human-readable explanation, e.g.:
-- `trivial` → `only doc/config files, 12 lines, no sensitive paths`
-- `minor` → `48 lines, 1 logical file, no new endpoints`
-- `normal` → `default classification`
-- `large` → `1 240 lines changed` for the full heuristic reference.
+> See @ship/patterns/diff-classifier.md for the full heuristic reference.
 
 Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
 
@@ -531,114 +182,10 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 1. Use `mcp__linear-server__get_issue` to get task title, description, acceptance criteria, labels, milestone
 2. Use `mcp__linear-server__get_project` to get the project context
 3. Use `mcp__linear-server__list_documents` + `mcp__linear-server__get_document` to read the Proposal and Design documents linked to the project
-4. Read `ship/config.md` (see # Stack Detection
-
-Read these fields from `ship/config.md` to understand the project's stack:
-
-- **Runtime**: Node.js, Python, Go, Java, Rust, Ruby, PHP, .NET, etc.
-- **Framework**: NestJS, Express, Fastify, Hono, Django, Flask, FastAPI, Gin, Echo, Spring Boot, Rails, Laravel, ASP.NET, etc.
-- **Database**: MongoDB, PostgreSQL, MySQL, Redis, SQLite, DynamoDB, etc.
-- **Frontend**: Next.js, React, Vue, Angular, Svelte, Astro, Nuxt, Remix, SolidJS, etc.
-- **Project Type**: `backend` | `frontend` | `fullstack` | `monorepo`
-- **Workspaces**: (monorepo only) list of workspaces and their types
-- **Build tool**: esbuild, webpack, vite, turbopack, tsc, gradle, maven, cargo, etc.
-- **Test framework**: Vitest, Jest, Mocha, pytest, go test, RSpec, PHPUnit, JUnit, Playwright, Cypress, etc.
-- **Package manager**: pnpm, npm, yarn, pip, poetry, go mod, cargo, maven, gradle, bundler, composer, etc.
-- **Lint command**: eslint, prettier, ruff, golangci-lint, rubocop, phpcs, etc.
-- **Typecheck command**: tsc --noEmit, pnpm typecheck, mypy, go vet, etc.
-
-## How to detect (when `ship/config.md` is absent or incomplete)
-
-Probe the project root for these signal files:
-
-| Signal file / dependency | Indicates |
-|--------------------------|-----------|
-| `package.json` | Node.js runtime; inspect `dependencies`/`devDependencies` for framework |
-| `package-lock.json` | npm |
-| `pnpm-lock.yaml` | pnpm |
-| `yarn.lock` | yarn |
-| `pnpm-workspace.yaml` / `lerna.json` / `nx.json` / `turbo.json` | monorepo |
-| `package.json → workspaces` field | monorepo |
-| `nest-cli.json` or `@nestjs/*` dep | NestJS |
-| `next.config.*` | Next.js |
-| `go.mod` | Go |
-| `Cargo.toml` | Rust |
-| `pyproject.toml` or `requirements.txt` | Python |
-| `pom.xml` or `build.gradle` | Java |
-| `Gemfile` | Ruby |
-| `composer.json` | PHP |
-| `*.csproj` | .NET |
-| `mongoose` / `@typegoose` dep | MongoDB |
-| `pg` / `prisma` / `typeorm` dep | PostgreSQL |
-| `mysql2` / `mysql` dep | MySQL |
-| `redis` / `ioredis` dep | Redis |
-| `vitest.config.*` or `vitest` dep | Vitest |
-| `jest.config.*` or `jest` dep | Jest |
-| `playwright.config.*` dep | Playwright |
-| `cypress.config.*` dep | Cypress |
-| `next.config.*` / `vite.config.*` / `angular.json` present, no server entry | `frontend` project type |
-| `package.json` with server entry (`main` points to a server file), no frontend config | `backend` project type |
-| Both a frontend config file and a server entry present | `fullstack` project type | for stack detection logic).
+4. Read `ship/config.md` (see @ship/patterns/stack-detection.md for stack detection logic).
 5. Build the **effective phase set** for this run (applies to both Linear and Local mode):
    1. Read `Pipeline Profile → profile` from `ship/config.md` (default: `standard` if the field is absent or unknown)
-   2. Look up that profile's phase defaults in `# Pipeline Profiles
-
-A profile is a named preset that enables or disables pipeline phases in bulk. It is set in `ship/config.md` under `## Pipeline Profile`.
-
-## Available profiles
-
-| Phase | `lite` | `standard` | `strict` |
-|-------|:------:|:----------:|:--------:|
-| dev | ✓ | ✓ | ✓ |
-| test | | ✓ | ✓ |
-| perf | | | ✓ |
-| security | | | ✓ |
-| review | | ✓ | ✓ |
-| homolog | | ✓ | ✓ |
-| pr | ✓ | ✓ | ✓ |
-
-## Precedence rule
-
-Individual phase overrides in `Pipeline Phases` always take precedence over the profile. The profile only sets the default state of each phase; any `enabled`/`disabled` entry in `Pipeline Phases` overrides that default for that specific phase.
-
-Example: `profile: lite` + `test: enabled` in `Pipeline Phases` → tests run even though `lite` excludes them.
-
-## Usage examples
-
-### Prototype / proof of concept (`lite`)
-Fast iteration — only dev and PR, no quality gates.
-```
-## Pipeline Profile
-- profile: lite
-```
-
-### Internal library (`standard`)
-Balanced coverage — dev, tests, review, and homologation; skip heavy perf/security scans.
-```
-## Pipeline Profile
-- profile: standard
-```
-
-### Critical product / external exposure (`strict`)
-Maximum quality — all phases enabled, full OWASP and performance scans on every task.
-```
-## Pipeline Profile
-- profile: strict
-```
-
-#### Strict-exclusive: pre-PR audit gate
-
-When `profile: strict`, `/ship:pr` automatically triggers `/ship:audit:run` **before** creating the PR. The consolidated gate result determines what happens next:
-
-| Gate | Behavior |
-|------|----------|
-| PASS | PR creation proceeds normally |
-| WARN | Pipeline pauses — user is asked to confirm before continuing |
-| FAIL | PR creation is blocked until all critical/high findings are resolved |
-
-This guarantees that no PR is merged from a `strict` project with unresolved critical or high audit findings. For `lite` and `standard` profiles, no audit is triggered automatically during `/ship:pr`.
-
-See the `ship:pr` skill § "Strict-exclusive" for the full decision tree and exact user-facing messages.`. If the profile name is not recognized, fall back to `standard` and warn the user.
+   2. Look up that profile's phase defaults in `@ship/patterns/profiles.md`. If the profile name is not recognized, fall back to `standard` and warn the user.
    3. For each phase (`dev`, `test`, `perf`, `security`, `review`, `analyze`, `homolog`, `pr`): if `Pipeline Phases` has an explicit `enabled`/`disabled` entry, that override wins; otherwise use the profile default
    4. **Log to the user** before starting any phase:
       - Format: `Profile: <name> → fases ativas: <list> | puladas por profile: <list>`
@@ -646,22 +193,7 @@ See the `ship:pr` skill § "Strict-exclusive" for the full decision tree and exa
       - Example (no overrides): `Profile: lite → fases ativas: dev, pr | puladas por profile: test, perf, security, review, homolog`
       - Example (with override): `Profile: lite | override: test: enabled → fases ativas: dev, test, pr | puladas por profile: perf, security, review, homolog`
 
-6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `@ship/patterns/language.md`.
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
@@ -817,21 +349,7 @@ For model routing rules, read the file at ./ship/patterns/model-routing.md compl
 
 **Local mode:**
 
-Follow # Load Artifacts
-
-Matrix of artifact loading by context and storage mode:
-
-| Context | Linear mode | Local mode |
-|---------|------------|------------|
-| **Spec** (`/ship:spec`) | `get_issue` + `list_comments` + linked documents | free text (no prior artifacts to load) |
-| **Pipeline phase** (develop, perf, security, review) | `get_issue` + `get_document(Design)` + optionally `get_document(Proposal)` | `proposal.md` + `design.md` + `tasks.md` |
-| **Orchestration** (run, homolog) | `get_issue` + `list_documents` → `get_document(Proposal)` + `get_document(Design)` | `proposal.md` + `design.md` + `tasks.md` + `report.md` |
-| **PR** (`/ship:pr`) | `get_issue` + `get_document(Proposal, Design)` (via cache if available, else `list_documents`) + `list_comments` | `proposal.md` + `design.md` + `tasks.md` + `report.md` |
-| **Audit** | `ship/config.md` only | `ship/config.md` only |
-
-All contexts also read `ship/config.md` for stack and conventions.
-
-**Pipeline phases only** (perf, security, review): after loading artifacts, run `git diff` to get the full diff of new/modified code — this is the primary analysis input. for the Local mode artifact loading steps.
+Follow @ship/patterns/load-artifacts.md for the Local mode artifact loading steps.
 
 Additionally:
 - Apply steps 5–6 above (effective phase set resolution and artifact_language extraction) — they are not Linear-specific.
@@ -873,22 +391,7 @@ Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
@@ -918,193 +421,40 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
-Invoke **up to 3 phase skills in parallel** via the **Skill tool** (one Skill call per enabled phase, dispatched in a SINGLE assistant turn so they fork concurrently). Each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent with full reasoning — do NOT wrap any of them in an `Agent` tool call. The orchestrator itself runs on Haiku per # Model Routing Policy
+Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
+- **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
+- **`security`** and **`review`** (if enabled): dispatch via **Skill tool** — each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent automatically. Do NOT wrap them in an `Agent` tool call.
 
----
+The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
-## Principle
-
-Ship pins the model per skill instead of inheriting from the session. This decouples cost
-control from quality: users can pick Haiku as their session model to economize across the
-weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
-analysis, generation, correlation). Symmetrically, template/control-flow skills (report
-rendering, findings aggregation, PR expansion, orchestration) are pinned to Haiku because they
-gain nothing from a higher tier.
-
-This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
-an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
-frontmatter `model:` field overrides the session tier, and an explicit `model:` parameter on
-an Agent tool dispatch overrides the frontmatter.
-
----
-
-## Rules
-
-1. **Use only tier aliases** — `"haiku"`, `"sonnet"`, `"opus"`. Never use versioned IDs like
-   `claude-haiku-4-5-20251001`. Aliases resolve dynamically to the latest model in that tier,
-   eliminating churn when models are upgraded.
-
-2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
-
-3. **Reasoning phases declare `model: "sonnet"` in SKILL.md frontmatter.** They never inherit
-   from the parent session — Sonnet is pinned so the skill behaves identically whether invoked
-   standalone or via an orchestrator. Reasoning phases include: `develop`, `test`, `perf`,
-   `security`, `review`, `analyze`, `spec`, and all `audit:*` skills except `audit:run`.
-
-4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
-   to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
-   but kept as a belt-and-suspenders so the dispatch site is self-documenting and any future
-   reasoning skill added without `model: "sonnet"` in frontmatter still runs on Sonnet when
-   dispatched. The symmetric rule also holds: **consolidation/template agents inside Sonnet
-   contexts** (e.g., the Step 5 agent in `ship:audit:run`) must pass `model: "haiku"` explicitly.
-
----
-
-## Phase classification
-
-| Skill / Phase         | Tier    | Reason                                          |
-|-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
-| `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
-| `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
-| `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:develop`        | sonnet   | Implementation — needs full reasoning           |
-| `ship:test`           | sonnet   | Test generation — needs full reasoning          |
-| `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
-| `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
-| `ship:review`         | sonnet   | Code review — needs full reasoning              |
-| `ship:analyze`        | sonnet   | Drift detection — needs full reasoning          |
-| `ship:spec`           | sonnet   | Deep specification — needs full reasoning       |
-| `ship:audit:*`        | sonnet   | Project-wide audits — needs full reasoning      |
-
----
-
-## Orchestrator-on-Haiku pattern
-
-When a skill is mostly **control-flow and dispatch** — reading files, running deterministic
-bash for classification, evaluating gates, spawning sub-agents, aggregating results — its body
-gains nothing from a session-tier model. The expensive reasoning lives inside the sub-agents.
-
-For these skills, apply the **Orchestrator-on-Haiku pattern**:
-
-1. Set the skill's frontmatter to `model: "haiku"`.
-2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
-   sub-agent that does reasoning work (implementation, analysis, generation, correlation).
-3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
-
-**Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
-If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
-ambiguous classification), either keep it at session tier or rewrite the judgment as a
-deterministic rule before downgrading. See the multi-task note in `ship:run` for an example
-mitigation (dependency inference removed in favor of deterministic Linear milestone order).
-
----
-
-## How to apply
-
-### In SKILL.md frontmatter (for skills that are themselves template phases):
-
-```yaml
----
-name: ship:homolog
-model: "haiku"
-# ... other fields
----
-```
-
-### In Agent tool calls (Haiku orchestrator launching reasoning sub-agents):
-
-Pass `model: "sonnet"` when calling the Agent tool for reasoning work:
+**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-perf`. Pass all context inline:
 
 ```
-Use the Agent tool to execute development. Pass model: "sonnet" to this agent —
-implementation requires full reasoning.
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Project Type: <project-type>
+Stack: <stack>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
-
-### In Agent tool calls (Sonnet orchestrator launching consolidation sub-agents):
-
-Pass `model: "haiku"` when calling the Agent tool for consolidation work:
-
-```
-Use the Agent tool to consolidate results. Pass model: "haiku" to this agent —
-it performs template/report aggregation, not reasoning.
-```
-
----
-
-## Pattern classification (skill-patterns-convention.md)
-
-`model-routing.md` is a **bundle pattern** (> 30 lines). Reference in SKILL.md via:
-
-```
-For model routing rules, read the file at ./ship/patterns/model-routing.md completely.
-```.
-
-**Skill 1 — `ship:perf`** *(only if `perf` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/perf-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
 
 **Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 ### 5. GATE CHECK
 
@@ -1211,22 +561,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Pass results to the Correlation Engine
 - Generate the drift report + compute gate
 - Persist `drift-report.md` and `drift-findings.json` to scratch dir
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -1256,22 +591,7 @@ Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `cont
 - Consolidate findings into a quality report
 - Present the report for this task
 - Wait for user approval
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -1343,186 +663,8 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
-- **Language**: Read `Artifact language` from `ship/config.md → Conventions` once in step 1.6 and inject the resolved value into every phase agent prompt. Phase SKILL.md files use this injected value and do not re-load `# Artifact Language
-
-- All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
-- Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
-- LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
-
-## Usage paths
-
-### Pipeline mode (authoritative)
-
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.` during pipeline execution.
-- **Shared scratch dir**: See # Run Context — Shared Scratch Between Agents
-
-Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review).
-
----
-
-## Root directory
-
-```
-.context/ship-run/<task-id>/
-```
-
-`<task-id>` is the Linear issue identifier (e.g., `MOB-1140`) or, in local mode,
-the feature slug (e.g., `my-feature`). The directory is ephemeral — never commit it
-(see `.gitignore`).
-
-> **`<task-id>` must contain only `[a-zA-Z0-9_-]`. Never use values containing `/`, `..`, or spaces.**
-
----
-
-## Canonical files
-
-| File | Written by | Read by | Content |
-|------|-----------|---------|---------|
-| `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
-| `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
-| `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
-| `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
-| `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
-
-### `stack.md` format
-
-```markdown
-# Stack
-
-- Language: TypeScript
-- Runtime: Node.js 20+
-- Framework: NestJS
-- Test runner: vitest
-- Package manager: npm
-```
-
-### `diff.md` format
-
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
-
-### `test-failures.md` format
-
-Always written by the test agent — even if all tests passed (header-only = zero failures):
-
-```markdown
-# Test Failures
-
-- src/auth/auth.service.ts (3 failures)
-- src/users/users.repo.ts (1 failure)
-```
-
-When all tests pass, the file contains only the header:
-
-```markdown
-# Test Failures
-```
-
-Header-only (no bullet items) or absent file both indicate all tests passed.
-
-### `phase-status.md` format
-
-Each phase appends one row when it completes. Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
-
-```markdown
-# Phase Status
-
-| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |
-|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|
-| develop | #1 | 2026-05-01T10:00:00Z | - | pass | 0 | 0 | 0 | 0 | |
-| test | #1 | 2026-05-01T10:01:00Z | - | pass | 0 | 0 | 0 | 0 | |
-| perf | #1 | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
-| security | #1 | 2026-05-01T10:02:00Z | src/runner.ts, config.ts | pass | 0 | 0 | 0 | 0 | |
-| review | #1 | 2026-05-01T10:02:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | |
-| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
-```
-
-### `pre-quality-snapshot.sha` format
-
-Single-line file with the commit SHA:
-
-```
-a1b2c3d4e5f6...
-```
-
-### `jaccard.json` format
-
-Written and read by the `analyze` agent (pipeline mode only). Invalidated whenever `diff_hash` or `spec_hash` changes.
-
-```json
-{
-  "diff_hash": "<sha256 of diff.md content>",
-  "spec_hash": "<sha256 of concatenated REQ-XX/AC-XX descriptions>",
-  "matrix": {
-    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
-    "REQ-02": { "code": ["src/bar.ts:55"], "score": 0.3 },
-    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
-    "AC-02":  { "tests": [], "score": 0.0 }
-  }
-}
-```
-
-- `diff_hash` and `spec_hash` are used as a compound cache key. If either changes, the entire matrix is recomputed.
-- `matrix` maps each REQ-XX/AC-XX ID to its best-match file(s) and highest Jaccard score.
-- `code` lists matched source file locations (`<path>:<line>`); `tests` lists matched test file locations.
-- Absent file means the cache was computed in standalone mode (no scratch dir) — no `jaccard.json` is written in that case.
-
----
-
-## Read/write conventions
-
-- **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
-  `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files.
-  The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
-- **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
-  header-only = all tests passed.
-- **No agent** may delete or overwrite files written by another agent.
-
----
-
-## Lifecycle
-
-| Moment | Action |
-|--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
-| During pipeline | Agents read and append as needed |
-| End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
-| `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
-
-The parent directory `.context/ship-run/` may hold multiple `<task-id>/` subdirs if
-parallel pipelines are running — never remove the parent, only the completed task's subdir.
-
----
-
-## Inline context slicing (fan-out optimization)
-
-When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh conversation with no shared prompt cache. Passing large shared artifacts (diff, Design, proposal) to every agent multiplies token costs: **N × file size + N × cache miss**.
-
-**Pattern:** the orchestrator reads each shared artifact **once**, slices it into per-agent subsets, and passes the slice **inline** in each agent's prompt. Agents must never re-read the original file.
-
-### Slicing rules
-
-- Always include enough surrounding context for the agent to understand scope:
-  - For diffs: include the `diff --git a/...` file header + the full `@@ ... @@` hunk header + ±3 surrounding context lines for each included hunk.
-  - For design/proposal docs: include the full subsection (heading + body) relevant to the agent's scope.
-- If a hunk or section does not clearly belong to any agent's scope, include it in **all** agents' slices (conservative fallback).
-- The orchestrator must not truncate content that agents need to make correct decisions — smaller is better, but correctness comes first.
-
-### Which phases use this pattern
-
-| Phase | Shared artifact sliced | Slice dimension |
-|-------|------------------------|-----------------|
-| `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
-| `ship:develop` | Design document | by module / independent implementation unit | for the `.context/ship-run/<task-id>/` structure and lifecycle.
+- **Language**: Read `Artifact language` from `ship/config.md → Conventions` once in step 1.6 and inject the resolved value into every phase agent prompt. Phase SKILL.md files use this injected value and do not re-load `@ship/patterns/language.md` during pipeline execution.
+- **Shared scratch dir**: See @ship/patterns/run-context.md for the `.context/ship-run/<task-id>/` structure and lifecycle.
 - **Linear mode = zero local artifacts**: When Linear is configured, do NOT create `ship/changes/` directories. Task context comes from Linear, quality reports go as comments.
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
 - **Do not create the PR automatically**: The pipeline ends at acceptance. The user runs `/ship:pr` separately.
