@@ -1284,6 +1284,20 @@ When a phase is invoked directly (not via `ship:run`), it reads `Artifact langua
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
+> **MANDATORY STOP — Await user response if homolog asks a question**
+>
+> The `ship:homolog` skill ends by either (a) approving the task or (b) asking
+> the user a question (e.g., "Quais ajustes precisam ser feitos?", "Algo a
+> corrigir antes do PR?"). If the homolog output contains an open question
+> directed at the user, the orchestrator MUST stop immediately and return
+> control to the user — do NOT continue to Step 8, do NOT run additional
+> verification, do NOT mark the task as complete.
+>
+> Only proceed to Step 8 when the user has explicitly approved (e.g.,
+> "aprovado", "pode seguir", "ok PR", or equivalent in the artifact language).
+> If the user requests adjustments, treat it as a fix iteration: apply the
+> changes, then re-invoke `ship:homolog` for re-approval.
+
 ### 8. MANDATORY STOP — Await user confirmation for PR
 
 After homolog approval:

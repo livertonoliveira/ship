@@ -1724,6 +1724,8 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 - **Gate: PASS | WARN | FAIL**
 ```#acceptance-report for the report structure.
 
+After the gate summary, append a `## Modelos Utilizados` section following the rules in # Model Summary Section.
+
 ### 5. Await approval
 
 Ask the user:
@@ -1753,17 +1755,22 @@ After approval, execute ALL of the following steps without skipping any:
 > In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue_status` to confirm the status is "Done".
 > If either check fails, retry the corresponding step before continuing.
 
-3. **Write Linear document cache** — write `.context/ship-run/<task-id>/linear-cache.json` so that `ship:pr` can skip redundant `list_documents`/`get_document` calls. Build the JSON using the Proposal and Design documents loaded in Step 1, omitting any key whose document was not found:
-   ```json
-   {
-     "cached_at": "<ISO 8601 timestamp of this write>",
-     "proposal": { "id": "...", "title": "..." },
-     "design":   { "id": "...", "title": "..." }
-   }
-   ```
-   The `cached_at` field records the moment the cache was written (homolog approval time). `ship:pr` should log it for traceability but must not gate on it — Linear docs may have changed since homolog. Omit any key whose document was not found — do **not** write `null` values. Write the file with `mkdir -p .context/ship-run/<task-id>` then use the Bash tool to write the JSON. This step is best-effort: if writing fails for any reason, log a warning and continue — it must never block the homolog phase.
-4. Clean up temporary local findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.
-5. Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
+> **MANDATORY STEP D — Write Linear document cache**
+>
+> Write `.context/ship-run/<task-id>/linear-cache.json` so that `ship:pr` can skip redundant `list_documents`/`get_document` calls. Build the JSON using the Proposal and Design documents loaded in Step 1, omitting any key whose document was not found:
+> ```json
+> {
+>   "cached_at": "<ISO 8601 timestamp of this write>",
+>   "proposal": { "id": "...", "title": "..." },
+>   "design":   { "id": "...", "title": "..." }
+> }
+> ```
+> The `cached_at` field records the moment the cache was written (homolog approval time). `ship:pr` should log it for traceability but must not gate on it — Linear docs may have changed since homolog. Omit any key whose document was not found — do **not** write `null` values. Write the file with `mkdir -p .context/ship-run/<task-id>` then use the Bash tool to write the JSON. This step is best-effort: if writing fails for any reason, log a warning and continue — it must never block the homolog phase.
+
+> **MANDATORY STEP E — Cleanup and inform user**
+>
+> Clean up temporary findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.
+> Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
 
 ---
 
@@ -3471,6 +3478,8 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 - **Gate: PASS | WARN | FAIL**
 ```#acceptance-report for the report structure.
 
+After the gate summary, append a `## Modelos Utilizados` section following the rules in # Model Summary Section.
+
 ### 5. Await approval
 
 Ask the user:
@@ -3490,6 +3499,51 @@ After approval:
 2. Update `tasks.md` item 4.1 as completed
 3. Clean up temporary files if they exist (perf-findings.md, security-findings.md, review-findings.md) — the data is already consolidated in report.md
 4. Inform: "Acceptance approved! Run `/ship:pr` when you are ready to create the Pull Request."
+
+---
+
+## Model Summary Section
+
+<!-- IMPL-SC-04 IMPL-SC-05 IMPL-SC-06 -->
+
+Append a `## Modelos Utilizados` section **immediately after the ## Quality Gates table** (before the acceptance criteria checklist), using the following logic:
+
+**When to include:**
+- Include the section only when at least one executed phase ran on a different model tier than the user's session model (i.e., model override is active).
+- **Omit the section entirely** when the session model tier equals the tier of all executed phases (no override) — @SC-06.
+
+**How to detect the session model and phase models:**
+- The session model is the model the user's Claude Code session is running (e.g., `opus`, `sonnet`, `haiku`). Read it from the orchestrator-injected context or, if unavailable, from `ship/config.md` or the `--model` flag used at invocation.
+- Each phase's model is declared in the corresponding `SKILL.md` frontmatter (`model:` field). Read it from each phase's frontmatter — the list below is illustrative only. Common defaults: `develop=sonnet`, `test=sonnet`, `perf=sonnet`, `security=sonnet`, `review=sonnet`, `homolog=haiku`.
+- A phase is considered **executed** when it has a row in `phase-status.md` — do not list skipped or disabled phases.
+
+**Section format when override is active** — @SC-04:
+
+```markdown
+## Modelos Utilizados
+| Fase       | Modelo |
+|------------|--------|
+| develop    | sonnet |
+| review     | sonnet |
+| homolog    | haiku  |
+
+Custo real desta sessão: $2.50
+```
+
+**How to display session cost** — @SC-05:
+
+1. **Attempt to get session cost**: Run `/cost` to fetch the actual cost data for the current session.
+   - **If `/cost` succeeds** (returns cost data): display the line `Custo real desta sessão: $X.XX` where X.XX is the exact cost returned by `/cost`.
+   - **If `/cost` fails or returns no data** (indisponível): skip the cost line and add a note `(custo da sessão indisponível)` below the model table.
+
+2. **Format**:
+   - Show the real, actual cost of the session exactly as returned by `/cost`
+   - Round to 2 decimal places (currency standard)
+   - No estimates, no counterfactuals — just the real number
+   - This demonstrates the actual cost incurred by the model routing decisions
+
+**Example with real data**:
+- Session cost (real): $2.50
 
 ---
 
