@@ -4,6 +4,7 @@ description: "Ship Audit: project-wide AppSec audit — OWASP Top 10, CWE mappin
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Audit — Security

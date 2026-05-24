@@ -4,6 +4,7 @@ description: "Ship Phase 5: OWASP security scan of the diff with 3 parallel agen
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Security — Security Analysis

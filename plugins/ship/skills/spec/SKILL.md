@@ -4,6 +4,7 @@ description: "Ship Spec: deep specification from a Linear issue or free prompt. 
 argument-hint: "<linear-url | issue-id | free text description>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 # Ship Spec — Specification & Task Decomposition

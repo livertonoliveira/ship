@@ -4,6 +4,7 @@ description: "Ship Audit: project-wide test coverage analysis — correlates AC/
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "sonnet"
 ---
 
 <!-- IMPL-REQ-01: read Test Scope from ship/config.md to filter enabled/disabled layers -->
