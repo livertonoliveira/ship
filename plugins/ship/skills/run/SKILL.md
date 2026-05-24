@@ -4,6 +4,7 @@ description: "Full development pipeline for a task: develop → test → perf �
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+model: "haiku"
 ---
 
 # Ship Run — Development Pipeline
@@ -214,7 +215,7 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Use the **Agent** tool to execute development. Instruct the agent to:
+Use the **Agent** tool to execute development. **Pass `model: "sonnet"` to the Agent tool call** — implementation requires full reasoning. Instruct the agent to:
 
 1. Read `.claude/commands/ship/develop.md` for full instructions
 2. Use the task description as the implementation spec (not the full feature — just THIS task)
@@ -236,7 +237,7 @@ Use the **Agent** tool to execute development. Instruct the agent to:
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Use the **Agent** tool to execute tests. Instruct the agent to:
+Use the **Agent** tool to execute tests. **Pass `model: "sonnet"` to the Agent tool call** — test generation requires full reasoning. Instruct the agent to:
 
 1. Read `.claude/commands/ship/test.md` for full instructions
 2. Use the task's acceptance criteria to guide test generation
@@ -271,7 +272,7 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
-Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases not skipped by diff class):
+Launch **up to 3 agents in parallel** using the Agent tool in a SINGLE call (only for enabled phases not skipped by diff class). **For each Agent dispatched below, pass `model: "sonnet"` to the Agent tool call** — perf/security/review are analysis work that requires full reasoning. The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
 **Agent 1 — Performance** *(only if `perf` is `enabled`)*:
 - Read `.claude/commands/ship/perf.md` for full instructions
@@ -317,14 +318,14 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
    - **Local mode:** Record in `ship/changes/<feature>/tracking.md`
 3. Act based on `on_fail`:
    - **`ask`**: Ask "I found issues that need fixing. Would you like me to apply the fixes automatically?" — if yes, fix; if no, pause.
-   - **`fix`**: Inform "Auto-fixing issues per project config..." and immediately launch an Agent to fix, then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
+   - **`fix`**: Inform "Auto-fixing issues per project config..." and immediately launch an Agent to fix (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
    - **`defer`**: Inform "Issues tracked for later (gate behavior: defer). Continuing pipeline..." and proceed to acceptance.
 
 **If exit code 1 (WARN):**
 1. Present warnings
 2. Act based on `on_warn`:
    - **`ask`**: Ask "There are warnings. Fix now or proceed to acceptance?" — if fix, same flow as FAIL; if proceed, continue.
-   - **`fix`**: Inform "Auto-fixing warnings per project config..." and apply fixes, then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
+   - **`fix`**: Inform "Auto-fixing warnings per project config..." and apply fixes (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
    - **`pass`**: Inform "Warnings noted (gate behavior: pass). Continuing to acceptance..." and proceed.
 
 #### Surgical Re-run Procedure
@@ -378,7 +379,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). Include `Artifact language: <artifact_language>` in each re-run agent's prompt, same as in Phase 4. Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Launch only the selected phases** (in parallel if multiple, following the same agent setup as Phase 4). **Pass `model: "sonnet"` to each re-run Agent dispatch** — re-runs repeat the same analysis work as Phase 4 and require full reasoning. Include `Artifact language: <artifact_language>` in each re-run agent's prompt, same as in Phase 4. Each re-run agent appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -391,7 +392,7 @@ Continue automatically.
 
 > **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
 
-Use the **Agent** tool to execute drift detection. Instruct the agent to:
+Use the **Agent** tool to execute drift detection. **Pass `model: "sonnet"` to the Agent tool call** — drift correlation (spec↔code↔tests) requires full reasoning. Instruct the agent to:
 
 1. Read `.claude/commands/ship/analyze.md` for full instructions
 2. Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
@@ -468,7 +469,7 @@ After acceptance:
 
 When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
-1. Sort tasks by milestone order, then by dependency order within each milestone
+1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — the orchestrator runs on Haiku and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
 2. Process one task at a time through the full pipeline
 3. After each task completion, ask the user before continuing
 4. At the end, present a summary of all completed tasks
