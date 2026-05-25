@@ -242,13 +242,20 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context as `$ARGUMENTS` to the skill:
 
-- Use the task's acceptance criteria to guide test generation
-- Generate and run tests scoped to THIS task only
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+```
+<task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
 
-**The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
+## Scenarios
+<inline: Gherkin scenarios extracted from the spec — from the Linear issue body (Linear mode) or proposal.md (local mode). Include ALL scenarios; ship:test will filter by @layer tag per agent.>
+```
+
+The orchestrator is responsible for extracting the `## Scenarios` block from the spec before invoking the skill. `ship:test` uses this injected block directly and does NOT re-fetch from Linear or local files during pipeline execution.
+
+**The forked skill launches one sub-agent per enabled layer (up to 3 in parallel)**: unit, integration, and/or e2e — only the layers enabled in `Test Scope` are launched.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -299,13 +306,13 @@ Severity Overrides: <severity-overrides or "none">
 <inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
 
-**Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
+**Phase 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
+**Phase 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -500,7 +507,7 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 ## Orchestrator Rules
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
-- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
+- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests fan out one agent per enabled layer in Test Scope (up to 3 in parallel).
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
