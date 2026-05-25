@@ -23,7 +23,11 @@ Read `ship/config.md`: extract `## Test Scope` (which layers are active) and `Ar
 
 Read `.context/ship-run/<task-id>/stack.md` if it exists (fallback: `ship/config.md`).
 
-Parse the task's `## Scenarios` Gherkin block (Linear: issue body; local: `tasks.md`). Group scenarios by their declared `@layer` tag — do NOT re-classify. Log:
+**Skip this section if `## Scenarios` was injected inline by the orchestrator** — this is the normal pipeline mode. When invoked from `ship:run`, scenarios are already present in `$ARGUMENTS`; parsing from Linear or `tasks.md` would be redundant and incorrect.
+
+**Standalone mode only** (no inline `## Scenarios` in `$ARGUMENTS`): parse the task's `## Scenarios` Gherkin block (Linear: issue body; local: `tasks.md`).
+
+Group scenarios by their declared `@layer` tag — do NOT re-classify. Log:
 ```
 Test layers: unit=<enabled|disabled>, integration=<enabled|disabled>, e2e=<enabled|disabled>
 ```
