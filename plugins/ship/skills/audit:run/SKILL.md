@@ -73,15 +73,36 @@ Launching <N> audits in parallel...
 
 ### 4. Launch all applicable audits in parallel
 
-Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
+Invoke each applicable audit via the **Agent** tool using `subagent_type: ship-audit-*` in **a SINGLE assistant turn** so they fan out concurrently. Each named agent already declares `model: sonnet` in its own frontmatter — do NOT pass an explicit `model` parameter, and do NOT invoke any `ship:audit:*` Skill from inside this orchestrator.
 
-- **`ship:audit:backend`**: returns the findings report from the full backend audit
-- **`ship:audit:database`**: returns the findings report from the full database audit
-- **`ship:audit:frontend`**: returns the findings report from the full frontend audit
-- **`ship:audit:security`**: returns the findings report from the full security audit
-- **`ship:audit:tests`**: returns the findings report from the full test coverage audit
+| Applicable audit | `subagent_type` |
+|---|---|
+| Backend performance | `ship-audit-backend` |
+| Database | `ship-audit-database` |
+| Frontend performance | `ship-audit-frontend` |
+| Security (AppSec) | `ship-audit-security` |
+| Test coverage | `ship-audit-tests` |
 
-Each agent writes its own report file:
+For every applicable audit (per Step 2 routing), include one Agent tool call in the same assistant turn. Pass inline context in the prompt so the worker skips redundant file reads:
+
+```
+Artifact language: <artifact_language>
+Storage mode: <linear|local>
+Team ID: <team_id_or_n/a>
+
+## Config
+Project Type: <project-type>
+Stack: <stack>
+Workspaces: <workspaces or n/a>
+Severity Overrides: <overrides for this audit phase, or "none">
+```
+
+Audit-specific notes:
+- `ship-audit-backend`, `ship-audit-frontend`, `ship-audit-database`, `ship-audit-security`: pass the full `## Config` block above.
+- `ship-audit-tests`: also include the `Test Scope` section from `ship/config.md` (unit/integration/e2e enabled/disabled) so the worker scopes coverage analysis correctly.
+- **Monorepo**: when scoping a backend/frontend audit to a single workspace, add `Workspace: <name>` and `Workspace path: <relative/path>` lines to that agent's inline context.
+
+Each agent writes its own report file and returns the JSON summary block defined in `# Audit Summary Schema` as the last content of its tool result:
 - `ship/audits/backend-<YYYY-MM-DD>.md`
 - `ship/audits/database-<YYYY-MM-DD>.md`
 - `ship/audits/frontend-<YYYY-MM-DD>.md`
