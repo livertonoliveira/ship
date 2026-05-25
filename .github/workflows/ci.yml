@@ -29,3 +29,6 @@ jobs:
 
       - name: Check no Agent tool wraps Skill(ship:X) invocations
         run: ./scripts/check-no-agent-wraps-skill.sh
+
+      - name: Check no audit:* invocations in pipeline skill files
+        run: ./scripts/check-no-audit-in-pipeline.sh
