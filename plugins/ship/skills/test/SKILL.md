@@ -1,6 +1,6 @@
 ---
 name: test
-description: "Ship Phase 3: generates and runs tests (unit, integration, e2e) with 3 parallel agents."
+description: "Ship Phase 3: fan-out orchestrator — only layers enabled in Test Scope are launched."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
