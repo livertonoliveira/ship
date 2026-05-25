@@ -2,7 +2,7 @@
 name: analyze
 description: "Ship Phase 6.5: drift detection — maps spec→code→tests, detects gaps, gate PASS/WARN/FAIL."
 argument-hint: "<feature-name | linear-issue-id>"
-allowed-tools: Read, Bash, Agent, mcp__linear-server__*
+allowed-tools: Read, Bash, Agent
 user-invocable: true
 model: haiku
 context: fork
