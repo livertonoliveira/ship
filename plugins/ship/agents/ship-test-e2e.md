@@ -69,7 +69,7 @@ For each provided `@SC-XX`:
 
 **Execution rules:**
 1. Follow the existing e2e test structure — page objects, fixtures, helpers.
-2. Run the tests using the project's configured e2e command.
+2. Run the tests using the project's configured e2e command. **For Vitest: always pass `--pool=threads`** — never use the default `--pool=forks` (it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely).
 3. If any fail: analyze whether the bug is in the test or the code. Fix (up to 2 iterations).
 
 ---
@@ -98,3 +98,4 @@ E2E Tests:
 - **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one `// TEST-SC-XX`-tagged test.
 - **Language**: use the `Artifact language` passed by the caller for user-facing output. Code, variable names: always English.
 - **Read efficiency**: re-read a file only if modified externally, likely compacted, or explicitly requested.
+- **Vitest pool**: always pass `--pool=threads` when invoking vitest directly. Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
