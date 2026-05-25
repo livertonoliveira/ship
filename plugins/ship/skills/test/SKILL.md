@@ -23,9 +23,7 @@ Read `ship/config.md`: extract `## Test Scope` (which layers are active) and `Ar
 
 Read `.context/ship-run/<task-id>/stack.md` if it exists (fallback: `ship/config.md`).
 
-**Skip this section if `## Scenarios` was injected inline by the orchestrator** — this is the normal pipeline mode. When invoked from `ship:run`, scenarios are already present in `$ARGUMENTS`; parsing from Linear or `tasks.md` would be redundant and incorrect.
-
-**Standalone mode only** (no inline `## Scenarios` in `$ARGUMENTS`): parse the task's `## Scenarios` Gherkin block:
+**If `## Scenarios` was NOT injected inline by the orchestrator** — parse the task's `## Scenarios` Gherkin block from artifacts:
 - **Linear mode**: read the issue body via MCP (`mcp__linear-server__get_issue`). If MCP tools are not available (haiku has no MCP in `allowed-tools`), skip Linear and fall back to local mode — log a warning: `"WARNING: MCP unavailable — falling back to proposal.md for ACs"`.
 - **Local mode** (or MCP unavailable): read `ship/changes/<feature>/proposal.md` and extract the `## Acceptance Criteria` section as the scenario source.
 

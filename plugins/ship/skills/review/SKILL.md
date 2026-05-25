@@ -3,7 +3,6 @@ name: review
 description: "Ship Phase 6: code review focused on SOLID, DRY, KISS, Clean Code, and project consistency."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
-user-invocable: true
 model: "sonnet"
 context: fork
 agent: general-purpose

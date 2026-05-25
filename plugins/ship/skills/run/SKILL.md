@@ -653,15 +653,11 @@ See the `ship:pr` skill § "Strict-exclusive" for the full decision tree and exa
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
@@ -880,15 +876,11 @@ Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 **The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
@@ -1093,15 +1085,11 @@ Severity Overrides: <severity-overrides or "none">
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 ### 5. GATE CHECK
 
@@ -1215,15 +1203,11 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -1260,15 +1244,11 @@ Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `cont
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.`.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -1347,15 +1327,11 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above.` during pipeline execution.
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`.` during pipeline execution.
 - **Shared scratch dir**: See # Run Context — Shared Scratch Between Agents
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
