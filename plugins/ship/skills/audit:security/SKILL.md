@@ -1,5 +1,5 @@
 ---
-name: audit:security
+name: ship:audit:security
 description: "Ship Audit: project-wide AppSec audit — OWASP Top 10, CWE mapping, 4 parallel agents, A-F score, PoC for critical/high."
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

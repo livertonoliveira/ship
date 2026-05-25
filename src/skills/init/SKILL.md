@@ -1,5 +1,5 @@
 ---
-name: init
+name: ship:init
 description: "Initializes Ship in the project: detects stack, conventions, configures Linear, and creates ship/config.md."
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

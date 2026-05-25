@@ -1,5 +1,5 @@
 ---
-name: audit:backend
+name: ship:audit:backend
 description: "Ship Audit: project-wide backend performance audit. Detects stack from config and launches 3 parallel agents."
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

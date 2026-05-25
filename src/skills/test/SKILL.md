@@ -1,5 +1,5 @@
 ---
-name: test
+name: ship:test
 description: "Ship Phase 3: fan-out orchestrator — only layers enabled in Test Scope are launched."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent

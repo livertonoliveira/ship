@@ -1,5 +1,5 @@
 ---
-name: run
+name: ship:run
 description: "Full development pipeline for a task: develop → test → perf → security → review → analyze → homolog. Works on 1 task by default, or N tasks / entire project if requested."
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
