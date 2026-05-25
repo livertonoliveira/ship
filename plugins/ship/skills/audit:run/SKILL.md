@@ -73,36 +73,15 @@ Launching <N> audits in parallel...
 
 ### 4. Launch all applicable audits in parallel
 
-Invoke each applicable audit via the **Agent** tool using `subagent_type: ship-audit-*` in **a SINGLE assistant turn** so they fan out concurrently. Each named agent already declares `model: sonnet` in its own frontmatter — do NOT pass an explicit `model` parameter, and do NOT invoke any `ship:audit:*` Skill from inside this orchestrator.
+Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
 
-| Applicable audit | `subagent_type` |
-|---|---|
-| Backend performance | `ship-audit-backend` |
-| Database | `ship-audit-database` |
-| Frontend performance | `ship-audit-frontend` |
-| Security (AppSec) | `ship-audit-security` |
-| Test coverage | `ship-audit-tests` |
+- **`ship:audit:backend`**: returns the findings report from the full backend audit
+- **`ship:audit:database`**: returns the findings report from the full database audit
+- **`ship:audit:frontend`**: returns the findings report from the full frontend audit
+- **`ship:audit:security`**: returns the findings report from the full security audit
+- **`ship:audit:tests`**: returns the findings report from the full test coverage audit
 
-For every applicable audit (per Step 2 routing), include one Agent tool call in the same assistant turn. Pass inline context in the prompt so the worker skips redundant file reads:
-
-```
-Artifact language: <artifact_language>
-Storage mode: <linear|local>
-Team ID: <team_id_or_n/a>
-
-## Config
-Project Type: <project-type>
-Stack: <stack>
-Workspaces: <workspaces or n/a>
-Severity Overrides: <overrides for this audit phase, or "none">
-```
-
-Audit-specific notes:
-- `ship-audit-backend`, `ship-audit-frontend`, `ship-audit-database`, `ship-audit-security`: pass the full `## Config` block above.
-- `ship-audit-tests`: also include the `Test Scope` section from `ship/config.md` (unit/integration/e2e enabled/disabled) so the worker scopes coverage analysis correctly.
-- **Monorepo**: when scoping a backend/frontend audit to a single workspace, add `Workspace: <name>` and `Workspace path: <relative/path>` lines to that agent's inline context.
-
-Each agent writes its own report file and returns the JSON summary block defined in `# Audit Summary Schema` as the last content of its tool result:
+Each agent writes its own report file:
 - `ship/audits/backend-<YYYY-MM-DD>.md`
 - `ship/audits/database-<YYYY-MM-DD>.md`
 - `ship/audits/frontend-<YYYY-MM-DD>.md`
@@ -397,13 +376,9 @@ After writing the consolidated report:
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above..
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **For project-wide diff context**: after running `/ship:audit:run`, individual pipeline phases (`/ship:perf`, `/ship:security`) still run per-task during development. Audits are for periodic project-wide health checks.

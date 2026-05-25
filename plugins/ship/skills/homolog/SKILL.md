@@ -29,9 +29,7 @@ Read `ship/config.md` and check the `Linear Integration` section:
 
 ## Execution mode
 
-Check if you are running inside the `/ship:run` pipeline:
-- **Pipeline mode**: The feature name and context were provided by the orchestrator.
-- **Standalone mode**: Use `$ARGUMENTS` to identify the feature.
+Use `$ARGUMENTS` to identify the feature or task ID. If a scratch dir exists at `.context/ship-run/<task-id>/`, use the pre-populated `phase-status.md` and findings files; otherwise fall back to local artifact files.
 
 ---
 
@@ -3552,22 +3550,18 @@ Custo real desta sessão: $2.50
 - **Do not make decisions for the user**: present the data and let the user approve or reject
 - **Be transparent with warnings**: do not minimize medium-level findings. Present them clearly.
 - **Acceptance criteria belong to the user**: present them as a checklist for manual verification, not as automated tests
-- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
+- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
 
 - All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
 - Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above..
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Do not proceed without approval**: acceptance is a manual gate, never automatic
 - **Linear mode**: quality report is posted as a comment on the task issue, no local report.md is created
 - **Local mode**: quality report is written to report.md in the feature directory
