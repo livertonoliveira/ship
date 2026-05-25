@@ -64,8 +64,6 @@ Generate tests covering:
 4. Run the tests: `vitest run --pool=threads` (for Vitest) or the project's configured test command for unit scope.
 5. If any fail: analyze whether the bug is in the test or the code. Fix (up to 2 iterations).
 
-**ALWAYS use `--pool=threads`** when invoking vitest directly. Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
-
 ---
 
 ## 4. Report results
@@ -92,3 +90,4 @@ Unit Tests:
 - **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one `// TEST-SC-XX`-tagged test.
 - **Language**: use the `Artifact language` passed by the caller for user-facing output. Code, variable names: always English.
 - **Read efficiency**: re-read a file only if modified externally, likely compacted, or explicitly requested.
+- **Vitest pool**: always pass `--pool=threads` when invoking vitest directly. Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
