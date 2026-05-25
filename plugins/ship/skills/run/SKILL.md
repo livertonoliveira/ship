@@ -416,17 +416,25 @@ Continue automatically.
 
 > **Phase check**: If `analyze` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 7.
 
-> **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
+> **Invoke pattern**: This phase dispatches the `ship-analyze` named agent. It orchestrates 2 agents in parallel internally, then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
 
-Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so drift correlation (spec↔code↔tests) runs in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Dispatch via **Agent tool** with `subagent_type: ship-analyze` (named agent, runs with full Sonnet reasoning). Pass all context inline:
 
-- Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
-- Use the code diff from `.context/ship-run/<task-id>/diff.md`
-- Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
-- Pass results to the Correlation Engine
-- Generate the drift report + compute gate
-- Persist `drift-report.md` and `drift-findings.json` to scratch dir
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+## Config
+Test Scope: <unit: enabled|disabled, integration: enabled|disabled, e2e: enabled|disabled>
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
+
+The agent runs spec/code/test extraction in parallel (2 internal sub-agents), correlates via Jaccard similarity, generates the drift report, computes the gate, and persists `drift-report.md` + `drift-findings.json` to the scratch dir (plus Linear comment or local file per storage mode). Do NOT re-load `@ship/patterns/language.md` — the `Artifact language` injected above is authoritative.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
