@@ -242,11 +242,18 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context as `$ARGUMENTS` to the skill:
 
-- Use the task's acceptance criteria to guide test generation
-- Generate and run tests scoped to THIS task only
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+```
+<task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+
+## Scenarios
+<inline: Gherkin scenarios extracted from the spec — from the Linear issue body (Linear mode) or proposal.md (local mode). Include ALL scenarios; ship:test will filter by @layer tag per agent.>
+```
+
+The orchestrator is responsible for extracting the `## Scenarios` block from the spec before invoking the skill. `ship:test` uses this injected block directly and does NOT re-fetch from Linear or local files during pipeline execution.
 
 **The forked skill launches one sub-agent per enabled layer (up to 3 in parallel)**: unit, integration, and/or e2e — only the layers enabled in `Test Scope` are launched.
 
