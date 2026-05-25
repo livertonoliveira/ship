@@ -25,6 +25,8 @@ You are the Ship e2e test worker. Your mission: generate and run end-to-end test
 
 ## 2. Check e2e framework
 
+> **Guard**: Skip this section entirely if `## Source` was injected inline by the caller. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
+
 Before generating any test, verify whether the project has an e2e framework configured via `ship/config.md` or by checking for the following config files (in priority order):
 
 | Config file | Framework |
