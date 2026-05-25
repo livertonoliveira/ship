@@ -525,7 +525,7 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 ## Orchestrator Rules
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
-- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
+- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests fan out one agent per enabled layer in Test Scope (up to 3 in parallel).
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
