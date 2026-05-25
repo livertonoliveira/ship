@@ -79,7 +79,9 @@ After agents complete, write `.context/ship-run/<task-id>/test-failures.md` (ski
 
 Append to `.context/ship-run/<task-id>/phase-status.md` if it exists:
 ```
-| test | #1 | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
+| test | #<RUN_NUM> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```
+Derive `RUN_NUM` dynamically: count existing `| test |` rows in the file and add 1.
+Example: `RUN_NUM=$(grep -c '^| test |' .context/ship-run/<task-id>/phase-status.md 2>/dev/null || echo 0); RUN_NUM=$((RUN_NUM + 1))`
 
 Report to the user: tests created, passed, and failed per layer.
