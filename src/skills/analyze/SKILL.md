@@ -29,10 +29,13 @@ Read `ship/config.md` and check `Linear Integration → Configured`:
 
 ## Execution mode
 
-Determine how you were invoked:
+Use `$ARGUMENTS` to identify the feature or Linear issue ID:
+- If `$ARGUMENTS` contains a Linear issue ID (e.g., `MOB-123`), load spec from Linear.
+- If it contains a feature name, look for `ship/changes/<feature>/`.
 
-- **Pipeline mode** (invoked by `/ship:run` Phase 6): Read scratch dir at `.context/ship-run/<task-id>/`. Context files are already populated: `diff.md`, `stack.md`, `phase-status.md`. The task ID is passed in `$ARGUMENTS` or via environment.
-- **Standalone mode** (invoked directly via `/ship:analyze`): Use `$ARGUMENTS` to identify the feature or Linear issue ID. If `$ARGUMENTS` contains a Linear issue ID (e.g., `MOB-123`), load spec from Linear. If it contains a feature name, look for `ship/changes/<feature>/`. If neither resolves, run `git diff HEAD~1` to obtain the diff.
+Resolve diff and stack:
+- If a scratch dir exists at `.context/ship-run/<task-id>/` with populated `diff.md`, `stack.md`, and `phase-status.md` → use those files directly.
+- Otherwise → run `git diff HEAD~1` to obtain the diff; read stack from `ship/config.md`.
 
 ---
 
@@ -74,8 +77,8 @@ Determine how you were invoked:
 **Goal:** Parse the diff to identify changed files, functions, and classes; discover test files in the workspace.
 
 **Diff source:**
-- Pipeline mode: read `.context/ship-run/<task-id>/diff.md`
-- Standalone mode: run `git diff HEAD~1` (or `git diff` if on an uncommitted branch)
+- If `.context/ship-run/<task-id>/diff.md` exists → read from it
+- Otherwise → run `git diff HEAD~1` (or `git diff` if on an uncommitted branch)
 
 **Code extraction:**
 1. Parse the diff to list all changed files (added, modified, deleted).
@@ -114,7 +117,7 @@ Both agents write their results to the scratch dir or return them inline. Step 3
 
 **Jaccard cache check (before computing):**
 
-> **Pipeline mode guard**: only perform steps 1–3 below if a scratch dir is available (i.e., you were invoked in pipeline mode with a valid `<task-id>`). In standalone mode (no scratch dir), skip this block entirely — always compute and never write `jaccard.json`.
+> **Scratch dir guard**: only perform steps 1–3 below if a scratch dir is available at `.context/ship-run/<task-id>/` with a valid `<task-id>`. If no scratch dir exists, skip this block entirely — always compute and never write `jaccard.json`.
 
 1. Compute `diff_hash`: SHA-256 of the full diff content (read from `diff.md` or the inline diff string).
 2. Compute `spec_hash`: SHA-256 of the concatenated spec text — all REQ-XX and AC-XX descriptions **followed by every `@SC-XX` scenario block (heading + When + Then + Examples + layer tag)**, in order. Including the scenario blocks is correctness-critical: editing a scenario without touching its AC must invalidate the cache.
@@ -166,7 +169,7 @@ Skip this tier entirely if the spec has no `@SC-\d+` scenarios. Otherwise, for e
 
 **Jaccard cache save (after computing):**
 
-> **Pipeline mode guard**: only perform the save below if you are in pipeline mode (scratch dir available). Skip in standalone mode.
+> **Scratch dir guard**: only perform the save below if a scratch dir is available at `.context/ship-run/<task-id>/`. Skip otherwise.
 
 After all Jaccard computations complete (this block is skipped if the cache was reused above), write `.context/ship-run/<task-id>/jaccard.json`:
 
@@ -399,7 +402,7 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 
 ---
 
-### Example 2 — Pipeline mode (called by /ship:run)
+### Example 2 — Called by /ship:run (scratch dir present)
 
 ```
 /ship:run MOB-234
@@ -407,7 +410,7 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 # Phase 6: analyze invoked automatically
 ```
 
-1. Read `.context/ship-run/MOB-234/diff.md` for the diff.
+1. Read `.context/ship-run/MOB-234/diff.md` for the diff (scratch dir present).
 2. Read `.context/ship-run/MOB-234/stack.md` for stack context.
 3. Load spec from Linear (or local, based on config).
 4. Run Steps 1 and 2 in parallel.

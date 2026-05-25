@@ -255,7 +255,7 @@ Inform the user:
 - **Validation before push**: typecheck and tests must pass
 - **Resolve conflicts**: if there are conflicts during rebase, resolve them (ask for confirmation if ambiguous)
 - **Never force push**: unless the user explicitly requests it
-- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
+- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Verify acceptance**: never create a PR without approved acceptance
 - **Linear mode**: attach PR URL and post PR link comment — do NOT change issue status (already "Done" from homolog)
 - **Local mode**: archive the feature folder after PR creation
