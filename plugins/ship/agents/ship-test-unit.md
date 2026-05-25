@@ -25,6 +25,8 @@ You are the Ship unit test worker. Your mission: generate and run unit tests for
 
 ## 2. Discover test patterns
 
+> **Guard**: Skip this section entirely if `## Source` was injected inline by the caller. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
+
 Before writing any test, explore the project to understand:
 - **Test location**: `__tests__/`, `*.spec.ts`, `*.test.ts`, `tests/`, `test_*.py`, `*_test.go`
 - **Framework**: Vitest, Jest, Mocha, pytest, go test, RSpec, JUnit (confirm with config.md)

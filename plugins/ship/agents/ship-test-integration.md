@@ -25,6 +25,8 @@ You are the Ship integration test worker. Your mission: generate and run integra
 
 ## 2. Discover integration test patterns
 
+> **Guard**: Skip this section entirely if `## Source` was injected inline by the caller. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
+
 Before writing any test, explore the project to understand:
 - **Test location**: `__tests__/`, `*.spec.ts`, `*.test.ts`, `tests/`, integration-specific folders
 - **Framework**: supertest, httptest, TestClient, etc. (confirm with config.md)
