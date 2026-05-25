@@ -1,5 +1,5 @@
 ---
-name: audit:frontend
+name: ship:audit:frontend
 description: "Ship Audit: project-wide frontend performance audit. Auto-routes to Next.js methodology (5 layers) or generic methodology (11 categories) based on ship/config.md."
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

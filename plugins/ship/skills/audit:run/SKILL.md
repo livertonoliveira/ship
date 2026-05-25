@@ -1,5 +1,5 @@
 ---
-name: audit:run
+name: ship:audit:run
 description: "Ship Audit: meta-command that runs all applicable audits based on ship/config.md project type. Produces a consolidated report."
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

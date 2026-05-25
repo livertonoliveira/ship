@@ -1,5 +1,5 @@
 ---
-name: homolog
+name: ship:homolog
 description: "Ship Phase 7: presents a consolidated quality report and awaits user acceptance approval."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

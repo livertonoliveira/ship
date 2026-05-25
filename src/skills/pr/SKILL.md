@@ -1,5 +1,5 @@
 ---
-name: pr
+name: ship:pr
 description: "Creates a PR with atomic commits and an aggregated quality report. Run after acceptance is approved."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*

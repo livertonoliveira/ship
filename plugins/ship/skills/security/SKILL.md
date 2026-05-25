@@ -1,5 +1,5 @@
 ---
-name: security
+name: ship:security
 description: "Ship Phase 5: OWASP security scan of the diff with 3 parallel agents by attack category."
 argument-hint: "<feature-name | task-id>"
 allowed-tools: Read, Bash, Agent

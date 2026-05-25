@@ -1,5 +1,5 @@
 ---
-name: perf
+name: ship:perf
 description: "Ship Phase 4: performance analysis of the diff. Detects project type (monorepo/backend/frontend) and adapts agents accordingly."
 argument-hint: "<feature-name | task-id>"
 allowed-tools: Read, Bash, Agent

@@ -1,5 +1,5 @@
 ---
-name: spec
+name: ship:spec
 description: "Ship Spec: deep specification from a Linear issue or free prompt. Decomposes into granular tasks (<400 lines each), creates Linear project with documents, milestones, labels, and detailed issues. Without Linear, creates local markdown workspace."
 argument-hint: "<linear-url | issue-id | free text description>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
