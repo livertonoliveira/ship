@@ -248,7 +248,7 @@ Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context
 - Generate and run tests scoped to THIS task only
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
+**The forked skill launches one sub-agent per enabled layer (up to 3 in parallel)**: unit, integration, and/or e2e — only the layers enabled in `Test Scope` are launched.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
