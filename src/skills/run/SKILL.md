@@ -197,6 +197,28 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
+8. **Emit session banner** — do this once, immediately after reading `ship/config.md` and resolving the phase set, and before any `▶ Fase:` log:
+
+   **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
+
+   **Determine the phases tier**: the Ship model-routing policy (see @ship/patterns/model-routing.md) runs quality phases (`perf`, `security`, `review`) on `sonnet` and the orchestrator itself on `haiku`. If `dev` is enabled, it runs on `sonnet`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
+
+   **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
+
+   **Emit one of the two formats** (use `artifact_language` for surrounding prose, but keep model tier names in English):
+
+   - **Override active** (session tier ≠ phases tier):
+     ```
+     ⬡ Ship v2.x | sessão=<session-tier> → fases=<phases-tier> | override ativo
+     ```
+
+   - **Same tier** (session tier matches the primary phases tier):
+     ```
+     ⬡ Ship v2.x | sessão=<session-tier> | fases no mesmo tier
+     ```
+
+   This banner is emitted exactly once per pipeline run. If the session model cannot be determined from context, default to displaying the banner in "same tier" format without the override suffix.
+
 > **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
 >
 > Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
@@ -242,20 +264,13 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context as `$ARGUMENTS` to the skill:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-```
-<task-id>
-Artifact language: <artifact_language>
-Scratch dir: .context/ship-run/<task-id>/
+- Use the task's acceptance criteria to guide test generation
+- Generate and run tests scoped to THIS task only
+- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-## Scenarios
-<inline: Gherkin scenarios extracted from the spec — from the Linear issue body (Linear mode) or proposal.md (local mode). Include ALL scenarios; ship:test will filter by @layer tag per agent.>
-```
-
-The orchestrator is responsible for extracting the `## Scenarios` block from the spec before invoking the skill. `ship:test` uses this injected block directly and does NOT re-fetch from Linear or local files during pipeline execution.
-
-**The forked skill launches one sub-agent per enabled layer (up to 3 in parallel)**: unit, integration, and/or e2e — only the layers enabled in `Test Scope` are launched.
+**The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -285,7 +300,8 @@ Apply the following adjustments **on top of** the effective phase set:
 
 Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
-- **`security`** and **`review`** (if enabled): dispatch via **Skill tool** — each skill declares `context: fork` + `model: "sonnet"` in its own frontmatter, so each runs in an isolated subagent automatically. Do NOT wrap them in an `Agent` tool call.
+- **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-security` (named agent, runs with full Sonnet reasoning).
+- **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
 The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
@@ -306,13 +322,24 @@ Severity Overrides: <severity-overrides or "none">
 <inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
 
-**Phase 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
-- Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
-- **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+**Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-security`. Pass all context inline:
 
-**Phase 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
+```
+Task: <task-id>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+Stack: <stack>
+Security Focus: <security-focus-category>
+
+## Config
+Severity Overrides: <severity-overrides or "none">
+
+## Diff
+<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+```
+
+**Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -402,7 +429,7 @@ After the fix agent completes, determine which quality phases to re-run:
       Re-run pulado: <phase3> (não analisava arquivos modificados)
       ```
 
-   f. **Re-invoke only the selected phase skills** via the **Skill tool** (in parallel if multiple, following the same Skill-invocation setup as Phase 4 — no `Agent` tool wrapper, since each phase skill forks itself via `context: fork`). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked skill appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -457,6 +484,20 @@ Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `cont
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
+> **MANDATORY STOP — Await user response if homolog asks a question**
+>
+> The `ship:homolog` skill ends by either (a) approving the task or (b) asking
+> the user a question (e.g., "Quais ajustes precisam ser feitos?", "Algo a
+> corrigir antes do PR?"). If the homolog output contains an open question
+> directed at the user, the orchestrator MUST stop immediately and return
+> control to the user — do NOT continue to Step 8, do NOT run additional
+> verification, do NOT mark the task as complete.
+>
+> Only proceed to Step 8 when the user has explicitly approved (e.g.,
+> "aprovado", "pode seguir", "ok PR", or equivalent in the artifact language).
+> If the user requests adjustments, treat it as a fix iteration: apply the
+> changes, then re-invoke `ship:homolog` for re-approval.
+
 ### 8. MANDATORY STOP — Await user confirmation for PR
 
 After homolog approval:
@@ -507,7 +548,7 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 ## Orchestrator Rules
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
-- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests fan out one agent per enabled layer in Test Scope (up to 3 in parallel).
+- **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
