@@ -306,13 +306,13 @@ Severity Overrides: <severity-overrides or "none">
 <inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
 
-**Skill 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
+**Phase 2 — `ship:security`** *(only if `security` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/security-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 
-**Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
+**Phase 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
 - **Scratch dir:** `.context/ship-run/<task-id>/`
