@@ -25,10 +25,21 @@ You are the Ship e2e test worker. Your mission: generate and run end-to-end test
 
 ## 2. Check e2e framework
 
-Before generating any test, verify whether the project has an e2e framework configured (Playwright, Cypress, etc.) via `ship/config.md` or project config files.
+Before generating any test, verify whether the project has an e2e framework configured via `ship/config.md` or by checking for the following config files (in priority order):
+
+| Config file | Framework |
+|---|---|
+| `playwright.config.ts` / `playwright.config.js` | Playwright |
+| `cypress.config.ts` / `cypress.config.js` / `cypress.json` | Cypress |
+| `wdio.conf.ts` / `wdio.conf.js` | WebdriverIO |
+| `nightwatch.conf.js` / `nightwatch.conf.ts` | Nightwatch |
+| `testcafe.js` / `.testcaferc.json` | TestCafe |
+| `codecept.conf.ts` / `codecept.conf.js` | CodeceptJS |
+
+Check these files with `Glob` before concluding no framework is present. If `ship/config.md` explicitly names an e2e framework, trust that over file detection.
 
 **If NO e2e framework is detected**: do NOT generate e2e tests. Report (in artifact language):
-> "E2E pulado: nenhum framework e2e detectado no projeto (Playwright, Cypress, etc.). Para ativar, configure um framework e2e (ex: Playwright ou Cypress)."
+> "E2E pulado: nenhum framework e2e detectado no projeto (playwright.config.ts, cypress.config.ts, wdio.conf.ts, etc. não encontrados). Para ativar, configure um framework e2e e atualize ship/config.md."
 
 Distinguish this clearly from a config-disabled skip (which is handled by the orchestrator before invoking this agent).
 
