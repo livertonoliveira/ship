@@ -40,6 +40,25 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
 | integration | ship-test-integration |
 | e2e | ship-test-e2e |
 
+**Context slicing — always pass inline, never rely on the agent to re-read:**
+1. Filter scenarios: keep only those tagged `@unit`, `@integration`, or `@e2e` for the respective agent. Never pass the full list to all agents.
+2. Run `git diff origin/main...HEAD` **once** here (not inside each agent) and pass the resulting diff inline as `## Source`.
+3. Structure each agent's prompt with explicit sections:
+   ```
+   Task ID: <task-id>
+   Artifact language: <language>
+
+   ## Scenarios
+   <filtered Gherkin for this layer>
+
+   ## Files
+   <list of modified files from git diff>
+
+   ## Source
+   <relevant diff content or file excerpts>
+   ```
+4. Agents that receive these sections inline MUST NOT fall back to standalone discovery mode.
+
 Pass inline in each agent's prompt: `Artifact language`, `## Scenarios` subset for the layer, list of modified files, task ID.
 
 If some (not all) layers are disabled, after skip logs output: "Layers pulados por configuração: [&lt;list&gt;]. Para habilitá-los, edite `Test Scope` em `ship/config.md`."
