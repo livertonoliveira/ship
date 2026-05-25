@@ -1404,22 +1404,18 @@ Inform the user:
 - **Validation before push**: typecheck and tests must pass
 - **Resolve conflicts**: if there are conflicts during rebase, resolve them (ask for confirmation if ambiguous)
 - **Never force push**: unless the user explicitly requests it
-- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
+- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
 
 - All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
 - Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above..
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Verify acceptance**: never create a PR without approved acceptance
 - **Linear mode**: attach PR URL and post PR link comment — do NOT change issue status (already "Done" from homolog)
 - **Local mode**: archive the feature folder after PR creation

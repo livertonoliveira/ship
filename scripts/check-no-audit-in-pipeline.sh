@@ -18,17 +18,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Pipeline skill directories — audit:* skills are intentionally excluded
 PIPELINE_SKILLS=(
-  "ship:run"
-  "ship:develop"
-  "ship:test"
-  "ship:perf"
-  "ship:security"
-  "ship:review"
-  "ship:analyze"
-  "ship:homolog"
-  "ship:pr"
-  "ship:spec"
-  "ship:init"
+  "run"
+  "develop"
+  "test"
+  "perf"
+  "security"
+  "review"
+  "analyze"
+  "homolog"
+  "pr"
+  "spec"
+  "init"
 )
 
 SKILLS_BASE="${REPO_ROOT}/src/skills"

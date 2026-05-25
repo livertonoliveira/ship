@@ -3,7 +3,6 @@ name: review
 description: "Ship Phase 6: code review focused on SOLID, DRY, KISS, Clean Code, and project consistency."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
-user-invocable: true
 model: "sonnet"
 context: fork
 agent: general-purpose
@@ -25,9 +24,7 @@ See @ship/patterns/storage-mode.md.
 
 ## Execution mode
 
-Check if you are running inside the `/ship:run` pipeline:
-- **Pipeline mode**: Read the artifacts and use the diff.
-- **Standalone mode**: Use `$ARGUMENTS` to identify the feature. If not found, use `git diff`.
+Use `$ARGUMENTS` to identify the feature or task ID. If a scratch dir exists at `.context/ship-run/<task-id>/`, use the pre-populated `diff.md` and `stack.md`; otherwise fall back to `git diff` and `ship/config.md` for stack info.
 
 ---
 
@@ -163,7 +160,7 @@ See @ship/report-templates.md#finding-schema for the JSON block to accompany eac
 
 ### 5. Write report
 
-Write the findings to the file `ship/changes/<feature>/review-findings.md` (pipeline mode) or directly in the Code Review section of `report.md` (standalone mode).
+Write the findings to the file `ship/changes/<feature>/review-findings.md` (when a scratch dir is present) or directly in the Code Review section of `report.md` (when invoked without a scratch dir).
 
 **Note:** In both Linear mode and Local mode, the findings file is written locally. In Linear mode this is a temporary file — the orchestrator handles posting it to Linear and cleaning up.
 
@@ -186,8 +183,8 @@ Format:
 
 **Gate rules (inline):** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
 
-In pipeline mode (called from `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
-In standalone mode: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
+When invoked with a scratch dir (by `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
+When invoked without a scratch dir: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ---
 
@@ -199,7 +196,7 @@ In standalone mode: apply severity overrides from `ship/config.md → Severity O
 - **DRY with caution**: accidental duplication (coincidence) is NOT a DRY violation. Only flag intentional duplication that truly should be shared.
 - **KISS is the most important principle**: if the code is simple and works, do not suggest complicating it for "elegance"
 - **Suggestions with code**: every suggestion must include a concrete example of what the code would look like
-- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
+- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Parallelism by module**: if the diff is large, ALWAYS use parallel agents per code area
 - **Linear mode**: read design context from Linear document instead of local file; findings are still written to a local temporary file
 - **Local mode**: read design context from local `design.md`; findings are written to local file

@@ -75,8 +75,8 @@ Sub-agents spawned by `ship:perf`, `ship:security`, and `ship:review` must NOT r
 
 - **Sub-agents** (Agent A/B/C in security, Backend/Frontend in perf, module agents in review): use inline minimal severity labels (critical/high/medium/low) and return raw findings only.
 - **Skill orchestrator** (ship:perf, ship:security, ship:review consolidation steps): uses inline condensed severity definitions and gate rules — NOT `@`-referenced files.
-- **Standalone fallback**: when a skill runs outside `ship:run`, it applies severity overrides from `ship/config.md` and computes the gate inline.
-- **Pipeline mode**: the skill computes a preliminary gate for the report; `ship:run` re-evaluates after applying severity overrides.
+- **Without scratch dir** (skill invoked directly): applies severity overrides from `ship/config.md` and computes the gate inline.
+- **With scratch dir** (invoked by `ship:run`): computes a preliminary gate for the report; `ship:run` re-evaluates after applying severity overrides.
 
 ### Patterns NOT needed by sub-agents
 

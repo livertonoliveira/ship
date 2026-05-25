@@ -12,6 +12,8 @@ const SOURCE_SKILLS = path.join(SOURCE_ROOT, 'skills');
 const OUTPUT_SKILLS = path.join(PLUGIN_ROOT, 'skills');
 
 const MAX_DEPTH = 10;
+const HAS_REF = /@ship\/([^\s)]+\.md)/;
+const REPLACE_REF = /@ship\/([^\s)]+\.md)/g;
 
 const readCache = new Map();
 
@@ -39,15 +41,14 @@ function resolveRefs(content, skillRelPath) {
   let depth = 0;
 
   while (true) {
-    const refRe = /@ship\/([^\s)]+\.md)/g;
-    if (!refRe.test(result)) break;
+    if (!HAS_REF.test(result)) break;
 
     if (depth >= MAX_DEPTH) {
       console.error(`Erro: possível referência circular em ${skillRelPath} (profundidade máxima ${MAX_DEPTH} atingida)`);
       process.exit(1);
     }
 
-    result = result.replace(/@ship\/([^\s)]+\.md)/g, (match, ref) => {
+    result = result.replace(REPLACE_REF, (match, ref) => {
       const refPath = path.join(SOURCE_ROOT, ref);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);

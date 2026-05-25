@@ -17,15 +17,15 @@ You are the Ship performance analysis worker. Your mission: analyze new/modified
 
 **If the caller already injected `## Diff` and `## Stack`** (or `## Config`) sections inline in the prompt, use ONLY that injected context — skip file reads for diff and stack. Likewise, if `Artifact language` and `Storage mode` are already present in the prompt, skip reading `ship/config.md` for those fields.
 
-**Only when the worker is invoked standalone (no inline diff/stack)**, fall back:
+**Only when no inline diff/stack was injected**, resolve from context:
 
 **Stack priority:**
 - If `.context/ship-run/<task-id>/stack.md` exists → read from it (preferred)
-- Otherwise → fallback: read `ship/config.md` for stack information
+- Otherwise → read `ship/config.md` for stack information
 
 **Diff priority:**
 - If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
-- Otherwise → fallback: run `git diff origin/main...HEAD` to obtain the diff (canonical range — matches `run/SKILL.md` step 0.5)
+- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range — matches `run/SKILL.md` step 0.5)
 
 Read `ship/config.md` for **Project Type** (backend | frontend | fullstack | monorepo), **Stack**, and **Database**.
 
@@ -145,8 +145,8 @@ Categories: `DB | ALGO | MEM | NET | BUNDLE | RENDER | ARCH`.
 ## 5. Write report
 
 Write the findings to:
-- **Pipeline mode** (scratch dir present): `.context/ship-run/<task-id>/perf-findings.md` (canonical path — orchestrator reads from here)
-- **Standalone Local mode**: `ship/changes/<feature>/perf-findings.md`
+- **With scratch dir**: `.context/ship-run/<task-id>/perf-findings.md` (canonical path — orchestrator reads from here)
+- **Without scratch dir**: `ship/changes/<feature>/perf-findings.md`
 
 In Linear mode this is a temporary file — the orchestrator handles posting it to Linear and cleaning up.
 

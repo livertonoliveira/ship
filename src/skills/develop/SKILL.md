@@ -3,7 +3,6 @@ name: develop
 description: "Ship Phase 2: implements code following project conventions, with parallel agents for independent modules."
 argument-hint: "<task-id | linear-issue-id>"
 allowed-tools: Read, Agent, mcp__linear-server__*
-user-invocable: true
 model: haiku
 context: fork
 ---

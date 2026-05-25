@@ -3,7 +3,6 @@ name: review
 description: "Ship Phase 6: code review focused on SOLID, DRY, KISS, Clean Code, and project consistency."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
-user-invocable: true
 model: "sonnet"
 context: fork
 agent: general-purpose
@@ -29,9 +28,7 @@ Read `ship/config.md` and check the `Linear Integration` section:
 
 ## Execution mode
 
-Check if you are running inside the `/ship:run` pipeline:
-- **Pipeline mode**: Read the artifacts and use the diff.
-- **Standalone mode**: Use `$ARGUMENTS` to identify the feature. If not found, use `git diff`.
+Use `$ARGUMENTS` to identify the feature or task ID. If a scratch dir exists at `.context/ship-run/<task-id>/`, use the pre-populated `diff.md` and `stack.md`; otherwise fall back to `git diff` and `ship/config.md` for stack info.
 
 ---
 
@@ -1420,7 +1417,7 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 
 ### 5. Write report
 
-Write the findings to the file `ship/changes/<feature>/review-findings.md` (pipeline mode) or directly in the Code Review section of `report.md` (standalone mode).
+Write the findings to the file `ship/changes/<feature>/review-findings.md` (when a scratch dir is present) or directly in the Code Review section of `report.md` (when invoked without a scratch dir).
 
 **Note:** In both Linear mode and Local mode, the findings file is written locally. In Linear mode this is a temporary file — the orchestrator handles posting it to Linear and cleaning up.
 
@@ -1443,8 +1440,8 @@ Format:
 
 **Gate rules (inline):** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
 
-In pipeline mode (called from `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
-In standalone mode: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
+When invoked with a scratch dir (by `ship:run`): compute the gate and include it in the summary; the orchestrator applies severity overrides independently before its own gate evaluation.
+When invoked without a scratch dir: apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ---
 
@@ -1456,22 +1453,18 @@ In standalone mode: apply severity overrides from `ship/config.md → Severity O
 - **DRY with caution**: accidental duplication (coincidence) is NOT a DRY violation. Only flag intentional duplication that truly should be shared.
 - **KISS is the most important principle**: if the code is simple and works, do not suggest complicating it for "elegance"
 - **Suggestions with code**: every suggestion must include a concrete example of what the code would look like
-- **Language**: When running inside the pipeline, use the `artifact_language` injected by the orchestrator in this prompt. For standalone use, read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
+- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per # Artifact Language
 
 - All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
 - Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
 - LLM system prompts (command files) are always in English — not configurable
 - **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
 
-## Usage paths
+## Resolving artifact language
 
-### Pipeline mode (authoritative)
+If `Artifact language` is already injected inline in the current prompt (e.g., by the `ship:run` orchestrator or a skill wrapper), use that value directly — do not re-read `ship/config.md`.
 
-When a phase runs inside `ship:run`, the orchestrator reads `Artifact language` from `ship/config.md → Conventions` once (step 1.6) and injects the resolved value into every phase agent prompt. Individual phases consume the injected value directly — they do not re-read this file.
-
-### Standalone mode (fallback)
-
-When a phase is invoked directly (not via `ship:run`), it reads `Artifact language` from `ship/config.md → Conventions` per the rule above..
+Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Parallelism by module**: if the diff is large, ALWAYS use parallel agents per code area
 - **Linear mode**: read design context from Linear document instead of local file; findings are still written to a local temporary file
 - **Local mode**: read design context from local `design.md`; findings are written to local file
