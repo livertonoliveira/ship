@@ -3,7 +3,6 @@ name: analyze
 description: "Ship Phase 6.5: drift detection — maps spec→code→tests, detects gaps, gate PASS/WARN/FAIL."
 argument-hint: "<feature-name | linear-issue-id>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
-user-invocable: true
 model: "sonnet"
 context: fork
 agent: general-purpose
