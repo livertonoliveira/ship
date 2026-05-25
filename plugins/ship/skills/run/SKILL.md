@@ -314,6 +314,17 @@ Probe the project root for these signal files:
 
    Write to `.context/ship-run/<task-id>/phase-status.md`.
 
+3b. **`dispatch-log.md`** — Create the file with only the header (no rows yet):
+
+   ```markdown
+   # Dispatch Log
+
+   | Phase | Tool | Name | Model | Timestamp |
+   |-------|------|------|-------|-----------|
+   ```
+
+   Write to `.context/ship-run/<task-id>/dispatch-log.md`. The orchestrator appends one row to this file every time it dispatches a phase (see step 9, "Phase dispatch logging convention"). `homolog` reads it to render the `## Execution Trace` section.
+
 4. **`pre-quality-snapshot.sha`** — Capture the current HEAD SHA and write it as a single line:
 
    ```bash
@@ -805,6 +816,28 @@ For model routing rules, read the file at ./ship/patterns/model-routing.md compl
      ```
 
    This banner is emitted exactly once per pipeline run. If the session model cannot be determined from context, default to displaying the banner in "same tier" format without the override suffix.
+
+9. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–5 below (Development, Testing, Quality, Analyze), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
+
+   Terminal format (one line, printed immediately before invoking the tool):
+
+   ```
+   ▶ Fase: <phase> | tool=<Skill|Agent> | name=<name> | model=<haiku|sonnet>
+   ```
+
+   `dispatch-log.md` row format:
+
+   ```
+   | <phase> | <Skill|Agent> | <name> | <haiku|sonnet> | <ISO-8601 UTC> |
+   ```
+
+   Field rules:
+   - `<phase>`: one of `dev`, `test`, `perf`, `security`, `review`, `analyze`.
+   - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
+   - `<name>`: the `subagent_type` value (for Agent) or the skill name with `ship:` prefix (for Skill).
+   - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
+   - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
+   - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
 
 > **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
 >

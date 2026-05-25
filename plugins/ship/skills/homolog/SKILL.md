@@ -1722,7 +1722,7 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 - **Gate: PASS | WARN | FAIL**
 ```#acceptance-report for the report structure.
 
-After the gate summary, append a `## Modelos Utilizados` section following the rules in # Model Summary Section.
+After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
 
 ### 5. Await approval
 
@@ -3476,7 +3476,7 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 - **Gate: PASS | WARN | FAIL**
 ```#acceptance-report for the report structure.
 
-After the gate summary, append a `## Modelos Utilizados` section following the rules in # Model Summary Section.
+After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
 
 ### 5. Await approval
 
@@ -3497,51 +3497,6 @@ After approval:
 2. Update `tasks.md` item 4.1 as completed
 3. Clean up temporary files if they exist (perf-findings.md, security-findings.md, review-findings.md) — the data is already consolidated in report.md
 4. Inform: "Acceptance approved! Run `/ship:pr` when you are ready to create the Pull Request."
-
----
-
-## Model Summary Section
-
-<!-- IMPL-SC-04 IMPL-SC-05 IMPL-SC-06 -->
-
-Append a `## Modelos Utilizados` section **immediately after the ## Quality Gates table** (before the acceptance criteria checklist), using the following logic:
-
-**When to include:**
-- Include the section only when at least one executed phase ran on a different model tier than the user's session model (i.e., model override is active).
-- **Omit the section entirely** when the session model tier equals the tier of all executed phases (no override) — @SC-06.
-
-**How to detect the session model and phase models:**
-- The session model is the model the user's Claude Code session is running (e.g., `opus`, `sonnet`, `haiku`). Read it from the orchestrator-injected context or, if unavailable, from `ship/config.md` or the `--model` flag used at invocation.
-- Each phase's model is declared in the corresponding `SKILL.md` frontmatter (`model:` field). Read it from each phase's frontmatter — the list below is illustrative only. Common defaults: `develop=sonnet`, `test=sonnet`, `perf=sonnet`, `security=sonnet`, `review=sonnet`, `homolog=haiku`.
-- A phase is considered **executed** when it has a row in `phase-status.md` — do not list skipped or disabled phases.
-
-**Section format when override is active** — @SC-04:
-
-```markdown
-## Modelos Utilizados
-| Fase       | Modelo |
-|------------|--------|
-| develop    | sonnet |
-| review     | sonnet |
-| homolog    | haiku  |
-
-Custo real desta sessão: $2.50
-```
-
-**How to display session cost** — @SC-05:
-
-1. **Attempt to get session cost**: Run `/cost` to fetch the actual cost data for the current session.
-   - **If `/cost` succeeds** (returns cost data): display the line `Custo real desta sessão: $X.XX` where X.XX is the exact cost returned by `/cost`.
-   - **If `/cost` fails or returns no data** (indisponível): skip the cost line and add a note `(custo da sessão indisponível)` below the model table.
-
-2. **Format**:
-   - Show the real, actual cost of the session exactly as returned by `/cost`
-   - Round to 2 decimal places (currency standard)
-   - No estimates, no counterfactuals — just the real number
-   - This demonstrates the actual cost incurred by the model routing decisions
-
-**Example with real data**:
-- Session cost (real): $2.50
 
 ---
 
