@@ -13,9 +13,11 @@ agent: general-purpose
 
 You are the Ship test orchestrator. Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel.
 
-**Input received:** $ARGUMENTS
+**Input received:** $ARGUMENTS (task ID as the first token, followed by artifact language, scenarios, and modified files — passed by the orchestrator when invoked from `ship:run`)
 
 ## 1. Load context
+
+Parse `$ARGUMENTS`: extract `task-id` from the first whitespace-delimited token. Use this value wherever `<task-id>` appears below. If no task-id is present (standalone invocation), derive it from the current branch name or use `standalone` as the fallback.
 
 Read `ship/config.md`: extract `## Test Scope` (which layers are active) and `Artifact language`. If section absent, default all layers to `enabled`.
 
