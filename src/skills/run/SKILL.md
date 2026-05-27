@@ -374,7 +374,7 @@ Severity Overrides: <severity-overrides or "none">
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
-- Write findings to a temporary file (local mode: `ship/changes/<feature>/review-findings-<task-id>.md`)
+- Write findings to `.context/ship-run/<task-id>/review-findings.md` (canonical scratch-dir path). In Linear mode, **do NOT** create `ship/changes/<feature>/` — the scratch dir is the only allowed write location.
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
 

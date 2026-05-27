@@ -1417,9 +1417,11 @@ Compact summary block used at the end of `/ship:perf`, `/ship:security`, `/ship:
 
 ### 5. Write report
 
-Write the findings to the file `ship/changes/<feature>/review-findings.md` (when a scratch dir is present) or directly in the Code Review section of `report.md` (when invoked without a scratch dir).
+Write the findings according to the following priority:
 
-**Note:** In both Linear mode and Local mode, the findings file is written locally. In Linear mode this is a temporary file — the orchestrator handles posting it to Linear and cleaning up.
+- **Pipeline mode (scratch dir present at `.context/ship-run/<task-id>/`)** — write to `.context/ship-run/<task-id>/review-findings.md` regardless of storage mode. The orchestrator reads from this canonical path. **Never** create `ship/changes/<feature>/` from this phase.
+- **Standalone Local mode** (no scratch dir, `ship/changes/<feature>/` already exists from `/ship:spec`) — write to `ship/changes/<feature>/review-findings.md`.
+- **Standalone Linear mode** (no scratch dir, no local feature dir) — write to `.context/ship-run/standalone-review/review-findings.md`. **Never** create `ship/changes/`.
 
 Format:
 
@@ -1466,5 +1468,5 @@ If `Artifact language` is already injected inline in the current prompt (e.g., b
 
 Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Parallelism by module**: if the diff is large, ALWAYS use parallel agents per code area
-- **Linear mode**: read design context from Linear document instead of local file; findings are still written to a local temporary file
-- **Local mode**: read design context from local `design.md`; findings are written to local file
+- **Linear mode**: read design context from Linear document. Findings go to the scratch dir (pipeline) or `.context/ship-run/standalone-review/` (standalone). **Never** create `ship/changes/<feature>/` in Linear mode.
+- **Local mode**: read design context from local `design.md`; findings are written under `ship/changes/<feature>/` only when invoked standalone (no scratch dir). In pipeline mode, findings always go to the scratch dir.
