@@ -2,7 +2,9 @@
   "name": "ship",
   "version": "2.5.5",
   "description": "Automated development pipeline: spec → develop → test → quality → PR",
-  "author": {
-    "name": "livertonoliveira"
-  }
+  "author": { "name": "livertonoliveira" },
+  "repository": "https://github.com/livertonoliveira/ship",
+  "homepage": "https://github.com/livertonoliveira/ship#readme",
+  "license": "MIT",
+  "keywords": ["claude-code", "pipeline", "linear", "slash-commands", "development", "prompt-toolkit"]
 }
