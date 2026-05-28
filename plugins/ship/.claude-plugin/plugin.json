@@ -1,6 +1,6 @@
 {
   "name": "ship",
-  "version": "2.5.3",
+  "version": "2.5.4",
   "description": "Automated development pipeline: spec → develop → test → quality → PR",
   "author": {
     "name": "livertonoliveira"
