@@ -39,7 +39,7 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 ## 4. Invoke ship-develop agent
 
-Use the Agent tool with `subagent_type: ship-develop`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-develop`. Pass all context inline in the prompt:
 
 ```
 Task: <task-id> — <title>

@@ -204,7 +204,7 @@ When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh
 
 ## 4. Invoke ship-perf agent
 
-Use the Agent tool with `subagent_type: ship-perf`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-perf`. Pass all context inline in the prompt:
 
 ```
 Task: <task-id>

@@ -42,9 +42,9 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
 
 | Layer | subagent_type |
 |-------|---------------|
-| unit | ship-test-unit |
-| integration | ship-test-integration |
-| e2e | ship-test-e2e |
+| unit | ship:ship-test-unit |
+| integration | ship:ship-test-integration |
+| e2e | ship:ship-test-e2e |
 
 **Context slicing — always pass inline, never rely on the agent to re-read:**
 1. Filter scenarios: keep only those tagged `@unit`, `@integration`, or `@e2e` for the respective agent. Never pass the full list to all agents.

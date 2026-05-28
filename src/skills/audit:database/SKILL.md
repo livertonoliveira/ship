@@ -32,7 +32,7 @@ See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
 
 ## 3. Invoke ship-audit-database agent
 
-Use the Agent tool with `subagent_type: ship-audit-database`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-audit-database`. Pass all context inline in the prompt:
 
 ```
 Issue ID: <issue-id or "none">
