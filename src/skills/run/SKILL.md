@@ -246,7 +246,7 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 
    Field rules:
    - `<phase>`: one of `dev`, `test`, `perf`, `security`, `review`, `analyze`.
-   - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
+   - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship:ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
    - `<name>`: the `subagent_type` value (for Agent) or the skill name with `ship:` prefix (for Skill).
    - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
    - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
@@ -270,7 +270,7 @@ Additionally:
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship-develop` named agent via the **Agent tool** with `subagent_type: ship-develop`. Pass the following context inline:
+Invoke the `ship:ship-develop` named agent via the **Agent tool** with `subagent_type: ship:ship-develop`. Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -332,13 +332,13 @@ Apply the following adjustments **on top of** the effective phase set:
 - **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
 
 Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
-- **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-perf` (named agent, runs with full Sonnet reasoning).
-- **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship-security` (named agent, runs with full Sonnet reasoning).
+- **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-perf` (named agent, runs with full Sonnet reasoning).
+- **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
 The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
 
-**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-perf`. Pass all context inline:
+**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
 ```
 Task: <task-id>
@@ -355,7 +355,7 @@ Severity Overrides: <severity-overrides or "none">
 <inline: full diff content from .context/ship-run/<task-id>/diff.md>
 ```
 
-**Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship-security`. Pass all context inline:
+**Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-security`. Pass all context inline:
 
 ```
 Task: <task-id>
