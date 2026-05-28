@@ -9,6 +9,16 @@ model: "haiku"
 
 # Ship Run — Development Pipeline
 
+## 0. Self-Attestation
+
+Before any other tool call, emit exactly one line to the user:
+
+```
+🔧 ship:run running on: <exact-model-id>
+```
+
+`<exact-model-id>` is the ID from your system context (e.g., `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) — not a tier alias. This is the runtime trust signal that proves the model-routing policy is in effect.
+
 You are the main Ship development orchestrator. Your mission is to take a task (from Linear or local markdown) and drive it through the full development pipeline: implementation → testing → quality checks → user acceptance. You maximize the use of parallel agents at every stage.
 
 **With Linear:** Task details, context, and quality reports all live in Linear. No local files needed.
@@ -793,6 +803,21 @@ it performs template/report aggregation, not reasoning.
 
 ---
 
+## Runtime self-attestation (trust signal)
+
+Every skill and named agent emits a `🔧 <name> running on: <exact-model-id>` line as its first user-visible output, before any tool call. The model reads its own ID from the system context (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-...`) — always the exact versioned ID, never a tier alias.
+
+This is the **only runtime proof** that the routing policy is actually in effect. The `dispatch-log.md` records the orchestrator's *intent* to dispatch a given model; self-attestation records what the harness *actually executed*. Together they form intent + reality.
+
+To verify a pipeline run:
+1. Note the session model from the banner emitted by `ship:run`.
+2. Watch each phase's `🔧 ...` line and confirm the tier matches the phase classification table above.
+3. Cross-reference with `.context/ship-run/<task-id>/dispatch-log.md` — any mismatch between dispatched model and self-attested model is a routing bug.
+
+The self-attestation block is inlined at the top of every SKILL.md and agent definition as `## 0. Self-Attestation`.
+
+---
+
 ## Pattern classification (skill-patterns-convention.md)
 
 `model-routing.md` is a **bundle pattern** (> 30 lines). Reference in SKILL.md via:
@@ -1062,6 +1087,21 @@ Pass `model: "haiku"` when calling the Agent tool for consolidation work:
 Use the Agent tool to consolidate results. Pass model: "haiku" to this agent —
 it performs template/report aggregation, not reasoning.
 ```
+
+---
+
+## Runtime self-attestation (trust signal)
+
+Every skill and named agent emits a `🔧 <name> running on: <exact-model-id>` line as its first user-visible output, before any tool call. The model reads its own ID from the system context (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-...`) — always the exact versioned ID, never a tier alias.
+
+This is the **only runtime proof** that the routing policy is actually in effect. The `dispatch-log.md` records the orchestrator's *intent* to dispatch a given model; self-attestation records what the harness *actually executed*. Together they form intent + reality.
+
+To verify a pipeline run:
+1. Note the session model from the banner emitted by `ship:run`.
+2. Watch each phase's `🔧 ...` line and confirm the tier matches the phase classification table above.
+3. Cross-reference with `.context/ship-run/<task-id>/dispatch-log.md` — any mismatch between dispatched model and self-attested model is a routing bug.
+
+The self-attestation block is inlined at the top of every SKILL.md and agent definition as `## 0. Self-Attestation`.
 
 ---
 
