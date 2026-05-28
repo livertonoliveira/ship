@@ -97,6 +97,40 @@ Reinicie o Claude Code após atualizar.
 
 > **Atenção:** `claude plugin update ship` (sem o sufixo) falha com "Plugin not found". Use sempre o nome completo `ship@ship-marketplace`.
 
+### Auto-update
+
+Uma vez instalado o Ship via `claude plugin marketplace add`, o cliente Claude Code **atualiza o plugin automaticamente a cada startup** — nenhum passo manual necessário. O cliente compara o `plugin.json.version` cacheado localmente com a versão publicada no marketplace e baixa conteúdo novo quando diferem.
+
+| O quê | Comportamento |
+|-------|---------------|
+| Gatilho | Em todo startup do Claude Code |
+| Rede | Um `git fetch` contra o repo do marketplace |
+| Notificação | Silenciosa — reinicie o Claude Code para usar os comandos atualizados |
+| Fonte | `livertonoliveira/ship` no GitHub |
+
+#### Forçando uma atualização
+
+Se não quiser esperar pelo próximo startup, rode o comando da seção [Atualização](#atualização) acima.
+
+#### Desabilitando ou fixando versão
+
+Para rollouts em time/empresa que precisam de controle de versão, use [`managed-settings.json`](https://code.claude.com/docs/en/settings#managed-settings):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "ship-marketplace": {
+      "source": "livertonoliveira/ship",
+      "ref": "v2.5.1"
+    }
+  }
+}
+```
+
+Fixar `ref` em uma tag congela o plugin nessa versão. Para opt-out completo do Ship após a instalação, use `/plugin disable ship`.
+
+Veja a [doc oficial de marketplaces de plugin do Claude Code](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels) para regras completas de resolução de versão.
+
 ---
 
 ## Início Rápido
