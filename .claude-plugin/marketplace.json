@@ -7,6 +7,10 @@
     "source": "./plugins/ship",
     "description": "Development pipeline as Claude Code slash commands — zero dependencies.",
     "category": "development",
-    "tags": ["ship", "pipeline", "linear", "ai", "claude-code"]
+    "tags": ["ship", "pipeline", "linear", "ai", "claude-code"],
+    "repository": "https://github.com/livertonoliveira/ship",
+    "homepage": "https://github.com/livertonoliveira/ship#readme",
+    "license": "MIT",
+    "keywords": ["claude-code", "pipeline", "linear", "slash-commands", "development", "prompt-toolkit"]
   }]
 }
