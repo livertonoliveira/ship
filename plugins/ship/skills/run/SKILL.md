@@ -9,16 +9,6 @@ model: "haiku"
 
 # Ship Run — Development Pipeline
 
-## 0. Self-Attestation
-
-Before any other tool call, emit exactly one line to the user:
-
-```
-🔧 ship:run running on: <exact-model-id>
-```
-
-`<exact-model-id>` is the ID from your system context (e.g., `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) — not a tier alias. This is the runtime trust signal that proves the model-routing policy is in effect.
-
 You are the main Ship development orchestrator. Your mission is to take a task (from Linear or local markdown) and drive it through the full development pipeline: implementation → testing → quality checks → user acceptance. You maximize the use of parallel agents at every stage.
 
 **With Linear:** Task details, context, and quality reports all live in Linear. No local files needed.
@@ -803,18 +793,31 @@ it performs template/report aggregation, not reasoning.
 
 ---
 
-## Runtime self-attestation (trust signal)
+## How to verify routing at runtime
 
-Every skill and named agent emits a `🔧 <name> running on: <exact-model-id>` line as its first user-visible output, before any tool call. The model reads its own ID from the system context (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-...`) — always the exact versioned ID, never a tier alias.
+Self-attestation from inside the model context is **not reliable**: the model reads its identity from the system prompt's environment block, which is templated at session start and is not necessarily rewritten when the harness switches model mid-turn (e.g., when a skill's `model:` frontmatter takes effect). A model can be executing as Haiku and still report Opus because that is what the env block said when the session opened.
 
-This is the **only runtime proof** that the routing policy is actually in effect. The `dispatch-log.md` records the orchestrator's *intent* to dispatch a given model; self-attestation records what the harness *actually executed*. Together they form intent + reality.
+The ground truth lives in two places:
 
-To verify a pipeline run:
-1. Note the session model from the banner emitted by `ship:run`.
-2. Watch each phase's `🔧 ...` line and confirm the tier matches the phase classification table above.
-3. Cross-reference with `.context/ship-run/<task-id>/dispatch-log.md` — any mismatch between dispatched model and self-attested model is a routing bug.
+1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the orchestrator's *intent*: which tool was called with which model parameter. Written by `ship:run` itself.
 
-The self-attestation block is inlined at the top of every SKILL.md and agent definition as `## 0. Self-Attestation`.
+2. **Claude Code session JSONL** — what the harness *actually executed*. Every API response is logged with the real model ID. Path:
+   ```
+   ~/.claude/projects/<path-encoded>/<session-id>.jsonl
+   ```
+   Sub-agent transcripts live in `~/.claude/projects/<path-encoded>/<session-id>/subagents/agent-*.jsonl`.
+
+   Quick audit of a session:
+   ```bash
+   jq -r '.message.model' <session-id>.jsonl | sort | uniq -c
+   for f in <session-id>/subagents/agent-*.jsonl; do
+     echo "== $(basename "$f") =="; jq -r '.message.model' "$f" | sort -u
+   done
+   ```
+
+   If the orchestrator turns are split between session model and Haiku, the override is working. If they are 100% session model, routing failed.
+
+A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection, and is why Ship no longer emits self-attestation banners.
 
 ---
 
@@ -1090,18 +1093,31 @@ it performs template/report aggregation, not reasoning.
 
 ---
 
-## Runtime self-attestation (trust signal)
+## How to verify routing at runtime
 
-Every skill and named agent emits a `🔧 <name> running on: <exact-model-id>` line as its first user-visible output, before any tool call. The model reads its own ID from the system context (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-...`) — always the exact versioned ID, never a tier alias.
+Self-attestation from inside the model context is **not reliable**: the model reads its identity from the system prompt's environment block, which is templated at session start and is not necessarily rewritten when the harness switches model mid-turn (e.g., when a skill's `model:` frontmatter takes effect). A model can be executing as Haiku and still report Opus because that is what the env block said when the session opened.
 
-This is the **only runtime proof** that the routing policy is actually in effect. The `dispatch-log.md` records the orchestrator's *intent* to dispatch a given model; self-attestation records what the harness *actually executed*. Together they form intent + reality.
+The ground truth lives in two places:
 
-To verify a pipeline run:
-1. Note the session model from the banner emitted by `ship:run`.
-2. Watch each phase's `🔧 ...` line and confirm the tier matches the phase classification table above.
-3. Cross-reference with `.context/ship-run/<task-id>/dispatch-log.md` — any mismatch between dispatched model and self-attested model is a routing bug.
+1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the orchestrator's *intent*: which tool was called with which model parameter. Written by `ship:run` itself.
 
-The self-attestation block is inlined at the top of every SKILL.md and agent definition as `## 0. Self-Attestation`.
+2. **Claude Code session JSONL** — what the harness *actually executed*. Every API response is logged with the real model ID. Path:
+   ```
+   ~/.claude/projects/<path-encoded>/<session-id>.jsonl
+   ```
+   Sub-agent transcripts live in `~/.claude/projects/<path-encoded>/<session-id>/subagents/agent-*.jsonl`.
+
+   Quick audit of a session:
+   ```bash
+   jq -r '.message.model' <session-id>.jsonl | sort | uniq -c
+   for f in <session-id>/subagents/agent-*.jsonl; do
+     echo "== $(basename "$f") =="; jq -r '.message.model' "$f" | sort -u
+   done
+   ```
+
+   If the orchestrator turns are split between session model and Haiku, the override is working. If they are 100% session model, routing failed.
+
+A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection, and is why Ship no longer emits self-attestation banners.
 
 ---
 

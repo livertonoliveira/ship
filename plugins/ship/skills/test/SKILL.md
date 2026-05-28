@@ -11,16 +11,6 @@ agent: general-purpose
 
 # Ship Test — Fan-out Orchestrator
 
-## 0. Self-Attestation
-
-Before any other tool call, emit exactly one line to the user:
-
-```
-🔧 ship:test running on: <exact-model-id>
-```
-
-`<exact-model-id>` is the ID from your system context (e.g., `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) — not a tier alias. This is the runtime trust signal that proves the model-routing policy is in effect.
-
 You are the Ship test orchestrator. Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel.
 
 **Input received:** $ARGUMENTS (task ID as the first token, followed by artifact language, scenarios, and modified files — passed by the orchestrator when invoked from `ship:run`)
