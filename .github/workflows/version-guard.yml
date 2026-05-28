@@ -1,0 +1,49 @@
+name: Version Guard
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/ship/.claude-plugin/plugin.json'
+      - 'plugins/ship/**'
+      - 'src/**'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Version Guard — plugin.json semver enforcement
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve previous version
+        id: prev
+        run: |
+          BASE_SHA=$(git merge-base HEAD origin/main || git rev-parse HEAD~1)
+          PREV=$(git show "$BASE_SHA":plugins/ship/.claude-plugin/plugin.json | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).version)")
+          echo "version=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve current version
+        id: cur
+        run: |
+          CUR=$(node -e "process.stdout.write(require('./plugins/ship/.claude-plugin/plugin.json').version)")
+          echo "version=$CUR" >> "$GITHUB_OUTPUT"
+
+      - name: Assert semver bump
+        run: |
+          PREV="${{ steps.prev.outputs.version }}"
+          CUR="${{ steps.cur.outputs.version }}"
+          if [ "$PREV" = "$CUR" ]; then
+            echo "Versions are identical ($PREV == $CUR). Skipping (no plugin change)."
+            exit 0
+          fi
+          npx -y semver -r ">$PREV" "$CUR" || {
+            echo "::error::plugin.json.version regrediu: previous=$PREV, current=$CUR"
+            exit 1
+          }
