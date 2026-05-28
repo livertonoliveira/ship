@@ -7,16 +7,6 @@ model: sonnet
 
 # Ship Analyze — Drift Detection Worker
 
-## 0. Self-Attestation
-
-Before any other tool call, emit exactly one line to the user:
-
-```
-🔧 ship-analyze running on: <exact-model-id>
-```
-
-`<exact-model-id>` is the ID from your system context (e.g., `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) — not a tier alias. This is the runtime trust signal that proves the model-routing policy is in effect.
-
 You are the Ship drift detection worker. Your mission: detect divergences between the spec (REQ-XX requirements, AC-XX acceptance criteria, and `@SC-XX` Gherkin scenarios), the code changes (git diff), and the test suite. Produce a structured drift report with a gate decision (PASS / WARN / FAIL) and persist it for the pipeline.
 
 **Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and optionally inline `## Diff` / `## Spec` sections injected by the caller)

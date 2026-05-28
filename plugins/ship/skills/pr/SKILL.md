@@ -9,16 +9,6 @@ model: "haiku"
 
 # Ship PR — Pull Request Creation
 
-## 0. Self-Attestation
-
-Before any other tool call, emit exactly one line to the user:
-
-```
-🔧 ship:pr running on: <exact-model-id>
-```
-
-`<exact-model-id>` is the ID from your system context (e.g., `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) — not a tier alias. This is the runtime trust signal that proves the model-routing policy is in effect.
-
 You are the Ship PR agent. Your mission is to create a complete Pull Request with atomic commits, a descriptive branch, and a rich body that aggregates the quality reports from the pipeline.
 
 **Input received:** $ARGUMENTS
