@@ -17,59 +17,75 @@
 ---
 
 <p align="center">
-  <strong>Ship — Pipeline de desenvolvimento como slash commands do Claude Code — zero dependências</strong><br>
-  Da ideia bruta ao Pull Request entregue — especifique, implemente, teste, audite e entregue com um único comando.
+  <strong>Ship — Da ideia ao Pull Request, com um único comando.</strong><br>
+  Especifique, implemente, teste, audite e entregue — sem precisar coordenar nada manualmente.
 </p>
 
 <p align="center">
-  <a href="#o-que-é-ship">O que é Ship</a> ·
+  <a href="#o-problema">O Problema</a> ·
+  <a href="#a-solução">A Solução</a> ·
   <a href="#instalação">Instalação</a> ·
   <a href="#início-rápido">Início Rápido</a> ·
   <a href="#comandos">Comandos</a> ·
-  <a href="#configuração">Configuração</a> ·
-  <a href="#requisitos">Requisitos</a>
+  <a href="#configuração">Configuração</a>
 </p>
 
 ---
 
-## O que é Ship
+## O Problema
 
-Claude Code é uma ferramenta poderosa. A Ship a transforma em uma pipeline de desenvolvimento completa.
+Você tem uma ideia. Quer implementar uma feature. Com Claude Code, o código sai rápido — mas aí começa a parte chata:
 
-Entregar uma feature do jeito "normal" com um LLM (Large Language Model — modelo de linguagem grande) significa malabarismo entre uma dúzia de abas: requisitos, tarefas, testes, revisão de segurança, análise de performance, descrição de PR (Pull Request), atualização do tracker, disciplina de commit. Cada uma consome contexto. Cada uma está a um prompt de ser esquecida.
+- Escrever os requisitos num lugar
+- Quebrar em tarefas num outro
+- Gerar os testes (e lembrar de cobrir os casos de borda)
+- Verificar se tem vulnerabilidades de segurança
+- Analisar se vai ficar lento em produção
+- Revisar se o código segue os padrões do projeto
+- Criar o Pull Request com uma descrição decente
+- Atualizar o tracker de tarefas
 
-A Ship troca esse caos por uma **pipeline determinística e repetível** construída inteiramente com slash commands do Claude Code:
+Cada uma dessas etapas acontece numa aba diferente, num prompt diferente, e boa parte do contexto se perde pelo caminho. Se a sessão cair no meio, começa tudo de novo.
 
-- **Um comando especifica a feature inteira.** `/ship:spec "adicionar reset de senha"` cria um projeto Linear com milestones, labels e tarefas granulares — cada uma dimensionada para caber em uma única sessão.
-- **Um comando entrega a tarefa.** `/ship:run TASK-ID` executa develop → test → performance → security → review → acceptance, com agentes em paralelo e um gate de qualidade em cada fase.
-- **Um comando entrega o PR.** `/ship:pr` produz Conventional Commits atômicos e um PR com relatório de qualidade agregado.
+---
 
-Como a Ship é puramente um conjunto de slash commands do Claude Code (prompt-toolkit), ela **não requer binário, runtime nem banco de dados**. Instale uma vez, funciona em qualquer lugar que o Claude Code rode.
+## A Solução
 
-### Antes vs. Depois da Ship
+Ship é um conjunto de comandos para Claude Code que automatiza esse fluxo inteiro.
+
+Você descreve o que quer. O Ship quebra em tarefas, implementa, testa, revisa segurança e performance, e entrega um Pull Request com tudo documentado — com agentes rodando em paralelo em cada etapa.
+
+```bash
+/ship:spec "adicionar reset de senha"   # → cria projeto, milestones e tarefas
+/ship:run TASK-42                        # → implementa, testa, revisa, audita
+/ship:pr                                 # → Pull Request com relatório de qualidade
+```
+
+Isso é o fluxo completo. Cada comando faz uma etapa; você só intervém quando algo merece atenção.
+
+### Antes vs. Depois
 
 | Sem Ship | Com Ship |
 |---|---|
-| Planejamento de feature em chat livre | Projeto Linear com tarefas granulares (<400 linhas cada) |
-| "Por favor, revise isso" | 3 agentes em paralelo: performance + segurança + SOLID/DRY/KISS |
-| Cobertura de testes ad-hoc | Unit + integration + e2e gerados em paralelo |
-| Casos de teste rederivados a cada sessão | Cenários Gherkin @SC-XX definidos no spec, consumidos por develop, test e analyze |
-| Análise OWASP manual | Scan de segurança automatizado em cada diff com gate de política |
-| "Initial commit" × 20 | Conventional Commits atômicos por design |
-| Sessão cai no meio da pipeline | Artefatos persistidos no Linear ou em markdown local |
+| Planejamento em chat livre | Projeto com tarefas granulares e critérios de aceite |
+| "Por favor, revise isso" | 3 agentes em paralelo: performance + segurança + qualidade de código |
+| Testes escritos na hora, sem critério | Cenários definidos no spec, gerados automaticamente nos testes |
+| Verificação de segurança manual | Scan OWASP automatizado em cada entrega, com gate de bloqueio |
+| "Initial commit" repetido 20 vezes | Commits atômicos e padronizados por design |
+| Sessão cai e contexto se perde | Artefatos persistidos no Linear ou em arquivos locais |
 
 ---
 
 ## Instalação
 
-Instale via marketplace do Claude Code:
+Ship é um plugin do Claude Code. Instale pelo marketplace:
 
 ```bash
 claude plugin marketplace add livertonoliveira/ship
 claude plugin install ship
 ```
 
-É só isso. Os skills já incluem todos os patterns necessários inlined em tempo de build — sem configuração manual, sem arquivos copiados para o seu projeto.
+Pronto. Não precisa de Node.js, banco de dados ou nenhum outro binário. Ship é puramente um conjunto de comandos que instrui o Claude Code — o único requisito é ter o Claude Code instalado.
 
 ### Atualização
 
@@ -79,75 +95,74 @@ claude plugin update ship@ship-marketplace
 
 Reinicie o Claude Code após atualizar.
 
-> **Atenção:** `claude plugin update ship` falha com "Plugin not found". O nome completo com a fonte `ship@ship-marketplace` é obrigatório.
-
-### Zero dependências
-
-A Ship **não** requer:
-- Node.js ou npm
-- PostgreSQL ou qualquer banco de dados
-- Nenhum binário ou runtime instalado
-
-É um prompt-toolkit puro: slash commands que instruem agentes do Claude Code. O único requisito é o próprio Claude Code.
+> **Atenção:** `claude plugin update ship` (sem o sufixo) falha com "Plugin not found". Use sempre o nome completo `ship@ship-marketplace`.
 
 ---
 
 ## Início Rápido
 
 ```bash
-# 1. Inicializar a Ship no projeto (executar uma vez por projeto)
+# 1. Inicialize o Ship no seu projeto (faça isso uma vez por projeto)
 /ship:init
 
-# 2. Especificar uma feature — cria projeto Linear, milestones e tarefas
+# 2. Descreva a feature que quer implementar
 /ship:spec "adicionar notificações por e-mail para mudanças no status do pedido"
 
-# 3. Executar a pipeline completa para uma tarefa
+# 3. Execute a pipeline completa para uma tarefa criada pelo spec
 /ship:run MOB-42
 
-# 4. Entregar o PR com commits atômicos e relatório de qualidade
+# 4. Crie o Pull Request com commits organizados e relatório de qualidade
 /ship:pr
 ```
 
-Esse é o fluxo completo. Cada etapa se apoia na anterior: `spec` cria tarefas estruturadas, `run` executa a pipeline completa de develop → test → qualidade para cada tarefa, e `pr` empacota tudo em um Pull Request limpo e revisável.
+O `/ship:init` detecta automaticamente o stack do projeto e configura tudo. O `/ship:spec` cria um projeto estruturado com tarefas pequenas o suficiente para caber numa única sessão. O `/ship:run` executa todas as etapas de qualidade para aquela tarefa. O `/ship:pr` empacota tudo num Pull Request limpo.
+
+> **Atalho:** se você já tem uma tarefa no Linear — ou quer implementar algo sem passar pelo spec — pode ir direto para o `/ship:run`. O spec não é pré-requisito; ele só enriquece a pipeline com critérios de aceite e cenários de teste pré-definidos.
 
 ---
 
 ## Comandos
 
-### Comandos de Pipeline
+Ship tem dois grupos de comandos com propósitos distintos.
 
-| Comando | Propósito |
+### Pipeline — para o dia a dia de desenvolvimento
+
+Esses comandos fazem parte do fluxo normal de entrega. Cada um analisa apenas **o que foi alterado** na tarefa atual.
+
+| Comando | O que faz |
 |---------|-----------|
-| `/ship:init` | Inicializar a Ship no projeto — detecta stack, convenções, configura o Linear, cria `ship/config.md` |
-| `/ship:spec` | Especificação detalhada: decompor uma feature em tarefas granulares (<400 linhas), definir cenários Gherkin @SC-XX por AC, criar projeto Linear com milestones e issues |
-| `/ship:run` | Pipeline completa para uma tarefa: develop → test → perf → security → review → analyze → homolog |
-| `/ship:develop` | Implementar código seguindo as convenções do projeto (pode rodar standalone ou dentro do `/ship:run`) |
-| `/ship:test` | Gerar e executar testes — unit, integration e e2e — usando cenários @SC-XX predefinidos; 3 agentes em paralelo |
-| `/ship:perf` | Análise de performance do diff — detecta o tipo de projeto e adapta os agentes |
-| `/ship:security` | Scan de segurança OWASP (Open Web Application Security Project) do diff com 3 agentes em paralelo por categoria de ataque |
-| `/ship:review` | Revisão de código focada em SOLID, DRY, KISS, Clean Code e consistência do projeto |
-| `/ship:analyze` | Detecção de drift: mapear spec→código→testes, correlacionar cenários @SC-XX com testes, detectar lacunas, gate PASS/WARN/FAIL |
-| `/ship:homolog` | Relatório final de qualidade + aprovação de aceite pelo usuário |
-| `/ship:pr` | Criar PR (Pull Request) com Conventional Commits atômicos e relatório de qualidade agregado |
+| `/ship:init` | Inicializa o Ship no projeto — detecta stack, convenções, configura o Linear, cria `ship/config.md` |
+| `/ship:spec` | Decompõe uma feature em tarefas granulares, define cenários de teste por critério de aceite, cria projeto no Linear com milestones e issues |
+| `/ship:run` | Executa a pipeline completa para uma tarefa: implementação → testes → performance → segurança → revisão → homologação |
+| `/ship:develop` | Implementa o código seguindo as convenções do projeto (pode rodar sozinho ou dentro do `/ship:run`) |
+| `/ship:test` | Gera e executa testes unitários, de integração e e2e com base nos cenários definidos no spec |
+| `/ship:perf` | Analisa performance do diff — detecta o tipo de projeto e adapta os agentes |
+| `/ship:security` | Scan de segurança OWASP do diff com 3 agentes em paralelo por categoria de ataque |
+| `/ship:review` | Revisão de código focada em SOLID, DRY, KISS, Clean Code e consistência com o projeto |
+| `/ship:analyze` | Detecta drift entre spec, código e testes — gate PASS/WARN/FAIL |
+| `/ship:homolog` | Apresenta o relatório final de qualidade e aguarda aprovação |
+| `/ship:pr` | Cria o Pull Request com commits atômicos e relatório de qualidade agregado |
 
-### Comandos de Auditoria
+### Auditoria — para revisões periódicas do projeto
 
-Os comandos de auditoria são **abrangentes ao projeto** — eles escaneiam toda a base de código em busca de problemas sistêmicos. Execute-os periodicamente ou antes de releases. Diferente das fases de pipeline, as auditorias não são limitadas ao diff.
+Esses comandos analisam o **projeto inteiro**, não apenas o diff atual. Use antes de releases, em revisões periódicas de saúde, ou quando quiser entender o estado geral do sistema.
 
-| Comando | Propósito |
+| Comando | O que faz |
 |---------|-----------|
-| `/ship:audit:backend` | Auditoria de performance de backend para todo o projeto — 3 agentes em paralelo, sensível ao stack |
-| `/ship:audit:frontend` | Auditoria de performance de frontend para todo o projeto — roteia automaticamente para Next.js (5 camadas) ou genérico (11 categorias) |
-| `/ship:audit:database` | Auditoria de banco de dados para todo o projeto — roteia para metodologia MongoDB, PostgreSQL ou MySQL |
-| `/ship:audit:security` | Auditoria AppSec (Application Security) para todo o projeto — OWASP Top 10, mapeamento CWE, pontuação A-F, PoC para críticos/altos |
-| `/ship:audit:run` | Executar todas as auditorias aplicáveis em paralelo; produz um relatório de gate consolidado |
-| `/ship:audit:tests` | Auditoria de cobertura de testes para todo o projeto — mapeia AC/REQ ↔ testes existentes, correlaciona cenários @SC-XX em todo o projeto, reporta lacunas por camada |
+| `/ship:audit:backend` | Auditoria de performance de backend em todo o projeto — 3 agentes em paralelo |
+| `/ship:audit:frontend` | Auditoria de performance de frontend — roteia para Next.js (5 camadas) ou metodologia genérica (11 categorias) |
+| `/ship:audit:database` | Auditoria de banco de dados — detecta e usa a metodologia de MongoDB, PostgreSQL ou MySQL |
+| `/ship:audit:security` | Auditoria AppSec completa — OWASP Top 10, mapeamento CWE, nota A-F, PoC para achados críticos e altos |
+| `/ship:audit:tests` | Auditoria de cobertura de testes — mapeia critérios de aceite contra testes existentes e reporta lacunas por camada |
+| `/ship:audit:run` | Executa todas as auditorias aplicáveis em paralelo e consolida os resultados num único relatório |
+
+> **Importante:** comandos de auditoria **nunca** são chamados automaticamente pelo `/ship:run`. Eles existem para ser disparados manualmente quando fizer sentido — não a cada tarefa.
 
 ---
 
 ## Configuração
 
-Após o `/ship:init`, a Ship cria o arquivo `ship/config.md` na raiz do seu projeto. Este arquivo controla todos os aspectos da pipeline.
+Quando você roda `/ship:init`, o Ship cria um arquivo `ship/config.md` na raiz do projeto. Esse arquivo controla o comportamento de toda a pipeline.
 
 ```markdown
 # Ship Config
@@ -194,106 +209,33 @@ Após o `/ship:init`, a Ship cria o arquivo `ship/config.md` na raiz do seu proj
 
 ### Perfis de Pipeline
 
+O campo `profile` define o comportamento padrão da pipeline:
+
 | Perfil | Descrição |
 |--------|-----------|
-| `lite` | Feedback rápido — apenas dev + test |
-| `standard` | Equilibrado — todas as fases, profundidade média |
-| `strict` | Máxima qualidade — todas as fases, verificações exaustivas, gates bloqueiam no warn |
+| `lite` | Só implementação e testes — ideal para iterações rápidas |
+| `standard` | Todas as fases com profundidade equilibrada — padrão recomendado |
+| `strict` | Todas as fases com verificações exaustivas — gates bloqueiam até em warnings |
 
-Cada fase pode ser habilitada ou desabilitada individualmente. O `profile` define os padrões; as entradas em `Pipeline Phases` os sobrescrevem.
+Você pode ajustar fases individualmente em `Pipeline Phases`. O `profile` define os defaults; as entradas individuais sobrescrevem.
 
-### Comportamento dos Gates
+### Gates de Qualidade
 
-Os gates param ou redirecionam a pipeline com base na severidade dos achados:
+Em cada fase, o Ship classifica os achados por severidade e decide o que fazer:
 
 - Achados `critical` ou `high` → gate **FAIL** → pipeline para
 - Achados `medium` → gate **WARN** → pipeline pausa e pergunta ao usuário
 - Achados `low` ou nenhum → gate **PASS** → pipeline continua
 
-A configuração `on_fail` controla o que acontece em um gate FAIL: `ask` (pausa e pergunta ao usuário), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). A configuração `on_warn` controla gates WARN: `ask`, `fix` ou `pass` (continua sem ação). A configuração `on_fail_rerun` controla o escopo da reexecução: `surgical` (apenas os arquivos com problemas) ou `full` (reexecuta a fase inteira do zero).
+O campo `on_fail` controla o que acontece num FAIL: `ask` (pausa e pergunta), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). O campo `on_warn` faz o mesmo para WARNs: `ask`, `fix` ou `pass` (continua sem ação). O campo `on_fail_rerun` controla o escopo quando a fase roda de novo: `surgical` (só os arquivos com problemas) ou `full` (fase inteira do zero).
 
-### Integração com o Linear
+### Armazenamento: Linear ou Local
 
-Quando o Linear MCP (Model Context Protocol) está configurado, a Ship opera em **Modo Linear**: todos os artefatos (propostas, designs, tarefas, relatórios de qualidade) ficam no Linear como documentos e comentários de issues. Zero arquivos locais são criados além do `ship/config.md`.
+Ship funciona em dois modos dependendo de você ter o Linear MCP configurado:
 
-Sem o Linear, a Ship recai para o **Modo Local**: os artefatos são escritos em `ship/changes/<feature>/` como arquivos markdown.
+**Modo Linear (recomendado):** todos os artefatos — propostas, designs, tarefas, relatórios de qualidade — ficam no Linear como documentos e comentários de issues. O único arquivo local é o `ship/config.md`.
 
-### Test Scope
-
-A seção `Test Scope` no `ship/config.md` controla quais camadas de teste o `/ship:test` gera durante a pipeline:
-
-```markdown
-## Test Scope
-- unit: enabled        # Testes unitários (sempre recomendado)
-- integration: enabled # Testes de integração/API
-- e2e: disabled        # Testes end-to-end (via /ship:audit:tests para backfill)
-```
-
-**Padrões por tipo de projeto:**
-
-| Tipo | unit | integration | e2e |
-|------|------|-------------|-----|
-| `prompt-toolkit` / biblioteca | enabled | disabled | disabled |
-| `backend` / `fullstack` | enabled | enabled | disabled |
-| `frontend` | enabled | disabled | disabled |
-| `monorepo` | enabled | enabled | disabled |
-| `mobile` | enabled | disabled | disabled |
-
-Camadas desabilitadas **não** são geradas durante a pipeline. Use `/ship:audit:tests` para auditar e preencher a cobertura de camadas desabilitadas em todo o projeto.
-
-> **Observação:** O `/ship:analyze` detecta drift apenas nas camadas habilitadas do Test Scope; o `/ship:audit:tests` audita **todas** as camadas em todo o projeto, independente da configuração da pipeline.
-
-### Scenario Depth
-
-A seção `Scenario Depth` no `ship/config.md` controla quantos cenários Gherkin BDD (Behavior-Driven Development) o `/ship:spec` gera por critério de aceite:
-
-```markdown
-## Scenario Depth
-- depth: full            # none | light | full
-```
-
-| Valor | Comportamento |
-|-------|---------------|
-| `none` | Nenhum cenário Gherkin gerado — spec contém apenas ACs e requisitos |
-| `light` | Apenas o cenário de caminho feliz por AC |
-| `full` | Conjunto completo por AC: caminho feliz + casos de borda + casos de erro (padrão) |
-
-Quando `depth` é `light` ou `full`, o `/ship:spec` tageia cada cenário com `@SC-XX`, `@AC-YY` e a camada de teste responsável. Essas tags são consumidas ao longo de toda a pipeline:
-
-- **`/ship:develop`** — implementa o código para satisfazer cada `@SC-XX`
-- **`/ship:test`** — gera um teste tagueado com `TEST-SC-XX` por cenário, em vez de rederivá-los
-- **`/ship:analyze`** — correlaciona cenários `@SC-XX` com testes e adiciona uma tabela de status de cenários ao relatório de drift
-- **`/ship:audit:tests`** — correlaciona cenários em todo o projeto por camada
-
-A prosa dos steps Gherkin segue o `Artifact language` configurado; keywords (`Given`, `When`, `Then`), tags (`@SC-XX`, `@AC-YY`) e marcadores (`TEST-SC-XX`, `IMPL-SC-XX`) permanecem em inglês.
-
----
-
-## Requisitos
-
-| Requisito | Observações |
-|-----------|-------------|
-| Claude Code | Obrigatório — a Ship é um plugin do Claude Code |
-| Linear MCP | Opcional — habilita o Modo Linear para armazenamento de artefatos |
-
-Nenhuma outra dependência. Sem Node.js. Sem banco de dados. Sem binário para instalar ou manter.
-
----
-
-## Modos de Armazenamento
-
-### Modo Linear (recomendado)
-
-Todos os artefatos ficam no Linear — zero arquivos locais exceto `ship/config.md`:
-
-- **Proposta e Design** → Documentos do Linear vinculados ao projeto
-- **Tarefas** → Issues do Linear com milestones e labels
-- **Relatórios de Qualidade** → Comentários nas issues de tarefas
-- **Acompanhamento** → Sub-issues do Linear
-
-### Modo Local (alternativa)
-
-Todos os artefatos ficam em `ship/changes/<feature>/` como markdown:
+**Modo Local (alternativa):** os artefatos são escritos em `ship/changes/<feature>/` como arquivos markdown.
 
 ```
 ship/
@@ -313,6 +255,50 @@ ship/
     ├── tests-<data>.md
     └── run-<data>.md
 ```
+
+### Escopo de Testes
+
+O campo `Test Scope` controla quais camadas de teste o `/ship:test` gera durante a pipeline:
+
+| Tipo de projeto | unit | integration | e2e |
+|-----------------|------|-------------|-----|
+| `prompt-toolkit` / biblioteca | enabled | disabled | disabled |
+| `backend` / `fullstack` | enabled | enabled | disabled |
+| `frontend` | enabled | disabled | disabled |
+| `monorepo` | enabled | enabled | disabled |
+| `mobile` | enabled | disabled | disabled |
+
+Camadas desabilitadas não são geradas durante o pipeline normal. Para auditar e preencher essas lacunas, use `/ship:audit:tests`.
+
+> O `/ship:analyze` detecta drift apenas nas camadas habilitadas; o `/ship:audit:tests` audita todas as camadas do projeto independente dessa configuração.
+
+### Profundidade dos Cenários
+
+O campo `Scenario Depth` controla quantos cenários de teste o `/ship:spec` cria por critério de aceite:
+
+| Valor | Comportamento |
+|-------|---------------|
+| `none` | Nenhum cenário — spec contém apenas ACs e requisitos |
+| `light` | Apenas o caminho feliz por AC |
+| `full` | Conjunto completo: caminho feliz + casos de borda + casos de erro (padrão) |
+
+Quando `depth` é `light` ou `full`, cada cenário recebe tags como `@SC-01`, `@AC-02`. Essas tags viajam por toda a pipeline:
+
+- `/ship:develop` — implementa código para satisfazer cada `@SC-XX`
+- `/ship:test` — gera um teste por cenário sem precisar rederivá-los
+- `/ship:analyze` — correlaciona cenários com testes e reporta o que está coberto
+- `/ship:audit:tests` — faz essa correlação em todo o projeto por camada
+
+---
+
+## Requisitos
+
+| Requisito | Observação |
+|-----------|------------|
+| Claude Code | Obrigatório — Ship é um plugin do Claude Code |
+| Linear MCP | Opcional — habilita o Modo Linear para armazenamento de artefatos |
+
+Nenhuma outra dependência. Sem Node.js. Sem banco de dados. Sem binário para instalar ou manter.
 
 ---
 
