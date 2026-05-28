@@ -9,7 +9,9 @@ const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PLUGIN_ROOT, '..', '..');
 const SOURCE_ROOT = path.join(REPO_ROOT, 'src');
 const SOURCE_SKILLS = path.join(SOURCE_ROOT, 'skills');
+const SOURCE_AGENTS = path.join(SOURCE_ROOT, 'agents');
 const OUTPUT_SKILLS = path.join(PLUGIN_ROOT, 'skills');
+const OUTPUT_AGENTS = path.join(PLUGIN_ROOT, 'agents');
 
 const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/([^\s)]+\.md)/;
@@ -64,26 +66,56 @@ function resolveRefs(content, skillRelPath) {
   return result;
 }
 
-function main() {
-  fs.rmSync(OUTPUT_SKILLS, { recursive: true, force: true });
+function walkAgentFiles(dir, results = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      results.push(full);
+    }
+  }
+  return results;
+}
 
+function buildSkills() {
+  fs.rmSync(OUTPUT_SKILLS, { recursive: true, force: true });
   const skillFiles = walkSkillFiles(SOURCE_SKILLS);
   let count = 0;
 
   for (const skillPath of skillFiles) {
     const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
     const raw = fs.readFileSync(skillPath, 'utf8');
-
     const substituted = resolveRefs(raw, skillRelPath);
-
     const outPath = path.join(OUTPUT_SKILLS, skillRelPath);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, substituted, 'utf8');
-    console.log(`✓ ${skillRelPath}`);
+    console.log(`✓ skills/${skillRelPath}`);
     count++;
   }
+  return count;
+}
 
-  console.log(`\nBuild concluído. ${count} SKILL.md gerados em ${path.relative(REPO_ROOT, OUTPUT_SKILLS)}/.`);
+function buildAgents() {
+  fs.rmSync(OUTPUT_AGENTS, { recursive: true, force: true });
+  fs.mkdirSync(OUTPUT_AGENTS, { recursive: true });
+  const agentFiles = walkAgentFiles(SOURCE_AGENTS);
+  let count = 0;
+
+  for (const agentPath of agentFiles) {
+    const agentRelPath = path.relative(SOURCE_AGENTS, agentPath);
+    const raw = fs.readFileSync(agentPath, 'utf8');
+    const substituted = resolveRefs(raw, `agents/${agentRelPath}`);
+    const outPath = path.join(OUTPUT_AGENTS, agentRelPath);
+    fs.writeFileSync(outPath, substituted, 'utf8');
+    console.log(`✓ agents/${agentRelPath}`);
+    count++;
+  }
+  return count;
+}
+
+function main() {
+  const skillCount = buildSkills();
+  const agentCount = buildAgents();
+  console.log(`\nBuild concluído. ${skillCount} SKILL.md + ${agentCount} agents gerados em ${path.relative(REPO_ROOT, PLUGIN_ROOT)}/.`);
 }
 
 main();
