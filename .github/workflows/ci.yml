@@ -32,3 +32,22 @@ jobs:
 
       - name: Check no audit:* invocations in pipeline skill files
         run: ./scripts/check-no-audit-in-pipeline.sh
+
+  build-drift:
+    name: Build Drift — src/ ↔ plugins/ship/ em sincronia
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Rebuild plugin from src/
+        run: cd plugins/ship && npm run build
+      - name: Verify no drift
+        run: |
+          if ! git diff --exit-code plugins/ship/skills plugins/ship/agents; then
+            echo "::error::plugins/ship/ está desatualizado em relação a src/. Rode 'cd plugins/ship && npm run build' localmente e commite o resultado."
+            exit 1
+          fi
+          echo "✓ plugins/ship/ está em sincronia com src/"
