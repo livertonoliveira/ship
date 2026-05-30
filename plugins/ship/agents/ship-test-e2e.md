@@ -57,7 +57,7 @@ Responsibility: test critical end-to-end user flows.
 For each provided `@SC-XX`:
 - Generate **exactly one** e2e test: arrange = `Given`/`Background`, act = `When`, assert = `Then`.
 - A `Scenario Outline` → one parameterized test iterating its `Examples` rows.
-- Tag every test with a `// TEST-SC-XX` marker comment and name it after the scenario (referencing SC-XX).
+- Name the test by the **observable behavior** it asserts. **NEVER** prefix or suffix the test name with spec IDs (`SC-XX`, `AC-XX`, `REQ-XX`, `MOB-XXXX`) and **NEVER** add `// TEST-SC-XX` (or any) marker comments — no comments of any kind in test files.
 - Use page objects/selectors consistent with the project.
 - Translate Gherkin into the project's **native** e2e framework — do NOT assume Cucumber.
 - Do not invent scenarios beyond those provided.
@@ -95,7 +95,8 @@ E2E Tests:
 - **Tests must be deterministic**: no dependency on timing, network flakiness, or external services.
 - **Use the project's patterns**: follow existing page objects and e2e conventions exactly.
 - **Do not install test frameworks**: use what is already configured in the project.
-- **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one `// TEST-SC-XX`-tagged test.
+- **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one corresponding test, named by behavior. **No marker comments, no spec IDs in test names** — describe what the test verifies, never the spec reference.
+- **No comments in test files** — no JSDoc, no `// TEST-*` markers, no `// arrange/act/assert`, no spec IDs anywhere. Naming carries the meaning.
 - **Language**: use the `Artifact language` passed by the caller for user-facing output. Code, variable names: always English.
 - **Read efficiency**: re-read a file only if modified externally, likely compacted, or explicitly requested.
 - **Vitest pool**: always pass `--pool=threads` when invoking vitest directly. Never use the default `--pool=forks` — it spawns orphan OS processes that survive after the agent exits, consuming CPU and RAM indefinitely.
