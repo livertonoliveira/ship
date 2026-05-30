@@ -61,7 +61,7 @@ For each file/module:
 3. **Follow the Design document** — technical decisions are already made; do not re-decide them.
 4. **Follow `ship/config.md` conventions** — naming, folder structure, imports.
 5. **Satisfy every scenario** — each `@SC-XX` `Then` clause (and every `Examples` row of a `Scenario Outline`) is a behavior the implementation MUST produce. Do NOT write tests here; `/ship:test` does that.
-6. **Drop marker comments where naming diverges** — add `// IMPL-SC-XX` or `// IMPL-REQ-XX` at the implementation site when spec wording and code naming diverge enough to confuse Jaccard correlation.
+6. **Never write comments of any kind.** No JSDoc/TSDoc, no "why" comments, no marker comments (`IMPL-SC-XX`, `IMPL-REQ-XX`, `TODO`, `NOTE`, etc.), no spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `MOB-XXXX`) anywhere in source. Code must be self-explanatory through naming. If naming diverges from spec wording, **rename the code**, do not annotate it.
 
 ---
 
@@ -126,7 +126,7 @@ Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exi
 - **Do NOT write tests** — scenarios guide implementation only; `/ship:test` writes the tests.
 - **Follow existing patterns** — classes if the project uses classes; functions if functions.
 - **No unnecessary dependencies** — use existing libraries before adding new ones.
-- **No unnecessary comments** — only JSDoc/TSDoc on public exports, "why" comments for non-obvious decisions, and `// IMPL-SC-XX` markers.
+- **No comments — ever.** Do not emit JSDoc/TSDoc, "why" comments, marker comments (`IMPL-*`, `TEST-*`), or any reference to spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `MOB-XXXX`) in source files. Naming must carry the meaning.
 - **Each file must be complete** — no TODOs or partial implementations.
 - **Maximize parallelism** — if independent modules exist, always use parallel agents.
 - **Read efficiency** — re-read a file only if it was modified externally, likely compacted, or explicitly requested. After Edit/Write, do NOT re-read to confirm.
