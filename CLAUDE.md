@@ -8,8 +8,9 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 |---------|---------|
 | `/ship:init` | Initialize Ship in a project (run once) |
 | `/ship:spec` | Deep specification: requirements, design, granular tasks (<400 lines), Linear project/milestones/issues |
-| `/ship:run` | Development pipeline for a task: develop → test → quality → homologation |
-| `/ship:develop` | Implement code following project conventions |
+| `/ship:run` | Development pipeline for a task: plan → develop → test → quality → homologation |
+| `/ship:plan` | Test-aware planning: decompose the task into modules and map scenarios to a test contract (single source of truth for develop + test) |
+| `/ship:develop` | Implementation orchestrator: reads the plan, fans out one leaf worker per module |
 | `/ship:test` | Generate and run tests (unit, integration, e2e) |
 | `/ship:perf` | Performance analysis of the diff |
 | `/ship:security` | OWASP security scan of the diff |
