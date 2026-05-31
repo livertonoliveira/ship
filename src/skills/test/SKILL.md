@@ -23,6 +23,8 @@ Read `ship/config.md`: extract `## Test Scope` (which layers are active) and `Ar
 
 Read `.context/ship-run/<task-id>/stack.md` if it exists (fallback: `ship/config.md`).
 
+**Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, read its `## Test Contract` section. Each entry (`@SC-XX -> <layer> -> <test file>` with `arrange/act/assert`) is the concrete test slot already mapped from the scenario by `ship:plan` — the same single interpretation `ship:develop` built code from. Pass each layer's slots to its worker (step 3) so code and tests stay derived from one source instead of two independent reads. If `plan.md` is absent (planner skipped for a `minor`/`trivial` diff, or standalone), fall back to the raw scenarios below.
+
 **If `## Scenarios` was NOT injected inline by the orchestrator** — parse the task's `## Scenarios` Gherkin block from artifacts:
 - **Linear mode**: read the issue body via MCP (`mcp__linear-server__get_issue`). If MCP tools are not available (haiku has no MCP in `allowed-tools`), skip Linear and fall back to local mode — log a warning: `"WARNING: MCP unavailable — falling back to proposal.md for ACs"`.
 - **Local mode** (or MCP unavailable): read `ship/changes/<feature>/proposal.md` and extract the `## Acceptance Criteria` section as the scenario source.
@@ -54,6 +56,9 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
    Task ID: <task-id>
    Artifact language: <language>
 
+   ## Test Contract
+   <the @SC-XX -> layer -> file slots for THIS layer from plan.md; omit if no plan>
+
    ## Scenarios
    <filtered Gherkin for this layer>
 
@@ -63,6 +68,7 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
    ## Source
    <relevant diff content or file excerpts>
    ```
+   When `## Test Contract` is present, the worker uses those mapped slots (file + arrange/act/assert) as the source of truth and treats `## Scenarios` as the behavioral reference behind them.
 4. Agents that receive these sections inline MUST NOT fall back to standalone discovery mode.
 
 Pass inline in each agent's prompt: `Artifact language`, `## Scenarios` subset for the layer, list of modified files, task ID.

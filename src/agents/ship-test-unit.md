@@ -15,7 +15,7 @@ You are the Ship unit test worker. Your mission: generate and run unit tests for
 
 ## 1. Load context
 
-**If the caller already injected `## Scenarios`, `## Files`, and `## Source`** sections inline, use ONLY that injected context — do NOT re-read `proposal.md`, `design.md`, or the Linear issue.
+**If the caller already injected `## Scenarios`, `## Files`, and `## Source`** (and optionally `## Test Contract`) sections inline, use ONLY that injected context — do NOT re-read `proposal.md`, `design.md`, or the Linear issue. When `## Test Contract` is present, each entry is a pre-mapped test slot (target file + `arrange`/`act`/`assert`) derived by `ship:plan` from the matching `@SC-XX` — use it as the source of truth and treat the scenario as the behavior behind it.
 
 **Only when invoked standalone (no inline context)**, fall back:
 - Read `ship/config.md` for stack, test framework, and conventions.
