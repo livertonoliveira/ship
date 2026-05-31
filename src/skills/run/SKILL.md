@@ -212,7 +212,7 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 
    **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
 
-   **Determine the phases tier**: the Ship model-routing policy (see @ship/patterns/model-routing.md) runs quality phases (`perf`, `security`, `review`) on `sonnet` and the orchestrator itself on `haiku`. If `dev` is enabled, it runs on `sonnet`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
+   **Determine the phases tier**: the Ship model-routing policy (see @ship/patterns/model-routing.md) runs the reasoning leaves on `sonnet` and the orchestrators on `haiku`. Quality phases (`perf`, `security`) run on `sonnet`; the `plan` phase runs on `sonnet`; `develop` and `test` are `haiku` orchestrators that fan out `sonnet` leaf workers (`ship-develop-implement`, `ship-test-*`); the pipeline orchestrator itself is `haiku`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -245,7 +245,7 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
    ```
 
    Field rules:
-   - `<phase>`: one of `dev`, `test`, `perf`, `security`, `review`, `analyze`.
+   - `<phase>`: one of `plan`, `dev`, `test`, `perf`, `security`, `review`, `analyze`.
    - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship:ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
    - `<name>`: the `subagent_type` value (for Agent) or the skill name with `ship:` prefix (for Skill).
    - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
@@ -266,11 +266,34 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
+### 1.9. PHASE: Plan (Test-Aware Planning)
+
+> **Phase check**: This phase only runs when `dev` is `enabled` in the **effective phase set** AND the diff class is `normal` or `large`. For `trivial`/`minor` diffs the decomposition is obvious — skip the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
+
+The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
+
+Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+## Spec
+<inline: issue description + ACs + @SC-XX scenarios>
+
+## Design
+<inline: full design document content>
+```
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
 ### 2. PHASE: Development
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:ship-develop` named agent via the **Agent tool** with `subagent_type: ship:ship-develop`. Pass the following context inline:
+Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator (reads `plan.md`, fans out Sonnet `ship-develop-implement` workers, integrates, typechecks), so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -285,9 +308,7 @@ Storage mode: <linear|local>
 <inline: full design document content>
 ```
 
-**Scratch dir:** `.context/ship-run/<task-id>/`
-
-**The agent MUST use parallel sub-agents** for independent modules when applicable.
+**Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -297,7 +318,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator that fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only

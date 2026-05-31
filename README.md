@@ -167,9 +167,10 @@ These commands are part of the normal delivery flow. Each one analyzes only **wh
 |---------|--------------|
 | `/ship:init` | Initializes Ship in the project — detects stack, conventions, configures Linear, creates `ship/config.md` |
 | `/ship:spec` | Decomposes a feature into granular tasks, defines test scenarios per acceptance criterion, creates a Linear project with milestones and issues |
-| `/ship:run` | Runs the full pipeline for a task: implement → test → performance → security → review → homologation |
-| `/ship:develop` | Implements code following project conventions (can run standalone or inside `/ship:run`) |
-| `/ship:test` | Generates and runs unit, integration, and e2e tests based on scenarios defined at spec time |
+| `/ship:run` | Runs the full pipeline for a task: plan → implement → test → performance → security → review → homologation |
+| `/ship:plan` | Test-aware planning: decomposes the task into independent modules and maps each scenario to a test slot — one `plan.md` that both develop and test consume, so code and tests stay in sync |
+| `/ship:develop` | Reads the plan and implements code following project conventions, fanning out one worker per module (can run standalone or inside `/ship:run`) |
+| `/ship:test` | Generates and runs unit, integration, and e2e tests from the plan's test contract (falls back to scenarios when no plan exists) |
 | `/ship:perf` | Analyzes diff performance — detects project type and adapts agents accordingly |
 | `/ship:security` | OWASP security scan of the diff with 3 parallel agents by attack category |
 | `/ship:review` | Code review focused on SOLID, DRY, KISS, Clean Code, and project consistency |
@@ -318,7 +319,8 @@ The `Scenario Depth` field controls how many test scenarios `/ship:spec` creates
 
 When `depth` is `light` or `full`, each scenario gets tags like `@SC-01`, `@AC-02`. These tags travel through the entire pipeline:
 
-- `/ship:develop` — implements code to satisfy each `@SC-XX`
+- `/ship:plan` — maps each `@SC-XX` to a module and a test slot in one interpretation
+- `/ship:develop` — implements code to satisfy each `@SC-XX` (following the plan)
 - `/ship:test` — generates one test per scenario without re-deriving them
 - `/ship:analyze` — correlates scenarios with tests and reports what's covered
 - `/ship:audit:tests` — does this correlation across the entire project by layer

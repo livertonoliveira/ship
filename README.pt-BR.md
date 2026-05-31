@@ -167,9 +167,10 @@ Esses comandos fazem parte do fluxo normal de entrega. Cada um analisa apenas **
 |---------|-----------|
 | `/ship:init` | Inicializa o Ship no projeto — detecta stack, convenções, configura o Linear, cria `ship/config.md` |
 | `/ship:spec` | Decompõe uma feature em tarefas granulares, define cenários de teste por critério de aceite, cria projeto no Linear com milestones e issues |
-| `/ship:run` | Executa a pipeline completa para uma tarefa: implementação → testes → performance → segurança → revisão → homologação |
-| `/ship:develop` | Implementa o código seguindo as convenções do projeto (pode rodar sozinho ou dentro do `/ship:run`) |
-| `/ship:test` | Gera e executa testes unitários, de integração e e2e com base nos cenários definidos no spec |
+| `/ship:run` | Executa a pipeline completa para uma tarefa: planejamento → implementação → testes → performance → segurança → revisão → homologação |
+| `/ship:plan` | Planejamento orientado a testes: decompõe a tarefa em módulos independentes e mapeia cada cenário para um slot de teste — um único `plan.md` que develop e test consomem, mantendo código e testes em sincronia |
+| `/ship:develop` | Lê o plano e implementa o código seguindo as convenções do projeto, paralelizando um worker por módulo (pode rodar sozinho ou dentro do `/ship:run`) |
+| `/ship:test` | Gera e executa testes unitários, de integração e e2e a partir do test contract do plano (cai para os cenários quando não há plano) |
 | `/ship:perf` | Analisa performance do diff — detecta o tipo de projeto e adapta os agentes |
 | `/ship:security` | Scan de segurança OWASP do diff com 3 agentes em paralelo por categoria de ataque |
 | `/ship:review` | Revisão de código focada em SOLID, DRY, KISS, Clean Code e consistência com o projeto |
@@ -318,7 +319,8 @@ O campo `Scenario Depth` controla quantos cenários de teste o `/ship:spec` cria
 
 Quando `depth` é `light` ou `full`, cada cenário recebe tags como `@SC-01`, `@AC-02`. Essas tags viajam por toda a pipeline:
 
-- `/ship:develop` — implementa código para satisfazer cada `@SC-XX`
+- `/ship:plan` — mapeia cada `@SC-XX` para um módulo e um slot de teste numa única interpretação
+- `/ship:develop` — implementa código para satisfazer cada `@SC-XX` (seguindo o plano)
 - `/ship:test` — gera um teste por cenário sem precisar rederivá-los
 - `/ship:analyze` — correlaciona cenários com testes e reporta o que está coberto
 - `/ship:audit:tests` — faz essa correlação em todo o projeto por camada

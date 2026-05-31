@@ -79,6 +79,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
@@ -173,7 +174,10 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
   Also creates `phase-status.md` with the empty header row at pipeline start.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files.
+- **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
+  one phase that produces (rather than only reads) a shared artifact other phases consume.
+- **Phase agents** (develop, test, perf, security, review): **read only** from existing files
+  (develop and test read `plan.md`).
   The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed.
@@ -214,8 +218,8 @@ When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh
 | Phase | Shared artifact sliced | Slice dimension |
 |-------|------------------------|-----------------|
 | `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
-| `ship:develop` | Design document | by module / independent implementation unit |` when available, with fallback to local detection.**
+| `ship:test` | `plan.md` test contract (fallback: scenarios + file list) | by test layer (unit / integration / e2e) |
+| `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit |` when available, with fallback to local detection.**
 
 Resolve stack and diff using the following priority:
 

@@ -26,10 +26,14 @@ an Agent tool dispatch overrides the frontmatter.
 
 2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
 
-3. **Reasoning phases declare `model: "sonnet"` in SKILL.md frontmatter.** They never inherit
-   from the parent session — Sonnet is pinned so the skill behaves identically whether invoked
-   standalone or via an orchestrator. Reasoning phases include: `develop`, `test`, `perf`,
-   `security`, `review`, `analyze`, `spec`, and all `audit:*` skills except `audit:run`.
+3. **Reasoning units declare `model: "sonnet"` in frontmatter.** They never inherit from the
+   parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
+   Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
+   and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
+   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` phases are **Haiku
+   orchestrators** (see the Orchestrator-on-Haiku pattern below) — their semantic judgment was
+   front-loaded into `plan` (which emits `plan.md`), so the skill body is deterministic dispatch
+   and the reasoning lives in the Sonnet leaves they fan out.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
    to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
@@ -49,8 +53,10 @@ an Agent tool dispatch overrides the frontmatter.
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:develop`        | sonnet   | Implementation — needs full reasoning           |
-| `ship:test`           | sonnet   | Test generation — needs full reasoning          |
+| `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
+| `ship:develop`        | haiku (orchestrator) | Deterministic: reads `plan.md`, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks |
+| `ship:test`           | haiku (orchestrator) | Deterministic: reads Test Scope + `plan.md`, fans out Sonnet `ship-test-*` leaves |
+| `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
 | `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
 | `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
 | `ship:review`         | sonnet   | Code review — needs full reasoning              |

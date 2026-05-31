@@ -90,6 +90,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
@@ -184,7 +185,10 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
   Also creates `phase-status.md` with the empty header row at pipeline start.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files.
+- **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
+  one phase that produces (rather than only reads) a shared artifact other phases consume.
+- **Phase agents** (develop, test, perf, security, review): **read only** from existing files
+  (develop and test read `plan.md`).
   The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed.
@@ -225,8 +229,8 @@ When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh
 | Phase | Shared artifact sliced | Slice dimension |
 |-------|------------------------|-----------------|
 | `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
-| `ship:develop` | Design document | by module / independent implementation unit | for canonical file formats and lifecycle rules.
+| `ship:test` | `plan.md` test contract (fallback: scenarios + file list) | by test layer (unit / integration / e2e) |
+| `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit | for canonical file formats and lifecycle rules.
 
 After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
 
@@ -704,10 +708,14 @@ an Agent tool dispatch overrides the frontmatter.
 
 2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
 
-3. **Reasoning phases declare `model: "sonnet"` in SKILL.md frontmatter.** They never inherit
-   from the parent session — Sonnet is pinned so the skill behaves identically whether invoked
-   standalone or via an orchestrator. Reasoning phases include: `develop`, `test`, `perf`,
-   `security`, `review`, `analyze`, `spec`, and all `audit:*` skills except `audit:run`.
+3. **Reasoning units declare `model: "sonnet"` in frontmatter.** They never inherit from the
+   parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
+   Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
+   and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
+   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` phases are **Haiku
+   orchestrators** (see the Orchestrator-on-Haiku pattern below) — their semantic judgment was
+   front-loaded into `plan` (which emits `plan.md`), so the skill body is deterministic dispatch
+   and the reasoning lives in the Sonnet leaves they fan out.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
    to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
@@ -727,8 +735,10 @@ an Agent tool dispatch overrides the frontmatter.
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:develop`        | sonnet   | Implementation — needs full reasoning           |
-| `ship:test`           | sonnet   | Test generation — needs full reasoning          |
+| `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
+| `ship:develop`        | haiku (orchestrator) | Deterministic: reads `plan.md`, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks |
+| `ship:test`           | haiku (orchestrator) | Deterministic: reads Test Scope + `plan.md`, fans out Sonnet `ship-test-*` leaves |
+| `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
 | `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
 | `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
 | `ship:review`         | sonnet   | Code review — needs full reasoning              |
@@ -827,7 +837,7 @@ A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch betwe
 
 ```
 For model routing rules, read the file at ./ship/patterns/model-routing.md completely.
-```) runs quality phases (`perf`, `security`, `review`) on `sonnet` and the orchestrator itself on `haiku`. If `dev` is enabled, it runs on `sonnet`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
+```) runs the reasoning leaves on `sonnet` and the orchestrators on `haiku`. Quality phases (`perf`, `security`) run on `sonnet`; the `plan` phase runs on `sonnet`; `develop` and `test` are `haiku` orchestrators that fan out `sonnet` leaf workers (`ship-develop-implement`, `ship-test-*`); the pipeline orchestrator itself is `haiku`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -860,7 +870,7 @@ For model routing rules, read the file at ./ship/patterns/model-routing.md compl
    ```
 
    Field rules:
-   - `<phase>`: one of `dev`, `test`, `perf`, `security`, `review`, `analyze`.
+   - `<phase>`: one of `plan`, `dev`, `test`, `perf`, `security`, `review`, `analyze`.
    - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship:ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
    - `<name>`: the `subagent_type` value (for Agent) or the skill name with `ship:` prefix (for Skill).
    - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
@@ -895,11 +905,34 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
+### 1.9. PHASE: Plan (Test-Aware Planning)
+
+> **Phase check**: This phase only runs when `dev` is `enabled` in the **effective phase set** AND the diff class is `normal` or `large`. For `trivial`/`minor` diffs the decomposition is obvious — skip the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
+
+The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
+
+Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+## Spec
+<inline: issue description + ACs + @SC-XX scenarios>
+
+## Design
+<inline: full design document content>
+```
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
 ### 2. PHASE: Development
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:ship-develop` named agent via the **Agent tool** with `subagent_type: ship:ship-develop`. Pass the following context inline:
+Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator (reads `plan.md`, fans out Sonnet `ship-develop-implement` workers, integrates, typechecks), so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -914,9 +947,7 @@ Storage mode: <linear|local>
 <inline: full design document content>
 ```
 
-**Scratch dir:** `.context/ship-run/<task-id>/`
-
-**The agent MUST use parallel sub-agents** for independent modules when applicable.
+**Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module.
 
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -926,7 +957,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator that fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only
@@ -1004,10 +1035,14 @@ an Agent tool dispatch overrides the frontmatter.
 
 2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
 
-3. **Reasoning phases declare `model: "sonnet"` in SKILL.md frontmatter.** They never inherit
-   from the parent session — Sonnet is pinned so the skill behaves identically whether invoked
-   standalone or via an orchestrator. Reasoning phases include: `develop`, `test`, `perf`,
-   `security`, `review`, `analyze`, `spec`, and all `audit:*` skills except `audit:run`.
+3. **Reasoning units declare `model: "sonnet"` in frontmatter.** They never inherit from the
+   parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
+   Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
+   and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
+   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` phases are **Haiku
+   orchestrators** (see the Orchestrator-on-Haiku pattern below) — their semantic judgment was
+   front-loaded into `plan` (which emits `plan.md`), so the skill body is deterministic dispatch
+   and the reasoning lives in the Sonnet leaves they fan out.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
    to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
@@ -1027,8 +1062,10 @@ an Agent tool dispatch overrides the frontmatter.
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:develop`        | sonnet   | Implementation — needs full reasoning           |
-| `ship:test`           | sonnet   | Test generation — needs full reasoning          |
+| `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
+| `ship:develop`        | haiku (orchestrator) | Deterministic: reads `plan.md`, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks |
+| `ship:test`           | haiku (orchestrator) | Deterministic: reads Test Scope + `plan.md`, fans out Sonnet `ship-test-*` leaves |
+| `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
 | `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
 | `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
 | `ship:review`         | sonnet   | Code review — needs full reasoning              |
@@ -1448,6 +1485,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
@@ -1542,7 +1580,10 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
   Also creates `phase-status.md` with the empty header row at pipeline start.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files.
+- **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
+  one phase that produces (rather than only reads) a shared artifact other phases consume.
+- **Phase agents** (develop, test, perf, security, review): **read only** from existing files
+  (develop and test read `plan.md`).
   The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed.
@@ -1583,8 +1624,8 @@ When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh
 | Phase | Shared artifact sliced | Slice dimension |
 |-------|------------------------|-----------------|
 | `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | proposal ACs + file list | by test layer (unit / integration / e2e) |
-| `ship:develop` | Design document | by module / independent implementation unit | for the `.context/ship-run/<task-id>/` structure and lifecycle.
+| `ship:test` | `plan.md` test contract (fallback: scenarios + file list) | by test layer (unit / integration / e2e) |
+| `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit | for the `.context/ship-run/<task-id>/` structure and lifecycle.
 - **Linear mode = zero local artifacts**: When Linear is configured, do NOT create `ship/changes/` directories. Task context comes from Linear, quality reports go as comments.
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
 - **Do not create the PR automatically**: The pipeline ends at acceptance. The user runs `/ship:pr` separately.
