@@ -730,7 +730,7 @@ an Agent tool dispatch overrides the frontmatter.
 
 | Skill / Phase         | Tier    | Reason                                          |
 |-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
+| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
@@ -760,8 +760,10 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
 3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
+   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
+   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
+   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
+   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
@@ -877,9 +879,65 @@ For model routing rules, read the file at ./ship/patterns/model-routing.md compl
    - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
    - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
 
-> **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
+> **MANDATORY — LINEAR MODE: Move issue to its started state before doing anything else**
 >
-> Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
+> Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
+>
+> # Linear Status — resolve, set, and verify workflow-state transitions
+
+> Canonical recipe for moving a task issue between workflow states.
+> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
+
+A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
+or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
+ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
+does not match, the transition silently no-ops and the issue is left in its previous state.
+
+Likewise, `get_issue_status` does **not** read an issue's current state — it requires
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
+currently in, use `get_issue` and inspect its `state` field.
+
+Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
+
+| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
+|------------|---------------------|--------------------------------------|--------------|
+| Start work | `started`           | `In Progress Status`                 | `In Progress` |
+| Complete   | `completed`         | `Done Status`                        | `Done` |
+
+---
+
+## 1. Resolve the target state (do this once per transition)
+
+1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
+   `ship/config.md → Linear Integration`.
+2. If the field is present and not `not configured`, use it as the target state — it stores the
+   team's real state name captured at `ship:init`.
+3. If it is **absent** (older config) or `not configured`: call
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
+   matches the transition (`started` or `completed`), and use its **name** as the target. If more
+   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
+   for started; `Done`/`Concluído` for completed); otherwise take the first.
+
+Call the resolved value `<target-state>`.
+
+## 2. Set the state
+
+Call `mcp__linear-server__save_issue` with:
+- `id`: the task issue identifier (e.g., `MOB-1147`)
+- `state`: `<target-state>`
+
+## 3. Verify (never use `get_issue_status` for this)
+
+Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
+The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
+a name-agnostic check.
+
+If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
+may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
+to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
+loop indefinitely.
+>
+> Then call `mcp__linear-server__save_issue` with `state: <target-state>` right now.
 > Do NOT continue to the development phase until this API call is confirmed.
 
 **Local mode:**
@@ -1057,7 +1115,7 @@ an Agent tool dispatch overrides the frontmatter.
 
 | Skill / Phase         | Tier    | Reason                                          |
 |-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
+| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
@@ -1087,8 +1145,10 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
 3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
+   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
+   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
+   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
+   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
@@ -1358,7 +1418,7 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 > **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
 
-Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `context: fork` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases, homolog is **not** forked — it is an interactive acceptance gate that must run in this same context so it can present the report, stop for the user's approval, and then transition the issue. Do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Consolidate findings into a quality report
 - Present the report for this task
@@ -1400,15 +1460,70 @@ After homolog approval:
 
    **Linear mode:**
 
-   > **MANDATORY — Verify the full Linear lifecycle was completed**
+   > **MANDATORY — Verify the full Linear lifecycle was completed (idempotent safety-net)**
    >
-   > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-   > In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
+   > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
+   > First, resolve the team's **completed**-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+   > # Linear Status — resolve, set, and verify workflow-state transitions
+
+> Canonical recipe for moving a task issue between workflow states.
+> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
+
+A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
+or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
+ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
+does not match, the transition silently no-ops and the issue is left in its previous state.
+
+Likewise, `get_issue_status` does **not** read an issue's current state — it requires
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
+currently in, use `get_issue` and inspect its `state` field.
+
+Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
+
+| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
+|------------|---------------------|--------------------------------------|--------------|
+| Start work | `started`           | `In Progress Status`                 | `In Progress` |
+| Complete   | `completed`         | `Done Status`                        | `Done` |
+
+---
+
+## 1. Resolve the target state (do this once per transition)
+
+1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
+   `ship/config.md → Linear Integration`.
+2. If the field is present and not `not configured`, use it as the target state — it stores the
+   team's real state name captured at `ship:init`.
+3. If it is **absent** (older config) or `not configured`: call
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
+   matches the transition (`started` or `completed`), and use its **name** as the target. If more
+   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
+   for started; `Done`/`Concluído` for completed); otherwise take the first.
+
+Call the resolved value `<target-state>`.
+
+## 2. Set the state
+
+Call `mcp__linear-server__save_issue` with:
+- `id`: the task issue identifier (e.g., `MOB-1147`)
+- `state`: `<target-state>`
+
+## 3. Verify (never use `get_issue_status` for this)
+
+Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
+The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
+a name-agnostic check.
+
+If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
+may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
+to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
+loop indefinitely.
+   > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
+   >
+   > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.
    > 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
    >
-   > Both the "Done" status AND the quality report comment are required before the task is considered complete.
+   > Both the completed state AND the quality report comment are required before the task is considered complete. Do NOT use `get_issue_status` to read the issue's state.
 
    **Local mode:**
    - Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`

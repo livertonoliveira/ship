@@ -74,7 +74,7 @@ an Agent tool dispatch overrides the frontmatter.
 
 | Skill / Phase         | Tier    | Reason                                          |
 |-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
+| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
@@ -104,8 +104,10 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
 3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
+   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
+   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
+   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
+   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
@@ -260,6 +262,7 @@ Read existing code to identify:
 Check if Linear MCP tools are available:
 - Try using `mcp__linear-server__list_teams` to verify if Linear is connected
 - If connected: obtain the Team ID and available labels via `mcp__linear-server__list_teams` and `mcp__linear-server__list_issue_labels`
+- If connected: also call `mcp__linear-server__list_issue_statuses` for the team and record the **names** of the workflow states whose `type` is `started` (e.g., `In Progress`, `Em andamento`) and `completed` (e.g., `Done`, `Concluído`). These are stored as `In Progress Status` and `Done Status` so the pipeline transitions issues by the team's real state names instead of hardcoding `"In Progress"`/`"Done"`. If multiple states share a type, prefer the conventional name (`In Progress`/`Em andamento`, `Done`/`Concluído`); otherwise take the first of that type.
 - If not connected: record as "not configured"
 
 ### 4. Synthesize and create artifacts
@@ -329,6 +332,8 @@ With the results from both agents, create:
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
+- In Progress Status: [started-state name, e.g. "In Progress" / "Em andamento", or "not configured"]
+- Done Status: [completed-state name, e.g. "Done" / "Concluído", or "not configured"]
 - Default Labels: [detected labels or "none"]
 
 ## Pipeline Profile

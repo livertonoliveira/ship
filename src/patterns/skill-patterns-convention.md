@@ -84,6 +84,7 @@ Completely discarded.
 | `run-context.md` | 117 | `For the shared run context schema, read the file at ./ship/patterns/run-context.md completely.` |
 | `stack-detection.md` | 48 | `To detect the project stack, read the file at ./ship/patterns/stack-detection.md completely.` |
 | `security-categories.md` | 52 | `For security categories, read the file at ./ship/patterns/security-categories.md completely.` |
+| `linear-status.md` | 55 | `To resolve and set a workflow-state transition (started/completed), read the file at ./ship/patterns/linear-status.md completely.` |
 
 ---
 
