@@ -56,7 +56,7 @@ Read existing code to identify:
 Check if Linear MCP tools are available:
 - Try using `mcp__linear-server__list_teams` to verify if Linear is connected
 - If connected: obtain the Team ID and available labels via `mcp__linear-server__list_teams` and `mcp__linear-server__list_issue_labels`
-- If connected: also call `mcp__linear-server__list_issue_statuses` for the team and record the **name** of the workflow state whose `type` is `completed` (e.g., `Done`, `Concluído`). This is stored as `Done Status` so the pipeline transitions issues by the team's real state name instead of hardcoding `"Done"`. If multiple `completed` states exist, prefer one named `Done`/`Concluído`; otherwise take the first.
+- If connected: also call `mcp__linear-server__list_issue_statuses` for the team and record the **names** of the workflow states whose `type` is `started` (e.g., `In Progress`, `Em andamento`) and `completed` (e.g., `Done`, `Concluído`). These are stored as `In Progress Status` and `Done Status` so the pipeline transitions issues by the team's real state names instead of hardcoding `"In Progress"`/`"Done"`. If multiple states share a type, prefer the conventional name (`In Progress`/`Em andamento`, `Done`/`Concluído`); otherwise take the first of that type.
 - If not connected: record as "not configured"
 
 ### 4. Synthesize and create artifacts
@@ -126,6 +126,7 @@ With the results from both agents, create:
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
+- In Progress Status: [started-state name, e.g. "In Progress" / "Em andamento", or "not configured"]
 - Done Status: [completed-state name, e.g. "Done" / "Concluído", or "not configured"]
 - Default Labels: [detected labels or "none"]
 

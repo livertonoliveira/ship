@@ -32,7 +32,11 @@ Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and
 
 > **MANDATORY — LINEAR MODE ONLY**
 >
-> Call `mcp__linear-server__save_issue` to set the task status to **"In Progress"** before dispatching any worker.
+> Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
+>
+> @ship/patterns/linear-status.md
+>
+> Then call `mcp__linear-server__save_issue` with `state: <target-state>` before dispatching any worker.
 
 ---
 

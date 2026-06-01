@@ -252,9 +252,13 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
    - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
    - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
 
-> **MANDATORY — LINEAR MODE: Set issue to "In Progress" before doing anything else**
+> **MANDATORY — LINEAR MODE: Move issue to its started state before doing anything else**
 >
-> Call `mcp__linear-server__save_issue` to update the task issue status to **"In Progress"** right now.
+> Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
+>
+> @ship/patterns/linear-status.md
+>
+> Then call `mcp__linear-server__save_issue` with `state: <target-state>` right now.
 > Do NOT continue to the development phase until this API call is confirmed.
 
 **Local mode:**
@@ -563,9 +567,9 @@ After homolog approval:
    > **MANDATORY — Verify the full Linear lifecycle was completed (idempotent safety-net)**
    >
    > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
-   > First, resolve the team's completed-state name following this recipe — **never pass the literal `"Done"`**:
+   > First, resolve the team's **completed**-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > @ship/patterns/linear-completion.md
+   > @ship/patterns/linear-status.md
    > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
    >
    > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.

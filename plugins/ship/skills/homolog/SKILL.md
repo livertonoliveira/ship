@@ -1742,53 +1742,63 @@ After approval, execute ALL of the following steps without skipping any:
 
 > **MANDATORY STEPS A + B — Post quality report comment AND transition the issue to its completed state (run in parallel)**
 >
-> First, resolve the team's completed-state name following this recipe — **do not pass the literal
+> First, resolve the team's **completed**-state name following this recipe — **do not pass the literal
 > string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
 > `Concluído`):
 >
-> # Linear Completion — resolve, set, and verify the "Done" state
+> # Linear Status — resolve, set, and verify workflow-state transitions
 
-> Canonical recipe for transitioning a task issue to its completed workflow state.
-> Used by `ship:homolog` (acceptance) and `ship:run` (Step 8 safety-net).
+> Canonical recipe for moving a task issue between workflow states.
+> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
 
-The literal string `"Done"` is **not** a safe value to pass to `save_issue`: the `state`
-parameter is matched by state **name, type, or ID**, and a team's completed state may be
-named differently (e.g., `Concluído`, `Completed`, `Shipped`). Hardcoding `"Done"` silently
-no-ops on those teams, leaving the issue un-transitioned.
+A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
+or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
+ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
+does not match, the transition silently no-ops and the issue is left in its previous state.
 
 Likewise, `get_issue_status` does **not** read an issue's current state — it requires
-`id` + `name` + `team` and returns the definition of a status entity. To read the state an
-issue is currently in, use `get_issue` and inspect its `state` field.
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
+currently in, use `get_issue` and inspect its `state` field.
+
+Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
+
+| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
+|------------|---------------------|--------------------------------------|--------------|
+| Start work | `started`           | `In Progress Status`                 | `In Progress` |
+| Complete   | `completed`         | `Done Status`                        | `Done` |
 
 ---
 
-## 1. Resolve the completed state (do this once)
+## 1. Resolve the target state (do this once per transition)
 
-1. Read `Done Status` and `Team ID` from `ship/config.md → Linear Integration`.
-2. If `Done Status` is present and not `not configured`, use it as the target state
-   (it stores the team's completed-state name captured at `ship:init`).
+1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
+   `ship/config.md → Linear Integration`.
+2. If the field is present and not `not configured`, use it as the target state — it stores the
+   team's real state name captured at `ship:init`.
 3. If it is **absent** (older config) or `not configured`: call
-   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose
-   `type` is `completed`, and use its **name** as the target. If more than one `completed`
-   state exists, prefer the one named `Done`/`Concluído`; otherwise take the first.
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
+   matches the transition (`started` or `completed`), and use its **name** as the target. If more
+   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
+   for started; `Done`/`Concluído` for completed); otherwise take the first.
 
-Call the resolved value `<completed-state>`.
+Call the resolved value `<target-state>`.
 
 ## 2. Set the state
 
 Call `mcp__linear-server__save_issue` with:
 - `id`: the task issue identifier (e.g., `MOB-1147`)
-- `state`: `<completed-state>`
+- `state`: `<target-state>`
 
 ## 3. Verify (never use `get_issue_status` for this)
 
 Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
-The transition succeeded when `state.type == "completed"` (preferred check, name-agnostic).
+The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
+a name-agnostic check.
 
-If `state.type != "completed"`, the set failed — re-resolve `<completed-state>` per step 1
-(the configured name may be stale), call `save_issue` again, and re-verify **once**. If it
-still fails, surface the issue to the user with the resolved state name so they can fix the
-mapping in `ship/config.md` — do not loop indefinitely.
+If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
+may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
+to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
+loop indefinitely.
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:

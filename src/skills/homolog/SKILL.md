@@ -83,11 +83,11 @@ After approval, execute ALL of the following steps without skipping any:
 
 > **MANDATORY STEPS A + B — Post quality report comment AND transition the issue to its completed state (run in parallel)**
 >
-> First, resolve the team's completed-state name following this recipe — **do not pass the literal
+> First, resolve the team's **completed**-state name following this recipe — **do not pass the literal
 > string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
 > `Concluído`):
 >
-> @ship/patterns/linear-completion.md
+> @ship/patterns/linear-status.md
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
