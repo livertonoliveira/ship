@@ -210,8 +210,6 @@ Quando você roda `/ship:init`, o Ship cria um arquivo `ship/config.md` na raiz 
 - Configured: yes
 - Team: Engineering
 - Team ID: <seu-team-id>
-- In Progress Status: In Progress   # nome do estado "started" do time (auto-detectado; ex. "Em andamento")
-- Done Status: Done                 # nome do estado "completed" do time (auto-detectado; ex. "Concluído")
 
 ## Pipeline Profile
 - profile: standard      # lite | standard | strict
