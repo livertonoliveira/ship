@@ -5,13 +5,18 @@ argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "haiku"
-context: fork
-agent: general-purpose
 ---
 
 # Ship Homolog — User Acceptance
 
 You are the Ship acceptance agent. Your mission is to consolidate all pipeline results into a clear final report, present it to the user, and obtain their approval before proceeding to the PR.
+
+> **This skill is intentionally NOT forked** (`context: fork` is absent on purpose, matching
+> `ship:init` and `ship:pr`). Homologation is an **interactive gate**: it presents the report,
+> stops for the user's approval, and only then transitions the issue to its completed state.
+> A forked subagent returns control before the human answers, so the post-approval steps
+> (set Done, post comment) would never run in the same context — that is the historical cause
+> of issues not being marked Done. Do not re-add `context: fork`.
 
 **Input received:** $ARGUMENTS
 
@@ -76,7 +81,13 @@ Ask the user:
 
 After approval, execute ALL of the following steps without skipping any:
 
-> **MANDATORY STEPS A + B — Post quality report comment AND set issue status to Done (run in parallel)**
+> **MANDATORY STEPS A + B — Post quality report comment AND transition the issue to its completed state (run in parallel)**
+>
+> First, resolve the team's completed-state name following this recipe — **do not pass the literal
+> string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
+> `Concluído`):
+>
+> @ship/patterns/linear-completion.md
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
@@ -85,14 +96,15 @@ After approval, execute ALL of the following steps without skipping any:
 >   - [x] User has verified acceptance criteria
 >   - [x] User approves for PR — Approved on YYYY-MM-DD
 >   ```
-> - Call `mcp__linear-server__save_issue` to update the task issue status to **"Done"**.
+> - Call `mcp__linear-server__save_issue` with `state: <completed-state>` (the value resolved above) to transition the task issue.
 >
 > Both MUST be executed. Do not skip either step under any circumstances.
 
 > **MANDATORY STEP C — Verify both steps completed**
 >
-> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue_status` to confirm the status is "Done".
-> If either check fails, retry the corresponding step before continuing.
+> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue` to read the task issue's current `state`. The transition succeeded when `state.type == "completed"`.
+> Do **not** use `get_issue_status` here — it returns a status definition, not the issue's current state.
+> If either check fails, retry the corresponding step (per the completion recipe in Step A/B) before continuing.
 
 > **MANDATORY STEP D — Write Linear document cache**
 >

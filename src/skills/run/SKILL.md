@@ -529,7 +529,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 
 > **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
 
-Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `context: fork` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases, homolog is **not** forked — it is an interactive acceptance gate that must run in this same context so it can present the report, stop for the user's approval, and then transition the issue. Do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Consolidate findings into a quality report
 - Present the report for this task
@@ -560,15 +560,18 @@ After homolog approval:
 
    **Linear mode:**
 
-   > **MANDATORY — Verify the full Linear lifecycle was completed**
+   > **MANDATORY — Verify the full Linear lifecycle was completed (idempotent safety-net)**
    >
-   > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-   > In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
+   > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
+   > First, resolve the team's completed-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+   > @ship/patterns/linear-completion.md
+   > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
+   >
+   > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.
    > 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
    >
-   > Both the "Done" status AND the quality report comment are required before the task is considered complete.
+   > Both the completed state AND the quality report comment are required before the task is considered complete. Do NOT use `get_issue_status` to read the issue's state.
 
    **Local mode:**
    - Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`

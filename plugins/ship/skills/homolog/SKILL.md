@@ -5,13 +5,18 @@ argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "haiku"
-context: fork
-agent: general-purpose
 ---
 
 # Ship Homolog — User Acceptance
 
 You are the Ship acceptance agent. Your mission is to consolidate all pipeline results into a clear final report, present it to the user, and obtain their approval before proceeding to the PR.
+
+> **This skill is intentionally NOT forked** (`context: fork` is absent on purpose, matching
+> `ship:init` and `ship:pr`). Homologation is an **interactive gate**: it presents the report,
+> stops for the user's approval, and only then transitions the issue to its completed state.
+> A forked subagent returns control before the human answers, so the post-approval steps
+> (set Done, post comment) would never run in the same context — that is the historical cause
+> of issues not being marked Done. Do not re-add `context: fork`.
 
 **Input received:** $ARGUMENTS
 
@@ -1735,7 +1740,55 @@ Ask the user:
 
 After approval, execute ALL of the following steps without skipping any:
 
-> **MANDATORY STEPS A + B — Post quality report comment AND set issue status to Done (run in parallel)**
+> **MANDATORY STEPS A + B — Post quality report comment AND transition the issue to its completed state (run in parallel)**
+>
+> First, resolve the team's completed-state name following this recipe — **do not pass the literal
+> string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
+> `Concluído`):
+>
+> # Linear Completion — resolve, set, and verify the "Done" state
+
+> Canonical recipe for transitioning a task issue to its completed workflow state.
+> Used by `ship:homolog` (acceptance) and `ship:run` (Step 8 safety-net).
+
+The literal string `"Done"` is **not** a safe value to pass to `save_issue`: the `state`
+parameter is matched by state **name, type, or ID**, and a team's completed state may be
+named differently (e.g., `Concluído`, `Completed`, `Shipped`). Hardcoding `"Done"` silently
+no-ops on those teams, leaving the issue un-transitioned.
+
+Likewise, `get_issue_status` does **not** read an issue's current state — it requires
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an
+issue is currently in, use `get_issue` and inspect its `state` field.
+
+---
+
+## 1. Resolve the completed state (do this once)
+
+1. Read `Done Status` and `Team ID` from `ship/config.md → Linear Integration`.
+2. If `Done Status` is present and not `not configured`, use it as the target state
+   (it stores the team's completed-state name captured at `ship:init`).
+3. If it is **absent** (older config) or `not configured`: call
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose
+   `type` is `completed`, and use its **name** as the target. If more than one `completed`
+   state exists, prefer the one named `Done`/`Concluído`; otherwise take the first.
+
+Call the resolved value `<completed-state>`.
+
+## 2. Set the state
+
+Call `mcp__linear-server__save_issue` with:
+- `id`: the task issue identifier (e.g., `MOB-1147`)
+- `state`: `<completed-state>`
+
+## 3. Verify (never use `get_issue_status` for this)
+
+Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
+The transition succeeded when `state.type == "completed"` (preferred check, name-agnostic).
+
+If `state.type != "completed"`, the set failed — re-resolve `<completed-state>` per step 1
+(the configured name may be stale), call `save_issue` again, and re-verify **once**. If it
+still fails, surface the issue to the user with the resolved state name so they can fix the
+mapping in `ship/config.md` — do not loop indefinitely.
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
@@ -1744,14 +1797,15 @@ After approval, execute ALL of the following steps without skipping any:
 >   - [x] User has verified acceptance criteria
 >   - [x] User approves for PR — Approved on YYYY-MM-DD
 >   ```
-> - Call `mcp__linear-server__save_issue` to update the task issue status to **"Done"**.
+> - Call `mcp__linear-server__save_issue` with `state: <completed-state>` (the value resolved above) to transition the task issue.
 >
 > Both MUST be executed. Do not skip either step under any circumstances.
 
 > **MANDATORY STEP C — Verify both steps completed**
 >
-> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue_status` to confirm the status is "Done".
-> If either check fails, retry the corresponding step before continuing.
+> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue` to read the task issue's current `state`. The transition succeeded when `state.type == "completed"`.
+> Do **not** use `get_issue_status` here — it returns a status definition, not the issue's current state.
+> If either check fails, retry the corresponding step (per the completion recipe in Step A/B) before continuing.
 
 > **MANDATORY STEP D — Write Linear document cache**
 >

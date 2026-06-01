@@ -730,7 +730,7 @@ an Agent tool dispatch overrides the frontmatter.
 
 | Skill / Phase         | Tier    | Reason                                          |
 |-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
+| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
@@ -760,8 +760,10 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
 3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
+   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
+   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
+   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
+   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
@@ -1057,7 +1059,7 @@ an Agent tool dispatch overrides the frontmatter.
 
 | Skill / Phase         | Tier    | Reason                                          |
 |-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering, findings consolidation        |
+| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
 | `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
@@ -1087,8 +1089,10 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
 3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., `homolog` dispatched by `run` keeps Haiku because
-   its own SKILL.md frontmatter already declares `model: "haiku"`).
+   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
+   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
+   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
+   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
@@ -1358,7 +1362,7 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 > **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
 
-Invoke the `ship:homolog` skill via the **Skill tool**. The skill declares `context: fork` in its frontmatter, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases, homolog is **not** forked — it is an interactive acceptance gate that must run in this same context so it can present the report, stop for the user's approval, and then transition the issue. Do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Consolidate findings into a quality report
 - Present the report for this task
@@ -1400,15 +1404,60 @@ After homolog approval:
 
    **Linear mode:**
 
-   > **MANDATORY — Verify the full Linear lifecycle was completed**
+   > **MANDATORY — Verify the full Linear lifecycle was completed (idempotent safety-net)**
    >
-   > The `/ship:homolog` phase should have already posted the quality report comment and set the issue to "Done".
-   > In parallel: call `mcp__linear-server__get_issue_status` AND `mcp__linear-server__list_comments` to verify both:
+   > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
+   > First, resolve the team's completed-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > 1. If status is NOT "Done" → call `mcp__linear-server__save_issue` to set it to "Done" now.
+   > # Linear Completion — resolve, set, and verify the "Done" state
+
+> Canonical recipe for transitioning a task issue to its completed workflow state.
+> Used by `ship:homolog` (acceptance) and `ship:run` (Step 8 safety-net).
+
+The literal string `"Done"` is **not** a safe value to pass to `save_issue`: the `state`
+parameter is matched by state **name, type, or ID**, and a team's completed state may be
+named differently (e.g., `Concluído`, `Completed`, `Shipped`). Hardcoding `"Done"` silently
+no-ops on those teams, leaving the issue un-transitioned.
+
+Likewise, `get_issue_status` does **not** read an issue's current state — it requires
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an
+issue is currently in, use `get_issue` and inspect its `state` field.
+
+---
+
+## 1. Resolve the completed state (do this once)
+
+1. Read `Done Status` and `Team ID` from `ship/config.md → Linear Integration`.
+2. If `Done Status` is present and not `not configured`, use it as the target state
+   (it stores the team's completed-state name captured at `ship:init`).
+3. If it is **absent** (older config) or `not configured`: call
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose
+   `type` is `completed`, and use its **name** as the target. If more than one `completed`
+   state exists, prefer the one named `Done`/`Concluído`; otherwise take the first.
+
+Call the resolved value `<completed-state>`.
+
+## 2. Set the state
+
+Call `mcp__linear-server__save_issue` with:
+- `id`: the task issue identifier (e.g., `MOB-1147`)
+- `state`: `<completed-state>`
+
+## 3. Verify (never use `get_issue_status` for this)
+
+Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
+The transition succeeded when `state.type == "completed"` (preferred check, name-agnostic).
+
+If `state.type != "completed"`, the set failed — re-resolve `<completed-state>` per step 1
+(the configured name may be stale), call `save_issue` again, and re-verify **once**. If it
+still fails, surface the issue to the user with the resolved state name so they can fix the
+mapping in `ship/config.md` — do not loop indefinitely.
+   > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
+   >
+   > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.
    > 2. If the quality report comment is NOT present (i.e., no comment with a Summary table) → call `mcp__linear-server__save_comment` to post it now.
    >
-   > Both the "Done" status AND the quality report comment are required before the task is considered complete.
+   > Both the completed state AND the quality report comment are required before the task is considered complete. Do NOT use `get_issue_status` to read the issue's state.
 
    **Local mode:**
    - Write the consolidated report to `ship/changes/<feature>/report-<task-id>.md`
