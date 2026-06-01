@@ -210,6 +210,8 @@ When you run `/ship:init`, Ship creates a `ship/config.md` file in your project 
 - Configured: yes
 - Team: Engineering
 - Team ID: <your-team-id>
+- In Progress Status: In Progress   # team's started-state name (auto-detected; e.g. "Em andamento")
+- Done Status: Done                 # team's completed-state name (auto-detected; e.g. "Concluído")
 
 ## Pipeline Profile
 - profile: standard      # lite | standard | strict
