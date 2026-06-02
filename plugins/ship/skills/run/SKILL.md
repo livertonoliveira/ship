@@ -89,11 +89,12 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | File | Written by | Read by | Content |
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
-| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
+| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped — only for a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work); greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
-| `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
+| `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
+| `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
 
 ### `stack.md` format
@@ -110,7 +111,15 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 
 ### `diff.md` format
 
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
+Literal, untruncated output of the branch's **working-tree** diff against the merge-base, including untracked files:
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; the scratch dir is gitignored and never added
+git diff "$BASE"
+```
+
+The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
 
@@ -184,7 +193,9 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
+  Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
+  **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
+  only file rewritten mid-pipeline, and only by the orchestrator itself.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
@@ -200,7 +211,8 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 | Moment | Action |
 |--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
+| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
@@ -301,11 +313,15 @@ Probe the project root for these signal files:
 
    Write this content to `.context/ship-run/<task-id>/stack.md`.
 
-2. **`diff.md`** — Run the following and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
+2. **`diff.md`** (provisional baseline) — Capture the branch diff **relative to the merge-base, including the working tree and untracked files**, and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
 
    ```bash
-   git diff origin/main...HEAD
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface new untracked files in the diff without staging content; the scratch dir is gitignored so it is never added
+   git diff "$BASE"
    ```
+
+   > This is the **pre-develop baseline** — it reflects only work that already existed before this run (re-runs, pre-committed work). It is consumed solely by the planner-gate classification in step 0.7. `ship:develop` integrates code into the working tree without committing, so the **authoritative** diff that the quality phases analyze is re-captured in step 2.5, after development.
 
 3. **`phase-status.md`** — Create the file with only the header (no rows yet):
 
@@ -481,6 +497,8 @@ Where `<reason>` is a short human-readable explanation, e.g.:
 - `normal` → `default classification`
 - `large` → `1 240 lines changed` for the full heuristic reference.
 
+> **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
+
 Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
 
 **Step 1 — Compute metrics** (run inline bash, no agent needed):
@@ -535,7 +553,7 @@ echo "<class>" > .context/ship-run/<task-id>/diff-class.txt
 **Step 6 — Log to user**:
 
 ```
-Diff class: <class> (<reason>)
+Diff class (baseline): <class> (<reason>)
 ```
 
 Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines, no sensitive paths`).
@@ -965,7 +983,12 @@ Additionally:
 
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
-> **Phase check**: This phase only runs when `dev` is `enabled` in the **effective phase set** AND the diff class is `normal` or `large`. For `trivial`/`minor` diffs the decomposition is obvious — skip the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
+> **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted. Decide from the **baseline** classification (step 0.7), which measures only work that existed *before* this run:
+> - **Baseline diff is empty** (greenfield — no pre-existing committed/uncommitted work): the implementation does not exist yet, so its size is unknown and a fresh task almost always warrants decomposition → **run the planner**. Detect with `[ -s .context/ship-run/<task-id>/diff.md ] || echo greenfield`.
+> - **Baseline class `normal` or `large`**: → **run the planner**.
+> - **Baseline class `trivial` or `minor`** (a small change on top of work that already exists): the decomposition is obvious → **skip** the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> (baseline) — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
+>
+> ⚠️ Do **not** skip the planner just because the baseline class is `trivial` on a greenfield branch — an empty baseline classifies as `trivial` (zero files) but means "nothing built yet", not "trivial change". The empty-diff check above takes precedence.
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
 
@@ -1010,6 +1033,28 @@ Storage mode: <linear|local>
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
+
+### 2.5. Refresh diff + classification (authoritative)
+
+> **Why this step exists**: `ship:develop` integrates code into the **working tree** and does not commit. The baseline `diff.md` captured in step 0.5 therefore does **not** contain the implementation that develop just produced. Re-capture it here so the quality phases analyze real code. This refreshed `diff.md` and the recomputed `diff-class.txt` are the **authoritative** inputs for the diff-class quality gate and the `perf` / `security` / `review` phases in Phase 4.
+
+> **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
+
+1. **Re-capture `diff.md`** over the post-develop working tree (same range and command as step 0.5, now including the new and modified source files develop wrote):
+
+   ```bash
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface develop's new untracked files in the diff without staging content
+   git diff "$BASE" > .context/ship-run/<task-id>/diff.md
+   ```
+
+2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
+
+3. **Log to the user**:
+
+   ```
+   Diff reclassificado pós-develop: <class> (<reason>)
+   ```
 
 ### 3. PHASE: Testing
 
@@ -1300,14 +1345,14 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
    - **Local mode:** Record in `ship/changes/<feature>/tracking.md`
 3. Act based on `on_fail`:
    - **`ask`**: Ask "I found issues that need fixing. Would you like me to apply the fixes automatically?" — if yes, fix; if no, pause.
-   - **`fix`**: Inform "Auto-fixing issues per project config..." and immediately launch an Agent to fix (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
+   - **`fix`**: Inform "Auto-fixing issues per project config..."; **first capture the pre-fix snapshot** (Surgical Re-run Procedure → *Pre-fix snapshot* below), then launch an Agent to fix (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
    - **`defer`**: Inform "Issues tracked for later (gate behavior: defer). Continuing pipeline..." and proceed to acceptance.
 
 **If exit code 1 (WARN):**
 1. Present warnings
 2. Act based on `on_warn`:
    - **`ask`**: Ask "There are warnings. Fix now or proceed to acceptance?" — if fix, same flow as FAIL; if proceed, continue.
-   - **`fix`**: Inform "Auto-fixing warnings per project config..." and apply fixes (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
+   - **`fix`**: Inform "Auto-fixing warnings per project config..."; **first capture the pre-fix snapshot** (Surgical Re-run Procedure → *Pre-fix snapshot* below), then apply fixes (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
    - **`pass`**: Inform "Warnings noted (gate behavior: pass). Continuing to acceptance..." and proceed.
 
 #### Surgical Re-run Procedure
@@ -1316,18 +1361,37 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Applies to both `on_fail: fix` and `on_warn: fix`**: both paths share this procedure and all edge cases below.
 
+> **Why not `git diff <sha> HEAD`**: nothing is committed during the pipeline — `ship:develop` and the fix Agent both write to the working tree, and the first commit happens only in `ship:pr`. So HEAD never advances and `git diff <sha> HEAD` is always empty. The fix's changes are detected by comparing a per-file content snapshot of the working tree taken **before** the fix against one taken **after** it.
+
+**Pre-fix snapshot** — capture this **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first):
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; scratch dir is gitignored and never added
+git diff "$BASE" --name-only | while read -r f; do
+  printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+done | sort > .context/ship-run/<task-id>/pre-fix-files.txt
+```
+
 After the fix agent completes, determine which quality phases to re-run:
 
 1. **Read `on_fail_rerun`** from `ship/config.md → Gate Behavior` (values: `surgical` | `all`, default: `surgical` if absent).
 
-2. **Check if fix produced changes:**
+2. **Compute the set of files the fix changed** (snapshot diff — no commits involved):
 
    ```bash
-   sha=$(cat .context/ship-run/<task-id>/pre-quality-snapshot.sha)
-   git diff --name-only $sha HEAD
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N
+   git diff "$BASE" --name-only | while read -r f; do
+     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+   done | sort > .context/ship-run/<task-id>/post-fix-files.txt
+
+   # entries that are new or whose content hash changed since the pre-fix snapshot
+   comm -13 .context/ship-run/<task-id>/pre-fix-files.txt \
+            .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the output is **empty** (fix made no file changes):
+   If the resulting file list is **empty** (fix made no working-tree changes):
    - Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
    - For each phase that failed/warned: append a row to `phase-status.md` with gate=`warn`, run=`#<N>`, timestamp=current ISO-8601, files=`-`, and notes=`fix sem mudanças — revisão manual necessária`.
    - Skip all re-run logic and continue to acceptance.
@@ -1599,11 +1663,12 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | File | Written by | Read by | Content |
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
-| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
+| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped — only for a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work); greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
-| `pre-quality-snapshot.sha` | orchestrator (run) | pr agent | HEAD commit SHA before quality phases — used to build the PR diff |
+| `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
+| `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
 
 ### `stack.md` format
@@ -1620,7 +1685,15 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 
 ### `diff.md` format
 
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
+Literal, untruncated output of the branch's **working-tree** diff against the merge-base, including untracked files:
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; the scratch dir is gitignored and never added
+git diff "$BASE"
+```
+
+The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
 
@@ -1694,7 +1767,9 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
+  Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
+  **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
+  only file rewritten mid-pipeline, and only by the orchestrator itself.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
@@ -1710,7 +1785,8 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 | Moment | Action |
 |--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
+| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |

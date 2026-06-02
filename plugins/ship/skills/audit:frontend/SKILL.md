@@ -25,17 +25,16 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 ## Snapshot pré-fix
 
-Before launching the parallel quality phases (perf / security / review), the orchestrator captures a snapshot of the current HEAD commit. This snapshot is used by the PR agent to build the diff and, when auto-fix is applied, to decide which phases to re-run.
+> **No commits happen during the pipeline.** `ship:develop` and the auto-fix Agent write to the working tree; the first commit is created only in `ship:pr`. So HEAD does not advance, and any `git diff <sha> HEAD` is always empty. Re-run scoping must therefore compare working-tree snapshots, not commits.
 
-**When it is captured:** step 0.5 of `run.md` — during scratch-dir initialization, before any quality agent starts.
+Two distinct artifacts:
 
-**File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
 
-**Format:** single line containing the SHA from `git rev-parse HEAD` (no trailing newline required).
+   - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+   - **Format:** single line containing the SHA from `git rev-parse HEAD`.
 
-**When it is read:**
-- By the PR agent (`pr.md`) to build the diff between the snapshot and the final HEAD.
-- By the orchestrator after auto-fix to determine which phases to re-run (controlled by `on_fail_rerun`).
+2. **`pre-fix-files.txt`** — a per-file content snapshot (`<hash> <path>` per changed file) captured **immediately before the auto-fix Agent runs**. After the fix, the orchestrator recomputes the same snapshot and diffs the two to determine exactly which files the fix touched (see *Re-run cirúrgico* below). This is what drives the `on_fail_rerun` scoping.
 
 **Flag `on_fail_rerun`** (configured in `ship/config.md → Gate Behavior`):
 
@@ -60,8 +59,8 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 
 ### Algorithm (surgical mode)
 
-1. Read `pre-quality-snapshot.sha` from scratch dir
-2. Run `git diff --name-only <sha> HEAD` to get modified files from the fix
+1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
+2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline). See `run.md` → Surgical Re-run Procedure for the exact commands.
 3. For each phase that previously ran:
    - Compute intersection of (modified files) and (phase scope)
    - If intersection is non-empty → re-run phase
@@ -102,7 +101,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 1 — Fix vazio (sem mudanças)
 
-**Trigger:** `git diff --name-only <sha> HEAD` returns empty after the fix agent runs.
+**Trigger:** the pre-fix vs post-fix snapshot comparison (`comm -13`) returns an empty file list after the fix agent runs.
 
 **Behavior:**
 - Skip all re-run phases (nothing changed, nothing to validate).
@@ -127,7 +126,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 4 — Fix tocou arquivo fora do scope original
 
-**Trigger:** After the fix, `git diff --name-only` returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
+**Trigger:** After the fix, the snapshot comparison returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
 
 **Behavior:**
 - Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
@@ -1473,17 +1472,16 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 ## Snapshot pré-fix
 
-Before launching the parallel quality phases (perf / security / review), the orchestrator captures a snapshot of the current HEAD commit. This snapshot is used by the PR agent to build the diff and, when auto-fix is applied, to decide which phases to re-run.
+> **No commits happen during the pipeline.** `ship:develop` and the auto-fix Agent write to the working tree; the first commit is created only in `ship:pr`. So HEAD does not advance, and any `git diff <sha> HEAD` is always empty. Re-run scoping must therefore compare working-tree snapshots, not commits.
 
-**When it is captured:** step 0.5 of `run.md` — during scratch-dir initialization, before any quality agent starts.
+Two distinct artifacts:
 
-**File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
 
-**Format:** single line containing the SHA from `git rev-parse HEAD` (no trailing newline required).
+   - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+   - **Format:** single line containing the SHA from `git rev-parse HEAD`.
 
-**When it is read:**
-- By the PR agent (`pr.md`) to build the diff between the snapshot and the final HEAD.
-- By the orchestrator after auto-fix to determine which phases to re-run (controlled by `on_fail_rerun`).
+2. **`pre-fix-files.txt`** — a per-file content snapshot (`<hash> <path>` per changed file) captured **immediately before the auto-fix Agent runs**. After the fix, the orchestrator recomputes the same snapshot and diffs the two to determine exactly which files the fix touched (see *Re-run cirúrgico* below). This is what drives the `on_fail_rerun` scoping.
 
 **Flag `on_fail_rerun`** (configured in `ship/config.md → Gate Behavior`):
 
@@ -1508,8 +1506,8 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 
 ### Algorithm (surgical mode)
 
-1. Read `pre-quality-snapshot.sha` from scratch dir
-2. Run `git diff --name-only <sha> HEAD` to get modified files from the fix
+1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
+2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline). See `run.md` → Surgical Re-run Procedure for the exact commands.
 3. For each phase that previously ran:
    - Compute intersection of (modified files) and (phase scope)
    - If intersection is non-empty → re-run phase
@@ -1550,7 +1548,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 1 — Fix vazio (sem mudanças)
 
-**Trigger:** `git diff --name-only <sha> HEAD` returns empty after the fix agent runs.
+**Trigger:** the pre-fix vs post-fix snapshot comparison (`comm -13`) returns an empty file list after the fix agent runs.
 
 **Behavior:**
 - Skip all re-run phases (nothing changed, nothing to validate).
@@ -1575,7 +1573,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 4 — Fix tocou arquivo fora do scope original
 
-**Trigger:** After the fix, `git diff --name-only` returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
+**Trigger:** After the fix, the snapshot comparison returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
 
 **Behavior:**
 - Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
@@ -1635,17 +1633,16 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 ## Snapshot pré-fix
 
-Before launching the parallel quality phases (perf / security / review), the orchestrator captures a snapshot of the current HEAD commit. This snapshot is used by the PR agent to build the diff and, when auto-fix is applied, to decide which phases to re-run.
+> **No commits happen during the pipeline.** `ship:develop` and the auto-fix Agent write to the working tree; the first commit is created only in `ship:pr`. So HEAD does not advance, and any `git diff <sha> HEAD` is always empty. Re-run scoping must therefore compare working-tree snapshots, not commits.
 
-**When it is captured:** step 0.5 of `run.md` — during scratch-dir initialization, before any quality agent starts.
+Two distinct artifacts:
 
-**File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
 
-**Format:** single line containing the SHA from `git rev-parse HEAD` (no trailing newline required).
+   - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
+   - **Format:** single line containing the SHA from `git rev-parse HEAD`.
 
-**When it is read:**
-- By the PR agent (`pr.md`) to build the diff between the snapshot and the final HEAD.
-- By the orchestrator after auto-fix to determine which phases to re-run (controlled by `on_fail_rerun`).
+2. **`pre-fix-files.txt`** — a per-file content snapshot (`<hash> <path>` per changed file) captured **immediately before the auto-fix Agent runs**. After the fix, the orchestrator recomputes the same snapshot and diffs the two to determine exactly which files the fix touched (see *Re-run cirúrgico* below). This is what drives the `on_fail_rerun` scoping.
 
 **Flag `on_fail_rerun`** (configured in `ship/config.md → Gate Behavior`):
 
@@ -1670,8 +1667,8 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 
 ### Algorithm (surgical mode)
 
-1. Read `pre-quality-snapshot.sha` from scratch dir
-2. Run `git diff --name-only <sha> HEAD` to get modified files from the fix
+1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
+2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline). See `run.md` → Surgical Re-run Procedure for the exact commands.
 3. For each phase that previously ran:
    - Compute intersection of (modified files) and (phase scope)
    - If intersection is non-empty → re-run phase
@@ -1712,7 +1709,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 1 — Fix vazio (sem mudanças)
 
-**Trigger:** `git diff --name-only <sha> HEAD` returns empty after the fix agent runs.
+**Trigger:** the pre-fix vs post-fix snapshot comparison (`comm -13`) returns an empty file list after the fix agent runs.
 
 **Behavior:**
 - Skip all re-run phases (nothing changed, nothing to validate).
@@ -1737,7 +1734,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 4 — Fix tocou arquivo fora do scope original
 
-**Trigger:** After the fix, `git diff --name-only` returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
+**Trigger:** After the fix, the snapshot comparison returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
 
 **Behavior:**
 - Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
