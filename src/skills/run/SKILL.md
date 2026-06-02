@@ -459,14 +459,14 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
    - **Local mode:** Record in `ship/changes/<feature>/tracking.md`
 3. Act based on `on_fail`:
    - **`ask`**: Ask "I found issues that need fixing. Would you like me to apply the fixes automatically?" — if yes, fix; if no, pause.
-   - **`fix`**: Inform "Auto-fixing issues per project config..." and immediately launch an Agent to fix (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
+   - **`fix`**: Inform "Auto-fixing issues per project config..."; **first capture the pre-fix snapshot** (Surgical Re-run Procedure → *Pre-fix snapshot* below), then launch an Agent to fix (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that failed.
    - **`defer`**: Inform "Issues tracked for later (gate behavior: defer). Continuing pipeline..." and proceed to acceptance.
 
 **If exit code 1 (WARN):**
 1. Present warnings
 2. Act based on `on_warn`:
    - **`ask`**: Ask "There are warnings. Fix now or proceed to acceptance?" — if fix, same flow as FAIL; if proceed, continue.
-   - **`fix`**: Inform "Auto-fixing warnings per project config..." and apply fixes (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
+   - **`fix`**: Inform "Auto-fixing warnings per project config..."; **first capture the pre-fix snapshot** (Surgical Re-run Procedure → *Pre-fix snapshot* below), then apply fixes (**pass `model: "sonnet"` to the Agent tool call** — fixing is implementation reasoning), then apply the **Surgical Re-run Procedure** below using the set of phases that warned.
    - **`pass`**: Inform "Warnings noted (gate behavior: pass). Continuing to acceptance..." and proceed.
 
 #### Surgical Re-run Procedure
@@ -475,18 +475,37 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Applies to both `on_fail: fix` and `on_warn: fix`**: both paths share this procedure and all edge cases below.
 
+> **Why not `git diff <sha> HEAD`**: nothing is committed during the pipeline — `ship:develop` and the fix Agent both write to the working tree, and the first commit happens only in `ship:pr`. So HEAD never advances and `git diff <sha> HEAD` is always empty. The fix's changes are detected by comparing a per-file content snapshot of the working tree taken **before** the fix against one taken **after** it.
+
+**Pre-fix snapshot** — capture this **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first):
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; scratch dir is gitignored and never added
+git diff "$BASE" --name-only | while read -r f; do
+  printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+done | sort > .context/ship-run/<task-id>/pre-fix-files.txt
+```
+
 After the fix agent completes, determine which quality phases to re-run:
 
 1. **Read `on_fail_rerun`** from `ship/config.md → Gate Behavior` (values: `surgical` | `all`, default: `surgical` if absent).
 
-2. **Check if fix produced changes:**
+2. **Compute the set of files the fix changed** (snapshot diff — no commits involved):
 
    ```bash
-   sha=$(cat .context/ship-run/<task-id>/pre-quality-snapshot.sha)
-   git diff --name-only $sha HEAD
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N
+   git diff "$BASE" --name-only | while read -r f; do
+     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+   done | sort > .context/ship-run/<task-id>/post-fix-files.txt
+
+   # entries that are new or whose content hash changed since the pre-fix snapshot
+   comm -13 .context/ship-run/<task-id>/pre-fix-files.txt \
+            .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the output is **empty** (fix made no file changes):
+   If the resulting file list is **empty** (fix made no working-tree changes):
    - Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
    - For each phase that failed/warned: append a row to `phase-status.md` with gate=`warn`, run=`#<N>`, timestamp=current ISO-8601, files=`-`, and notes=`fix sem mudanças — revisão manual necessária`.
    - Skip all re-run logic and continue to acceptance.
