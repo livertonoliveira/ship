@@ -89,7 +89,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | File | Written by | Read by | Content |
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
+| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
@@ -110,7 +110,15 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 
 ### `diff.md` format
 
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
+Literal, untruncated output of the branch's **working-tree** diff against the merge-base, including untracked files:
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; the scratch dir is gitignored and never added
+git diff "$BASE"
+```
+
+The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
 
@@ -184,7 +192,9 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
+  Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
+  **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
+  only file rewritten mid-pipeline, and only by the orchestrator itself.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
@@ -200,7 +210,8 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 | Moment | Action |
 |--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
+| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
@@ -301,11 +312,15 @@ Probe the project root for these signal files:
 
    Write this content to `.context/ship-run/<task-id>/stack.md`.
 
-2. **`diff.md`** — Run the following and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
+2. **`diff.md`** (provisional baseline) — Capture the branch diff **relative to the merge-base, including the working tree and untracked files**, and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
 
    ```bash
-   git diff origin/main...HEAD
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface new untracked files in the diff without staging content; the scratch dir is gitignored so it is never added
+   git diff "$BASE"
    ```
+
+   > This is the **pre-develop baseline** — it reflects only work that already existed before this run (re-runs, pre-committed work). It is consumed solely by the planner-gate classification in step 0.7. `ship:develop` integrates code into the working tree without committing, so the **authoritative** diff that the quality phases analyze is re-captured in step 2.5, after development.
 
 3. **`phase-status.md`** — Create the file with only the header (no rows yet):
 
@@ -481,6 +496,8 @@ Where `<reason>` is a short human-readable explanation, e.g.:
 - `normal` → `default classification`
 - `large` → `1 240 lines changed` for the full heuristic reference.
 
+> **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
+
 Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
 
 **Step 1 — Compute metrics** (run inline bash, no agent needed):
@@ -535,7 +552,7 @@ echo "<class>" > .context/ship-run/<task-id>/diff-class.txt
 **Step 6 — Log to user**:
 
 ```
-Diff class: <class> (<reason>)
+Diff class (baseline): <class> (<reason>)
 ```
 
 Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines, no sensitive paths`).
@@ -1010,6 +1027,28 @@ Storage mode: <linear|local>
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
+
+### 2.5. Refresh diff + classification (authoritative)
+
+> **Why this step exists**: `ship:develop` integrates code into the **working tree** and does not commit. The baseline `diff.md` captured in step 0.5 therefore does **not** contain the implementation that develop just produced. Re-capture it here so the quality phases analyze real code. This refreshed `diff.md` and the recomputed `diff-class.txt` are the **authoritative** inputs for the diff-class quality gate and the `perf` / `security` / `review` phases in Phase 4.
+
+> **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
+
+1. **Re-capture `diff.md`** over the post-develop working tree (same range and command as step 0.5, now including the new and modified source files develop wrote):
+
+   ```bash
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface develop's new untracked files in the diff without staging content
+   git diff "$BASE" > .context/ship-run/<task-id>/diff.md
+   ```
+
+2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
+
+3. **Log to the user**:
+
+   ```
+   Diff reclassificado pós-develop: <class> (<reason>)
+   ```
 
 ### 3. PHASE: Testing
 
@@ -1599,7 +1638,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | File | Written by | Read by | Content |
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) | perf, security, review | output of `git diff` for the branch — full diff of new/modified code |
+| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent for `trivial`/`minor` diffs (planner skipped). |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
@@ -1620,7 +1659,15 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 
 ### `diff.md` format
 
-Literal output of `git diff main...HEAD` (or the configured range), without truncation.
+Literal, untruncated output of the branch's **working-tree** diff against the merge-base, including untracked files:
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git add -A -N   # surface untracked files; the scratch dir is gitignored and never added
+git diff "$BASE"
+```
+
+The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
 
@@ -1694,7 +1741,9 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start.
+  Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
+  **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
+  only file rewritten mid-pipeline, and only by the orchestrator itself.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
@@ -1710,7 +1759,8 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 | Moment | Action |
 |--------|--------|
-| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files |
+| Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |

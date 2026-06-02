@@ -83,11 +83,15 @@ Then populate the canonical files in a single batch:
 
    Write this content to `.context/ship-run/<task-id>/stack.md`.
 
-2. **`diff.md`** — Run the following and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
+2. **`diff.md`** (provisional baseline) — Capture the branch diff **relative to the merge-base, including the working tree and untracked files**, and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
 
    ```bash
-   git diff origin/main...HEAD
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface new untracked files in the diff without staging content; the scratch dir is gitignored so it is never added
+   git diff "$BASE"
    ```
+
+   > This is the **pre-develop baseline** — it reflects only work that already existed before this run (re-runs, pre-committed work). It is consumed solely by the planner-gate classification in step 0.7. `ship:develop` integrates code into the working tree without committing, so the **authoritative** diff that the quality phases analyze is re-captured in step 2.5, after development.
 
 3. **`phase-status.md`** — Create the file with only the header (no rows yet):
 
@@ -127,6 +131,8 @@ Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 ### 0.7. Diff Classification
 
 > See @ship/patterns/diff-classifier.md for the full heuristic reference.
+
+> **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
 
 Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
 
@@ -182,7 +188,7 @@ echo "<class>" > .context/ship-run/<task-id>/diff-class.txt
 **Step 6 — Log to user**:
 
 ```
-Diff class: <class> (<reason>)
+Diff class (baseline): <class> (<reason>)
 ```
 
 Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines, no sensitive paths`).
@@ -317,6 +323,28 @@ Storage mode: <linear|local>
 **Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
+
+### 2.5. Refresh diff + classification (authoritative)
+
+> **Why this step exists**: `ship:develop` integrates code into the **working tree** and does not commit. The baseline `diff.md` captured in step 0.5 therefore does **not** contain the implementation that develop just produced. Re-capture it here so the quality phases analyze real code. This refreshed `diff.md` and the recomputed `diff-class.txt` are the **authoritative** inputs for the diff-class quality gate and the `perf` / `security` / `review` phases in Phase 4.
+
+> **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
+
+1. **Re-capture `diff.md`** over the post-develop working tree (same range and command as step 0.5, now including the new and modified source files develop wrote):
+
+   ```bash
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface develop's new untracked files in the diff without staging content
+   git diff "$BASE" > .context/ship-run/<task-id>/diff.md
+   ```
+
+2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
+
+3. **Log to the user**:
+
+   ```
+   Diff reclassificado pós-develop: <class> (<reason>)
+   ```
 
 ### 3. PHASE: Testing
 
