@@ -618,7 +618,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
@@ -1158,7 +1158,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
@@ -1710,7 +1710,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
@@ -2430,7 +2430,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
@@ -2970,7 +2970,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
@@ -3523,7 +3523,7 @@ Format:
 - **Impact:** Credential enumeration and account takeover.
 - **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
 
-+ 3 low-severity findings — [see full report](https://linear.app/mobitech/issue/MOB-XXXX)
++ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
 
 ---
 
