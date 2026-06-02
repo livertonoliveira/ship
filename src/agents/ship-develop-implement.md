@@ -32,7 +32,7 @@ The plan's `Contract` tells you **what** the module must do and **which files** 
 2. **Follow the Contract and Design section** provided inline — technical decisions are already made; do not re-decide them.
 3. **Stay inside your file set** — implement ONLY the files the plan assigned to your module. Never touch files owned by a sibling module; that would cause a race condition.
 4. **Satisfy every scenario** — each `@SC-XX` `Then` clause (and every `Examples` row of a `Scenario Outline`) is a behavior the implementation MUST produce. Do NOT write tests here; `/ship:test` does that.
-5. **Never write comments of any kind.** No JSDoc/TSDoc, no "why" comments, no marker comments (`IMPL-SC-XX`, `IMPL-REQ-XX`, `TODO`, `NOTE`, etc.), no spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `MOB-XXXX`) anywhere in source. Code must be self-explanatory through naming. If naming diverges from spec wording, **rename the code**, do not annotate it.
+5. **Never write comments of any kind.** No JSDoc/TSDoc, no "why" comments, no marker comments (`IMPL-SC-XX`, `IMPL-REQ-XX`, `TODO`, `NOTE`, etc.), no spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`) and no Linear issue key (any team prefix — `<TEAM>-NNN`, e.g. `MOB-1734`, `ENG-42`) anywhere in source. Code must be self-explanatory through naming. If naming diverges from spec wording, **rename the code**, do not annotate it.
 
 ## 2b. Fix (Mode: fix)
 
@@ -63,7 +63,7 @@ Unit: <module name | fix>
 
 ## Rules
 
-- **No comments — ever.** Do not emit JSDoc/TSDoc, "why" comments, marker comments (`IMPL-*`, `TEST-*`), or any reference to spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `MOB-XXXX`) in source files. Naming must carry the meaning.
+- **No comments — ever.** Do not emit JSDoc/TSDoc, "why" comments, marker comments (`IMPL-*`, `TEST-*`), or any reference to spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`) or the Linear issue key (any team prefix — `<TEAM>-NNN`, e.g. `MOB-1734`, `ENG-42`) in source files. Naming must carry the meaning.
 - **Stay in scope** — implement ONLY the files assigned to your unit. Writing a file owned by a sibling worker would cause a race condition.
 - **Do NOT write tests** — scenarios guide implementation only; `/ship:test` writes the tests.
 - **Do NOT fan out** — you are a leaf; implement directly, never spawn another agent.
