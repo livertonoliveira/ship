@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.7 — 2026-06-03
+
+### Features
+- **Develop evidence gate (`/ship:run`, step 2.6)**: o pipeline deixou de confiar no auto-report do `develop`. O `run` captura um snapshot do working tree antes da fase de develop e, depois dela, exige prova de mutação real. Zero mutação numa task nova (baseline vazio) → gate `fail` e pipeline para, em vez de um `pass` silencioso sobre uma árvore intocada. Re-run onde o trabalho já existia → `warn` e segue.
+
+### Fixes
+- **Orquestradores `develop`/`test` não fazem mais "narrate-and-return"**: rodando em Haiku e sem ferramentas de escrita, os orquestradores forkados podiam narrar o plano e reportar `pass` sem despachar nenhum worker via Agent tool — o pipeline reportava sucesso com a working tree zerada. Os prompts foram endurecidos (bloco CRITICAL "act, not narrate", seção 3 marcada como MANDATORY ACTION e self-check obrigatório antes de retornar), tornando a omissão um hard failure.
+
 ## 2.0.0 — 2026-05-24
 
 ### ⚠️  Breaking changes
