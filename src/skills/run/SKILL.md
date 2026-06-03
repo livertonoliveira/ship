@@ -123,6 +123,16 @@ Then populate the canonical files in a single batch:
 
    Write the SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`.
 
+5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove whether `ship:develop` actually mutated anything. Same hashing mechanism as the pre-fix snapshot:
+
+   ```bash
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N   # surface untracked files; scratch dir is gitignored and never added
+   git diff "$BASE" --name-only | while read -r f; do
+     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+   done | sort > .context/ship-run/<task-id>/pre-develop-files.txt
+   ```
+
 Log to the user:
 ```
 Run context: .context/ship-run/<task-id>/ (stack + diff cached)
@@ -350,6 +360,40 @@ Storage mode: <linear|local>
    ```
    Diff reclassificado pós-develop: <class> (<reason>)
    ```
+
+### 2.6. Develop evidence gate (MANDATORY)
+
+> **Why this step exists**: `ship:develop` is a forked Haiku orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
+
+> **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
+
+1. **Compute what develop actually changed** — compare the post-develop working tree against the `pre-develop-files.txt` snapshot captured in step 0.5:
+
+   ```bash
+   BASE=$(git merge-base origin/main HEAD)
+   git add -A -N
+   git diff "$BASE" --name-only | while read -r f; do
+     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
+   done | sort > .context/ship-run/<task-id>/post-develop-files.txt
+
+   # files develop created or whose content changed during this phase
+   comm -13 .context/ship-run/<task-id>/pre-develop-files.txt \
+            .context/ship-run/<task-id>/post-develop-files.txt | awk '{print $2}' | sort -u
+   ```
+
+2. **Decide**:
+
+   - **Non-empty** (develop mutated ≥1 file): evidence confirmed. Log `Develop evidence: <N> arquivo(s) modificado(s) ✓` and continue to Phase 3.
+
+   - **Empty** (develop touched nothing this phase): distinguish a silent failure from a legitimate re-run by inspecting the **pre-develop** baseline `diff.md` (step 0.5):
+     - **Baseline `diff.md` was non-empty** (work already existed before this run): treat as a legitimate "already implemented" re-run. Append a develop row to `phase-status.md` with gate=`warn` and notes=`develop sem mudanças — implementação pré-existente assumida`. Warn the user: `⚠ Develop não produziu mudanças; assumindo implementação pré-existente (re-run).` Continue.
+     - **Baseline `diff.md` was empty** (fresh task, nothing existed): this is the silent-failure mode — develop returned without dispatching any worker. **The pipeline STOPS.** Append a develop row to `phase-status.md` with gate=`fail` and notes=`develop não produziu código — orquestrador não despachou workers`. Report to the user:
+       ```
+       ✗ FALHA no develop: a fase reportou conclusão mas o working tree não mudou.
+         O orquestrador provavelmente narrou o plano sem despachar os workers de implementação.
+         Pipeline interrompido. Re-execute o develop ou implemente manualmente.
+       ```
+       Do NOT proceed to testing or quality phases.
 
 ### 3. PHASE: Testing
 
