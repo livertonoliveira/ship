@@ -13,6 +13,8 @@ agent: general-purpose
 
 You are the Ship test orchestrator. Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel.
 
+> **CRITICAL — you MUST act, not narrate.** You have no Edit/Write tools; the ONLY way tests get written is by dispatching `ship-test-*` workers through the **Agent tool**. Describing which tests "would be generated", summarizing a plan, or returning a status without having issued the Agent tool calls is a **hard failure** of this skill, not a shortcut. If you finish your turn having narrated a test plan but issued **zero** Agent tool calls for the enabled layers, you have failed. Resolve the layers, then immediately dispatch.
+
 **Input received:** $ARGUMENTS (task ID as the first token, followed by artifact language, scenarios, and modified files — passed by the orchestrator when invoked from `ship:run`)
 
 ## 1. Load context
@@ -38,7 +40,9 @@ Test layers: unit=<enabled|disabled>, integration=<enabled|disabled>, e2e=<enabl
 
 If all layers are `disabled`: output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope` (ship/config.md). Habilite ao menos um layer para gerar testes." Then stop.
 
-## 3. Fan out to named agents (parallel)
+## 3. Fan out to named agents (parallel) — MANDATORY ACTION
+
+This is the step where tests get written. You **must** issue real Agent tool calls here, one per enabled layer. Do not return to the caller until you have actually dispatched a worker for every enabled layer.
 
 For each enabled layer, launch the agent via the Agent tool using `subagent_type`. Skip disabled layers (log `Skipping [layer] tests (disabled in Test Scope)`).
 
@@ -89,3 +93,7 @@ Derive `RUN_NUM` dynamically: count existing `| test |` rows in the file and add
 Example: `RUN_NUM=$(grep -c '^| test |' .context/ship-run/<task-id>/phase-status.md 2>/dev/null || echo 0); RUN_NUM=$((RUN_NUM + 1))`
 
 Report to the user: tests created, passed, and failed per layer.
+
+## 5. Self-check before returning (MANDATORY)
+
+Before you end your turn, verify out loud: for every layer marked `enabled` in Test Scope, did you actually issue a `ship-test-*` Agent tool call? If you skipped an enabled layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now. Returning in that state is a defect.
