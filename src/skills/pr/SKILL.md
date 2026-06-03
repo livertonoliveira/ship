@@ -1,6 +1,6 @@
 ---
 name: ship:pr
-description: "Creates a PR with atomic commits and an aggregated quality report. Run after acceptance is approved."
+description: "Creates a PR with atomic commits and an aggregated quality report. Run after homolog approval, or invoke directly to homologate-and-PR in one step."
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
@@ -25,7 +25,7 @@ See @ship/patterns/storage-mode.md.
 
 Identify the feature:
 - **Linear mode**: Use `$ARGUMENTS` as a Linear issue ID or project name. If empty, ask the user.
-- **Local mode**: If `$ARGUMENTS` specifies a name, use it to find the feature in `ship/changes/`. If empty, look for the most recent feature in `ship/changes/` (excluding `archive/`) that has approved acceptance in `report.md`.
+- **Local mode**: If `$ARGUMENTS` specifies a name, use it to find the feature in `ship/changes/`. If empty, prefer the most recent feature in `ship/changes/` (excluding `archive/`) that has approved acceptance in `report.md`; if none is approved, fall back to the most recent feature folder (the direct fast path below will homologate it).
 
 ---
 
@@ -33,20 +33,42 @@ Identify the feature:
 
 ### 1. Verify acceptance
 
+`ship:pr` supports two entry paths:
+
+- **Post-homolog (normal):** the user already ran `/ship:homolog` and approved. The approval marker exists — proceed straight to PR creation.
+- **Direct (fast path):** the user invokes `/ship:pr` without having approved in homolog. **Invoking `/ship:pr` explicitly IS the acceptance approval** — do NOT stop, do NOT ask the user to run `/ship:homolog`, and do NOT ask for any confirmation. Instead, run the **Implicit homologation** sub-routine below (consolidate the quality report, post it, transition the issue to its completed state), then continue.
+
 **Linear mode:**
 - In parallel: use `mcp__linear-server__get_issue` to fetch the task issue AND `mcp__linear-server__list_comments` to fetch all issue comments — **cache this result** for reuse throughout this skill (Load artifacts, Quality Report Aggregation, and Step C below)
-- Verify the Homologation section in the cached comments contains:
-  ```
-  - [x] User approves for PR
-  ```
-- If NOT: inform the user they need to run `/ship:homolog` first and STOP.
+- Inspect the Homologation section in the cached comments:
+  - **If it contains `- [x] User approves for PR`:** acceptance was already recorded by homolog. Continue to Prerequisite 2.
+  - **If it does NOT:** run **Implicit homologation** (below), then continue to Prerequisite 2.
 
 **Local mode:**
-- Read `ship/changes/<feature>/report.md` and verify that the Homologation section has:
-  ```
-  - [x] User approves for PR
-  ```
-- If NOT: inform the user they need to run `/ship:homolog` first and STOP.
+- Read `ship/changes/<feature>/report.md` (if it exists) and inspect the Homologation section:
+  - **If it contains `- [x] User approves for PR`:** continue to Prerequisite 2.
+  - **If it does NOT, or `report.md` is absent:** run **Implicit homologation** (below), then continue to Prerequisite 2.
+
+#### Implicit homologation (direct fast path)
+
+Triggered **only** when the approval marker is absent. The user's explicit `/ship:pr` is the approval — record it as such, silently, and mirror `ship:homolog` Step 6.
+
+1. **Consolidate the quality report.** Read `.context/ship-run/<task-id>/phase-status.md` for the per-phase gate (take the **last row** per phase). For each WARN/FAIL phase, read its findings file (`perf-findings`, `security-findings`, `review-findings`). Apply @ship/patterns/lazy-load-findings.md and render per @ship/report-templates.md#quality-report. Keep the consolidated report **in memory** for reuse in the PR body (do not rely on re-reading it later).
+   - If the scratch dir / `phase-status.md` is missing (e.g., the pipeline ran in another context), produce a minimal report noting that gate data was unavailable, and proceed — do not block.
+2. **Record approval + close the issue:**
+   - **Linear mode** — in parallel:
+     - `mcp__linear-server__save_comment`: post the consolidated quality report as a comment, with the Homologation section set to:
+       ```
+       - [x] User has reviewed all changes
+       - [x] User has verified acceptance criteria
+       - [x] User approves for PR — Approved on YYYY-MM-DD (direct /ship:pr)
+       ```
+     - `mcp__linear-server__save_issue`: transition the issue to its completed state. **Do not pass the literal `"Done"`** — resolve the team's completed-state name per @ship/patterns/linear-status.md.
+
+       Then re-fetch `mcp__linear-server__list_comments` **once** and replace the cached result, so the downstream Quality Report Aggregation (Step 6) and Step C see the comment just posted.
+   - **Local mode:** write/update `ship/changes/<feature>/report.md` with the consolidated report and the same Homologation block, and mark `tasks.md` item 4.1 as completed.
+3. **Clean up** temporary findings files (`perf-findings`, `security-findings`, `review-findings`) — the data now lives in the comment/report.
+4. **Log to the user (no question):** "Direct PR — treated `/ship:pr` as homologation approval. Quality report posted and issue marked Done. Proceeding to PR creation."
 
 ### 2. Verify there are no pending changes
 
@@ -202,7 +224,7 @@ EOF
 > Use the **cached `list_comments` result** to confirm the quality report is present. If it is missing, warn the user (homolog did not complete properly).
 > The PR link comment was just posted above (Step B) — trust it succeeded unless the call returned an error.
 >
-> Do NOT change the issue status — it was already set to "Done" during homolog approval.
+> Do NOT change the issue status — it was already set to "Done" during homolog approval (or during the implicit homologation in Prerequisite 1).
 
 **Local mode:**
 1. Update `tasks.md`: mark item 4.2 (PR created) as completed
@@ -256,6 +278,6 @@ Inform the user:
 - **Resolve conflicts**: if there are conflicts during rebase, resolve them (ask for confirmation if ambiguous)
 - **Never force push**: unless the user explicitly requests it
 - **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
-- **Verify acceptance**: never create a PR without approved acceptance
+- **Verify acceptance**: never create a PR without recorded acceptance. Acceptance is recorded either by a prior `/ship:homolog` approval or, on the direct fast path, by the explicit `/ship:pr` invocation itself (which triggers implicit homologation in Prerequisite 1) — never silently skip posting the quality report and closing the issue
 - **Linear mode**: attach PR URL and post PR link comment — do NOT change issue status (already "Done" from homolog)
 - **Local mode**: archive the feature folder after PR creation
