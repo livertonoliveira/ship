@@ -97,7 +97,17 @@ On failure:
 
 ---
 
-## 6. Update artifacts
+## 6. Hygiene gate (MANDATORY — deterministic)
+
+The worker prompts forbid comments and spec IDs, but that is advice an LLM can slip on. Before you trust the diff, **verify it** with the deterministic gate — do not rely on the workers' word:
+
+@ship/patterns/hygiene-gate.md
+
+Dispatch the cleanup worker as `ship:ship-develop-implement` with `Mode: clean`. Do not proceed to step 7 while known comment/spec-ID hits remain in source files.
+
+---
+
+## 7. Update artifacts
 
 **Linear mode:** no local artifacts. Issue status was already set in step 2.
 
@@ -107,7 +117,7 @@ On failure:
 
 ---
 
-## 7. Append phase status
+## 8. Append phase status
 
 Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
 
@@ -117,12 +127,13 @@ Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exi
 
 ---
 
-## 8. Self-check before returning (MANDATORY)
+## 9. Self-check before returning (MANDATORY)
 
 Before you end your turn, verify out loud:
 
 1. **Did I dispatch a worker for every module?** Count the modules in `plan.md` (or 1, for the single-module fallback). Count the `ship-develop-implement` Agent tool calls you actually issued. If the counts do not match, you are not done — dispatch the missing workers now.
 2. **Did any source file actually change?** Run `git diff --stat` (the scratch dir is gitignored, so it won't show up). If the output is empty AND this was not a legitimate "already implemented" re-run, your workers did not run or did nothing — **do not report success**. Investigate, re-dispatch, or report the failure honestly to the caller.
+3. **Did the hygiene gate (step 6) run and pass?** You must have actually executed the grep scan, not assumed it. If it found hits, you must have dispatched a `Mode: clean` worker and re-scanned. Reporting success with an unrun gate — or with known hits still present — is a defect.
 
 If you reach the end of your turn having narrated a plan but issued **zero** Agent tool calls, stop and dispatch — returning in that state is a defect.
 

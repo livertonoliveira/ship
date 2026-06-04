@@ -79,6 +79,16 @@ Pass inline in each agent's prompt: `Artifact language`, `## Scenarios` subset f
 
 If some (not all) layers are disabled, after skip logs output: "Layers pulados por configuração: [&lt;list&gt;]. Para habilitá-los, edite `Test Scope` em `ship/config.md`."
 
+## 3b. Hygiene gate (MANDATORY — deterministic)
+
+Test workers are told never to put comments or spec IDs in test files, but that is advice an LLM can slip on. Before consolidating, **verify the generated test files** with the deterministic gate — do not rely on the workers' word:
+
+@ship/patterns/hygiene-gate.md
+
+For each flagged test file, dispatch the cleanup via the matching worker (`ship:ship-test-unit` / `ship:ship-test-integration` / `ship:ship-test-e2e`) with `Mode: clean`. Do not proceed while known comment/spec-ID hits remain in test files.
+
+---
+
 ## 4. Consolidate and write test-failures.md
 
 After agents complete, write `.context/ship-run/<task-id>/test-failures.md` (skip in standalone mode):
@@ -96,4 +106,8 @@ Report to the user: tests created, passed, and failed per layer.
 
 ## 5. Self-check before returning (MANDATORY)
 
-Before you end your turn, verify out loud: for every layer marked `enabled` in Test Scope, did you actually issue a `ship-test-*` Agent tool call? If you skipped an enabled layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now. Returning in that state is a defect.
+Before you end your turn, verify out loud:
+1. For every layer marked `enabled` in Test Scope, did you actually issue a `ship-test-*` Agent tool call? If you skipped an enabled layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now.
+2. Did the hygiene gate (step 3b) actually run, and did you remediate any hits it found? Reporting success with an unrun gate — or with known comment/spec-ID hits still in test files — is a defect.
+
+Returning in either unfinished state is a defect.

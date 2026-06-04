@@ -23,6 +23,12 @@ You are the Ship unit test worker. Your mission: generate and run unit tests for
 
 ---
 
+## 1b. Clean mode (Mode: clean)
+
+If `$ARGUMENTS` opens with `Mode: clean`, you are remediating hygiene-gate hits — **not** generating tests. Read each file in the `## Violations` list, **remove every comment** (line, block, JSDoc, marker) and **strip every spec ID / Linear key** (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) wherever it appears — including `describe`/`it`/`test` names, suite/class/method names, and string literals. When an ID lives in a test name, **rename** the test to describe the behavior it asserts. Change nothing else: do not add, remove, or reorder tests; do not reformat; leave legitimate tokens like `UTF-8` in a string untouched. Skip sections 2–3 and report the cleaned files.
+
+---
+
 ## 2. Discover test patterns
 
 > **Guard**: Skip this section entirely if `## Source` was injected inline by the caller. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
