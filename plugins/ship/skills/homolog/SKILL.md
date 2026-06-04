@@ -265,7 +265,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -273,7 +273,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -805,7 +805,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -813,7 +813,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -1357,7 +1357,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -1365,7 +1365,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -2077,7 +2077,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -2085,7 +2085,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -2617,7 +2617,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -2625,7 +2625,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -3170,7 +3170,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -3178,7 +3178,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema

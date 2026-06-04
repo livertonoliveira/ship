@@ -96,10 +96,7 @@ Resolve diff and stack:
 2. Glob for test files: `**/*.test.ts`, `**/*.spec.ts`, `**/*.test.js`, `**/*.spec.js`, `**/__tests__/**/*.ts`, `**/__tests__/**/*.js` (adapt extensions to the detected stack).
 3. For each test file, extract: test names (strings in `it(`, `test(`, `describe(` blocks) and build a keyword set.
 
-**Override marker detection:**
-- Scan all changed source files for comments containing `IMPL-REQ-\d+` or `IMPL-SC-\d+` (e.g., `// IMPL-REQ-05`, `// IMPL-SC-12`).
-- Scan all test files for comments containing `TEST-REQ-\d+`, `TEST-AC-\d+`, or `TEST-SC-\d+` (e.g., `// TEST-REQ-03`, `// TEST-AC-03`, `// TEST-SC-08`).
-- Record these markers — they bypass keyword matching in Step 3.
+> **No marker scanning.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `TEST-SC-XX`, etc.) into source or test files — see `ship-develop-implement` and the `ship-test-*` agents — so analyze never looks for them. Naming carries the meaning; if naming diverges from spec wording, the correct fix is to **rename the code**, not to annotate it.
 
 ---
 
@@ -135,12 +132,10 @@ Both agents write their results to the scratch dir or return them inline. Step 3
 **Requirement → code mapping (keyword Jaccard similarity):**
 
 For each `REQ-XX`:
-1. If `IMPL-REQ-XX` marker found in any code file → set confidence = 1.0 (skip matching).
-2. Otherwise:
-   - Build the requirement keyword set: tokenize the REQ-XX description.
-   - For each changed file's keyword set: compute Jaccard similarity = `|intersection| / |union|`.
-   - Best match confidence = highest Jaccard score across all files.
-   - Best match file = the file with the highest score.
+- Build the requirement keyword set: tokenize the REQ-XX description.
+- For each changed file's keyword set: compute Jaccard similarity = `|intersection| / |union|`.
+- Best match confidence = highest Jaccard score across all files.
+- Best match file = the file with the highest score.
 
 **Criterion → test mapping (keyword matching with Test Scope filtering):**
 
@@ -152,11 +147,9 @@ Classify test files by layer before matching:
 For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
 1. If the layer is **disabled** in `test_scope` → do NOT emit a finding for missing coverage in this layer. Instead, record the AC-ID in `informational_disabled_layers[layer]` (e.g., `{ integration: [AC-03, AC-07], e2e: [AC-01, AC-03] }`). Skip all further matching for this layer.
 2. If the layer is **enabled** in `test_scope`:
-   a. If `TEST-REQ-XX` or `TEST-AC-XX` marker found in any test file for this layer → set test confidence = 1.0 (skip matching).
-   b. Otherwise:
-      - Build the criterion keyword set: tokenize the AC-XX description.
-      - For each test file in this layer's keyword set: compute Jaccard similarity.
-      - Layer confidence = highest Jaccard score across all files in this layer.
+   - Build the criterion keyword set: tokenize the AC-XX description.
+   - For each test file in this layer's keyword set: compute Jaccard similarity.
+   - Layer confidence = highest Jaccard score across all files in this layer.
 
 Overall AC coverage confidence: use the **best match across ALL enabled layers only**.
 
@@ -165,10 +158,7 @@ Overall AC coverage confidence: use the **best match across ALL enabled layers o
 Skip this tier entirely if the spec has no `@SC-\d+` scenarios. Otherwise, for each `SC-XX` evaluate **only the single layer named in its `@layer` tag** (the scenario already declares its owning layer — this is more precise than the AC heuristic across all layers):
 
 1. If that layer is **disabled** in `test_scope` → do NOT emit a finding. Record the SC-ID in `informational_disabled_layers[layer]` alongside any ACs. Skip further matching for this scenario.
-2. If the layer is **enabled**:
-   a. If a `TEST-SC-XX` marker is found in any test file in this layer → scenario confidence = 1.0.
-   b. Else if a `TEST-AC-YY` or `TEST-REQ` marker for this scenario's parent AC (`sc.ac`) is found in this layer → scenario confidence = 0.8 (AC-level coverage gives partial credit; scenario-specificity is unverified). This preserves backward compatibility for teams already using AC markers.
-   c. Otherwise: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
+2. If the layer is **enabled**: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
 
 **Jaccard cache save (after computing):**
 
@@ -270,15 +260,7 @@ Uses Core Web Vitals thresholds:
 | low | Acceptance criterion has low confidence test match — coverage uncertain | AC-12 mentioned in unrelated test, confidence 0.1 |
 | low | Scenario has low confidence test match — coverage uncertain | SC-04 loosely matched, confidence 0.2 |
 
-### Override Markers
-
-To assert known-correct coverage and bypass keyword matching:
-- `IMPL-REQ-XX` in source code → forces requirement confidence to 1.0 (implemented)
-- `IMPL-SC-XX` in source code → hint that a scenario's behavior lives in divergently-named code (does not by itself prove a test exists)
-- `TEST-REQ-XX` / `TEST-AC-XX` in test file → forces criterion confidence to 1.0 (tested); grants child scenarios 0.8 partial credit
-- `TEST-SC-XX` in test file → forces scenario `SC-XX` confidence to 1.0 (tested)
-
-Use override markers when requirement names don't match code naming conventions (e.g., spec says "cache invalidation" but code uses "eviction").
+> **No override markers.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so the drift/coverage analyzers never scan for them. When requirement names don't match code naming (e.g., spec says "cache invalidation" but code uses "eviction"), the item surfaces as **uncertain** — the fix is to rename the code/test to match the spec vocabulary, never to annotate it with a marker comment.
 
 ## Severity Overrides
 
@@ -512,7 +494,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -520,7 +502,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -1062,27 +1044,27 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 ### [CRITICAL] Requisito não implementado: REQ-03
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-03: <description>" não possui implementação identificada no diff.
-- **Sugestão:** Implemente o requisito REQ-03 ou adicione o marcador `IMPL-REQ-03` no arquivo correspondente.
+- **Sugestão:** Implemente o requisito REQ-03 no arquivo correspondente.
 - **Requirement ID:** REQ-03
 
 ### [HIGH] Implementação incerta: REQ-02
 - **Categoria:** DRIFT
 - **Arquivo:** src/utils/helpers.ts
 - **Descrição:** O requisito "REQ-02" possui correspondência com baixa confiança (0.30). A implementação pode estar incompleta ou mal nomeada.
-- **Sugestão:** Verifique se `src/utils/helpers.ts` implementa REQ-02 corretamente, ou adicione o marcador `IMPL-REQ-02`.
+- **Sugestão:** Verifique se `src/utils/helpers.ts` implementa REQ-02 corretamente. Se a implementação existe mas o nome diverge do texto do requisito, renomeie o código para refletir o requisito (nunca anote com comentários).
 - **Requirement ID:** REQ-02
 
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03: <description>" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador `TEST-AC-03`.
+- **Sugestão:** Crie um teste para o critério AC-03.
 - **Criterion ID:** AC-03
 
 ### [MEDIUM] Cenário sem cobertura: SC-03
 - **Categoria:** SCENARIO
 - **Camada:** integration
 - **Descrição:** O cenário "SC-03 → AC-02: <scenario name>" não possui teste identificado na camada `integration`.
-- **Sugestão:** Crie um teste para o cenário SC-03 ou adicione o marcador `TEST-SC-03` no teste correspondente.
+- **Sugestão:** Crie um teste para o cenário SC-03 na camada `integration`.
 - **Scenario ID:** SC-03
 - **Criterion ID:** AC-02
 
@@ -1340,7 +1322,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -1348,7 +1330,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -1736,19 +1718,17 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 
 3. **Confidence thresholds**: confidence ≥ 0.5 = implemented/tested; 0 < confidence < 0.5 = uncertain; confidence = 0 = unimplemented/uncovered.
 
-4. **IMPL-REQ-XX / IMPL-SC-XX override**: if `IMPL-REQ-XX` is found in any source file in the diff, set confidence = 1.0 for REQ-XX without keyword matching. `IMPL-SC-XX` is an optional hint that the scenario's behavior lives in code whose naming diverges — it does not by itself prove a test exists. This is the canonical way to assert known-correct implementation when naming conventions diverge.
+4. **No marker overrides**: correlation is keyword-based only. Ship never writes spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so analyze never scans for them and never grants confidence based on them. When code or a test exists but its naming diverges from the spec wording, it surfaces as **uncertain** (0 < confidence < 0.5) — the fix is to **rename the code/test** to match the requirement, never to annotate it with a marker comment.
 
-5. **TEST-XX override**: if `TEST-REQ-XX`, `TEST-AC-XX`, or `TEST-SC-XX` is found in any test file, set test confidence = 1.0 for the corresponding item. `TEST-SC-XX` forces scenario `SC-XX` to 1.0. A `TEST-AC-YY`/`TEST-REQ` marker for a scenario's parent AC grants that scenario **0.8** partial credit (not 1.0) — scenario-specificity is unverified. Same rationale as IMPL-REQ-XX.
+5. **Gate enforcement**: gate FAIL → pipeline blocks before `homolog`; gate WARN → pipeline pauses and asks the user before continuing; gate PASS → continue to `homolog`. Respect `on_fail` and `on_warn` settings from `ship/config.md → Gate Behavior`.
 
-6. **Gate enforcement**: gate FAIL → pipeline blocks before `homolog`; gate WARN → pipeline pauses and asks the user before continuing; gate PASS → continue to `homolog`. Respect `on_fail` and `on_warn` settings from `ship/config.md → Gate Behavior`.
+6. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace. If no workspace prefix is found, analyze the full repo.
 
-7. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace. If no workspace prefix is found, analyze the full repo.
+7. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
 
-8. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
+8. **Test Scope awareness**: Before emitting any coverage finding (category: TEST or SCENARIO), check whether the test layer is enabled in `ship/config.md → Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in the informational block (`## Disabled Layers — Informational`). If `Test Scope` is absent from config, treat all layers as enabled (preserve existing behavior).
 
-9. **Test Scope awareness**: Before emitting any coverage finding (category: TEST or SCENARIO), check whether the test layer is enabled in `ship/config.md → Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in the informational block (`## Disabled Layers — Informational`). If `Test Scope` is absent from config, treat all layers as enabled (preserve existing behavior).
-
-10. **Scenario backward compatibility**: detection is presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before this feature. Never infer or fabricate scenarios.
+9. **Scenario backward compatibility**: detection is presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before this feature. Never infer or fabricate scenarios.
 
 ---
 
@@ -1788,23 +1768,16 @@ Append a row to `.context/ship-run/<task-id>/phase-status.md`:
 
 ---
 
-### Example 3 — Override markers in code
+### Example 3 — Naming divergence surfaces as uncertain
 
 Spec contains:
 ```
 REQ-07: Cache invalidation on entity update
 ```
 
-Code uses `eviction` instead of `invalidation`:
+Code uses `eviction` instead of `invalidation` (no comments, as Ship requires):
 ```typescript
-// IMPL-REQ-07
 function evictCacheOnUpdate(entityId: string) { ... }
 ```
 
-Test uses:
-```typescript
-// TEST-SC-07
-it('should evict cache when entity is updated', () => { ... })
-```
-
-Result: REQ-07 gets confidence = 1.0 (IMPL-REQ-07 marker found). SC-07 gets scenario confidence = 1.0 (TEST-SC-07 marker found); its parent AC is covered transitively. No gaps reported for REQ-07 or SC-07.
+Correlation is pure Jaccard: `invalidation`/`eviction` share no tokens, so REQ-07 scores low and is reported as **uncertain** (DRIFT, HIGH). The fix is to **rename the code** to match the requirement vocabulary (e.g., `invalidateCacheOnUpdate`) — never to add an `// IMPL-REQ-07` marker. Once renamed, the keyword overlap rises and the next analyze run shows REQ-07 as implemented. The same applies to tests whose naming diverges from the scenario wording.
