@@ -80,10 +80,11 @@ Exclude `node_modules/`, `.cache/`, `dist/`, `build/` directories.
    - Files in `__tests__/integration/`, `*.integration.test.*`, `*.e2e-spec.*` (NestJS) → `integration`
    - Files in `__tests__/e2e/`, `*.e2e.test.*`, Cypress/Playwright files → `e2e`
    - If layer is ambiguous → `unit` (conservative)
-3. Check for explicit coverage markers: `TEST-REQ-XX`, `TEST-AC-XX`, or `TEST-SC-XX` in comments or test names.
-4. Build a keyword set per test: split test name tokens + file path tokens. Lowercase all.
+3. Build a keyword set per test: split test name tokens + file path tokens. Lowercase all.
 
-**Output:** Structured list of `{ file, layer, markers[], testNames[], keywords[] }` for each test file.
+> **No marker scanning.** Correlation is keyword-based only. Ship's `ship-test-*` agents never emit `TEST-REQ-XX`/`TEST-AC-XX`/`TEST-SC-XX` marker comments (or any comments) into test files, so this audit does not look for them.
+
+**Output:** Structured list of `{ file, layer, testNames[], keywords[] }` for each test file.
 
 ---
 
@@ -97,15 +98,11 @@ After both agents complete, run correlation for each enabled Test Scope layer.
 
 | Condition | Confidence |
 |-----------|-----------|
-| Explicit marker `TEST-AC-XX` or `TEST-REQ-XX` found in a test in this layer | 1.0 |
 | Jaccard similarity >= 0.5 between AC keywords and any test keywords in this layer | 0.5–1.0 (proportional) |
 | Jaccard similarity 0.3–0.49 | 0.3–0.49 (uncertain) |
 | No test match (Jaccard < 0.3) | 0.0 |
 
-**Scenario → test correlation:** for each `SC-XX`, evaluate **only the single layer named in its `@layer` tag**:
-- 1.0 if `TEST-SC-XX` marker found in that layer
-- 0.8 if a `TEST-AC`/`TEST-REQ` marker for its parent AC found in that layer (partial credit)
-- Otherwise: Jaccard within that layer
+**Scenario → test correlation:** for each `SC-XX`, evaluate **only the single layer named in its `@layer` tag**: Jaccard between the scenario's Gherkin-aware keyword set and each test's keyword set within that layer.
 
 Skip the scenario tier entirely if the spec has no `@SC-XX`.
 
