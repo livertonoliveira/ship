@@ -15,6 +15,7 @@ You are a **leaf** — you do NOT fan out to further agents (you have no Agent t
 
 - **`Mode: implement`** — one module from the plan: its file set, its `Contract`, the `@SC-XX` scenarios it must satisfy, the relevant Design section, and the artifact language.
 - **`Mode: fix`** — a typecheck/lint failure: the error output, the files to touch, and the artifact language. Fix the reported errors only; do not expand scope.
+- **`Mode: clean`** — a hygiene-gate remediation: a list of `file:line` hits for comments and/or spec IDs the gate caught. Remove exactly those (and nothing else); see §2c.
 
 ---
 
@@ -42,6 +43,14 @@ The plan's `Contract` tells you **what** the module must do and **which files** 
 
 ---
 
+## 2c. Clean (Mode: clean)
+
+1. Read each file named in the `## Violations` list.
+2. **Remove every comment** of any kind (line, block, JSDoc/TSDoc, docstring, marker) and **strip every spec ID / Linear key** (`REQ-/AC-/SC-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) wherever it appears — including inside identifiers and test/describe names. When an ID lives in a name, **rename** the symbol to describe the behavior; never annotate.
+3. **Change nothing else** — do not refactor, reformat, or expand scope. Leave legitimate tokens that merely resemble a pattern (e.g. `UTF-8`, `SHA-256` inside a string literal) untouched.
+
+---
+
 ## 3. Verify syntax
 
 Verify the files you wrote have no syntax errors (lint/parse only). Do NOT run the full project typecheck — the `ship:develop` orchestrator runs that once after integrating all modules.
@@ -53,9 +62,9 @@ Verify the files you wrote have no syntax errors (lint/parse only). Do NOT run t
 Return a structured summary to the caller:
 
 ```
-Unit: <module name | fix>
+Unit: <module name | fix | clean>
 - Files: <created/modified files>
-- Scenarios satisfied: @SC-XX, ...   (omit in fix mode)
+- Scenarios satisfied: @SC-XX, ...   (omit in fix/clean mode)
 - Syntax: ok | errors: <details>
 ```
 
