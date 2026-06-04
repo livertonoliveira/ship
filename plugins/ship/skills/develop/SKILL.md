@@ -118,6 +118,10 @@ Artifact language: <artifact_language>
 
 ## Design
 <only the Design subsection relevant to this module>
+
+## Constraints
+- Zero comments of any kind (no JSDoc/TSDoc, no "why" comments, no `// TODO`, no marker comments).
+- Zero spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`) and zero Linear issue keys anywhere in source. Naming carries the meaning.
 ```
 
 For the **single-module fallback** (no `plan.md`), dispatch one worker with the full inline spec/design as its `## Module` context.
