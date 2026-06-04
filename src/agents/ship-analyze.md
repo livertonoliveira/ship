@@ -86,10 +86,7 @@ Steps 1 and 2 are independent and **MUST run in parallel** via the Agent tool (s
 - **integration**: files matching `*.integration.test.*`, `*.integration.spec.*`, or located under `__tests__/integration/`.
 - **e2e**: files matching `*.e2e.*`, `*.e2e-spec.*`, or located under `e2e/`, `cypress/`, or `playwright/`.
 
-**Override marker detection:**
-- Scan all changed source files for comments containing `IMPL-REQ-\d+` or `IMPL-SC-\d+` (e.g., `// IMPL-REQ-05`, `// IMPL-SC-12`).
-- Scan all test files for comments containing `TEST-REQ-\d+`, `TEST-AC-\d+`, or `TEST-SC-\d+` (e.g., `// TEST-REQ-03`, `// TEST-AC-03`, `// TEST-SC-08`).
-- Record these markers — they bypass keyword matching in Step 3.
+> **No marker scanning.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `TEST-SC-XX`, etc.) into source or test files — see `ship-develop-implement` and the `ship-test-*` agents — so analyze never looks for them. Naming carries the meaning; if naming diverges from spec wording, the correct fix is to **rename the code**, not to annotate it.
 
 ---
 
@@ -122,23 +119,19 @@ Each agent returns its result inline. The orchestrator does NOT re-read files wr
 ### 6.2 Requirement → code mapping (Jaccard similarity)
 
 For each `REQ-XX`:
-1. If `IMPL-REQ-XX` marker found in any code file → set confidence = 1.0 (skip matching).
-2. Otherwise:
-   - Build the requirement keyword set: tokenize the REQ-XX description.
-   - For each changed file's keyword set: compute Jaccard similarity = `|intersection| / |union|`.
-   - Best match confidence = highest Jaccard score across all files.
-   - Best match file = file with the highest score.
+- Build the requirement keyword set: tokenize the REQ-XX description.
+- For each changed file's keyword set: compute Jaccard similarity = `|intersection| / |union|`.
+- Best match confidence = highest Jaccard score across all files.
+- Best match file = file with the highest score.
 
 ### 6.3 Criterion → test mapping (Test Scope-aware)
 
 For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
 1. If the layer is **disabled** in `test_scope` → do NOT emit a finding for missing coverage in this layer. Instead, record the AC-ID in `informational_disabled_layers[layer]` (e.g., `{ integration: [AC-03, AC-07] }`). Skip all further matching for this layer.
 2. If the layer is **enabled**:
-   a. If `TEST-REQ-XX` or `TEST-AC-XX` marker found in any test file for this layer → set test confidence = 1.0 (skip matching).
-   b. Otherwise:
-      - Build the criterion keyword set: tokenize the AC-XX description.
-      - For each test file in this layer's keyword set: compute Jaccard similarity.
-      - Layer confidence = highest Jaccard score across all files in this layer.
+   - Build the criterion keyword set: tokenize the AC-XX description.
+   - For each test file in this layer's keyword set: compute Jaccard similarity.
+   - Layer confidence = highest Jaccard score across all files in this layer.
 
 Overall AC coverage confidence: the **best match across ALL enabled layers only**.
 
@@ -147,10 +140,7 @@ Overall AC coverage confidence: the **best match across ALL enabled layers only*
 Skip this tier entirely if the spec has no `@SC-\d+` scenarios. Otherwise, for each `SC-XX` evaluate **only the single layer named in its `@layer` tag**:
 
 1. If that layer is **disabled** in `test_scope` → do NOT emit a finding. Record the SC-ID in `informational_disabled_layers[layer]` alongside any ACs. Skip further matching for this scenario.
-2. If the layer is **enabled**:
-   a. If a `TEST-SC-XX` marker is found in any test file in this layer → scenario confidence = 1.0.
-   b. Else if a `TEST-AC-YY` or `TEST-REQ` marker for this scenario's parent AC (`sc.ac`) is found in this layer → scenario confidence = 0.8 (AC-level coverage gives partial credit; scenario-specificity is unverified). This preserves backward compatibility for teams already using AC markers.
-   c. Otherwise: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
+2. If the layer is **enabled**: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
 
 ### 6.5 Jaccard cache save (pipeline mode only)
 
@@ -256,27 +246,27 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 ### [CRITICAL] Requisito não implementado: REQ-03
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-03: <description>" não possui implementação identificada no diff.
-- **Sugestão:** Implemente o requisito REQ-03 ou adicione o marcador `IMPL-REQ-03` no arquivo correspondente.
+- **Sugestão:** Implemente o requisito REQ-03 no arquivo correspondente.
 - **Requirement ID:** REQ-03
 
 ### [HIGH] Implementação incerta: REQ-02
 - **Categoria:** DRIFT
 - **Arquivo:** src/utils/helpers.ts
 - **Descrição:** O requisito "REQ-02" possui correspondência com baixa confiança (0.30). A implementação pode estar incompleta ou mal nomeada.
-- **Sugestão:** Verifique se `src/utils/helpers.ts` implementa REQ-02 corretamente, ou adicione o marcador `IMPL-REQ-02`.
+- **Sugestão:** Verifique se `src/utils/helpers.ts` implementa REQ-02 corretamente. Se a implementação existe mas o nome diverge do texto do requisito, renomeie o código para refletir o requisito (nunca anote com comentários).
 - **Requirement ID:** REQ-02
 
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03: <description>" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador `TEST-AC-03`.
+- **Sugestão:** Crie um teste para o critério AC-03.
 - **Criterion ID:** AC-03
 
 ### [MEDIUM] Cenário sem cobertura: SC-03
 - **Categoria:** SCENARIO
 - **Camada:** integration
 - **Descrição:** O cenário "SC-03 → AC-02: <scenario name>" não possui teste identificado na camada `integration`.
-- **Sugestão:** Crie um teste para o cenário SC-03 ou adicione o marcador `TEST-SC-03` no teste correspondente.
+- **Sugestão:** Crie um teste para o cenário SC-03 na camada `integration`.
 - **Scenario ID:** SC-03
 - **Criterion ID:** AC-02
 
@@ -344,12 +334,11 @@ Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exi
 1. **Always determine storage mode first** (from injected context or `ship/config.md`). Never assume Linear or Local mode.
 2. **Parallelism**: Steps 1 and 2 MUST run in parallel via the Agent tool — never sequentially.
 3. **Confidence thresholds**: ≥ 0.5 = implemented/tested; 0 < confidence < 0.5 = uncertain; = 0 = unimplemented/uncovered.
-4. **IMPL-REQ-XX / IMPL-SC-XX override**: if `IMPL-REQ-XX` is found in any source file in the diff, set REQ-XX confidence = 1.0 without keyword matching. `IMPL-SC-XX` is an optional hint that the scenario's behavior lives in code whose naming diverges — it does not by itself prove a test exists.
-5. **TEST-XX override**: `TEST-REQ-XX` / `TEST-AC-XX` / `TEST-SC-XX` markers set test confidence = 1.0 for the corresponding item. A `TEST-AC-YY` or `TEST-REQ` marker for a scenario's parent AC grants that scenario **0.8** partial credit (not 1.0) — scenario-specificity is unverified.
-6. **Gate enforcement**: gate FAIL → caller's `on_fail` flow; gate WARN → caller's `on_warn` flow; gate PASS → continue. Respect `Gate Behavior` from `ship/config.md`.
-7. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace. If no workspace prefix is found, analyze the full repo.
-8. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
-9. **Test Scope awareness**: before emitting any coverage finding (TEST or SCENARIO), check the layer in `Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in `## Disabled Layers — Informational`. If `Test Scope` is absent, treat all layers as enabled.
-10. **Scenario backward compatibility**: detection is presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before. Never infer or fabricate scenarios.
-11. **Language**: use the `Artifact language` passed by the caller for all user-facing output (reports, summaries, gate results). Code, identifiers, file paths, and the Gherkin keywords/tags themselves are always English.
-12. **Read efficiency**: do NOT re-read files after Edit/Write. Re-read only if explicitly requested or compaction is suspected.
+4. **No marker overrides**: correlation is keyword-based only. Ship never writes spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so analyze never scans for them and never grants confidence based on them. When code or a test exists but its naming diverges from the spec wording, it surfaces as **uncertain** (0 < confidence < 0.5) — the fix is to **rename the code/test** to match the requirement, never to annotate it with a marker comment.
+5. **Gate enforcement**: gate FAIL → caller's `on_fail` flow; gate WARN → caller's `on_warn` flow; gate PASS → continue. Respect `Gate Behavior` from `ship/config.md`.
+6. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace. If no workspace prefix is found, analyze the full repo.
+7. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
+8. **Test Scope awareness**: before emitting any coverage finding (TEST or SCENARIO), check the layer in `Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in `## Disabled Layers — Informational`. If `Test Scope` is absent, treat all layers as enabled.
+9. **Scenario backward compatibility**: detection is presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before. Never infer or fabricate scenarios.
+10. **Language**: use the `Artifact language` passed by the caller for all user-facing output (reports, summaries, gate results). Code, identifiers, file paths, and the Gherkin keywords/tags themselves are always English.
+11. **Read efficiency**: do NOT re-read files after Edit/Write. Re-read only if explicitly requested or compaction is suspected.

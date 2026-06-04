@@ -488,7 +488,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [MEDIUM] Critério sem cobertura de teste: AC-03
 - **Categoria:** TEST
 - **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03 ou adicione o marcador TEST-AC-03.
+- **Sugestão:** Crie um teste para o critério AC-03.
 ```
 
 #### FAIL (critical findings)
@@ -496,7 +496,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL
 - **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 ou adicione o marcador IMPL-REQ-05 no arquivo.
+- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
 ### JSON Schema
@@ -916,15 +916,7 @@ Uses Core Web Vitals thresholds:
 | low | Acceptance criterion has low confidence test match — coverage uncertain | AC-12 mentioned in unrelated test, confidence 0.1 |
 | low | Scenario has low confidence test match — coverage uncertain | SC-04 loosely matched, confidence 0.2 |
 
-### Override Markers
-
-To assert known-correct coverage and bypass keyword matching:
-- `IMPL-REQ-XX` in source code → forces requirement confidence to 1.0 (implemented)
-- `IMPL-SC-XX` in source code → hint that a scenario's behavior lives in divergently-named code (does not by itself prove a test exists)
-- `TEST-REQ-XX` / `TEST-AC-XX` in test file → forces criterion confidence to 1.0 (tested); grants child scenarios 0.8 partial credit
-- `TEST-SC-XX` in test file → forces scenario `SC-XX` confidence to 1.0 (tested)
-
-Use override markers when requirement names don't match code naming conventions (e.g., spec says "cache invalidation" but code uses "eviction").
+> **No override markers.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so the drift/coverage analyzers never scan for them. When requirement names don't match code naming (e.g., spec says "cache invalidation" but code uses "eviction"), the item surfaces as **uncertain** — the fix is to rename the code/test to match the spec vocabulary, never to annotate it with a marker comment.
 
 ## Severity Overrides
 
