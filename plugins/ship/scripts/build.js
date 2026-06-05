@@ -10,8 +10,10 @@ const REPO_ROOT = path.resolve(PLUGIN_ROOT, '..', '..');
 const SOURCE_ROOT = path.join(REPO_ROOT, 'src');
 const SOURCE_SKILLS = path.join(SOURCE_ROOT, 'skills');
 const SOURCE_AGENTS = path.join(SOURCE_ROOT, 'agents');
+const SOURCE_HOOKS = path.join(SOURCE_ROOT, 'hooks');
 const OUTPUT_SKILLS = path.join(PLUGIN_ROOT, 'skills');
 const OUTPUT_AGENTS = path.join(PLUGIN_ROOT, 'agents');
+const OUTPUT_HOOKS = path.join(PLUGIN_ROOT, 'hooks');
 
 const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/([^\s)]+\.md)/;
@@ -112,10 +114,29 @@ function buildAgents() {
   return count;
 }
 
+function buildHooks() {
+  fs.rmSync(OUTPUT_HOOKS, { recursive: true, force: true });
+  if (!fs.existsSync(SOURCE_HOOKS)) return 0;
+  fs.mkdirSync(OUTPUT_HOOKS, { recursive: true });
+  let count = 0;
+
+  for (const entry of fs.readdirSync(SOURCE_HOOKS, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const src = path.join(SOURCE_HOOKS, entry.name);
+    const out = path.join(OUTPUT_HOOKS, entry.name);
+    fs.copyFileSync(src, out);
+    if (entry.name.endsWith('.sh')) fs.chmodSync(out, 0o755);
+    console.log(`✓ hooks/${entry.name}`);
+    count++;
+  }
+  return count;
+}
+
 function main() {
   const skillCount = buildSkills();
   const agentCount = buildAgents();
-  console.log(`\nBuild concluído. ${skillCount} SKILL.md + ${agentCount} agents gerados em ${path.relative(REPO_ROOT, PLUGIN_ROOT)}/.`);
+  const hookCount = buildHooks();
+  console.log(`\nBuild concluído. ${skillCount} SKILL.md + ${agentCount} agents + ${hookCount} hooks gerados em ${path.relative(REPO_ROOT, PLUGIN_ROOT)}/.`);
 }
 
 main();
