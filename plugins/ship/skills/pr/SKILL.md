@@ -175,6 +175,15 @@ Fields that **replace or add to** the base template per domain:
 - **Requires migration:** <Yes | No>                                   # adds
 ```
 
+**Tests audit** (`audit/tests.md`) — category: `TEST`
+```markdown
+- **Layer:** <unit | integration | e2e>                                # adds
+- **Current confidence:** <0.0–1.0>                                    # adds
+- **Closest test match:** <path or none>                               # adds
+- **Effort:** <Hours | Days>                                           # adds
+- **Suggestion:** <Fix snippet — example test that would cover the AC/SC>  # specializes Suggestion
+```
+
 ---
 
 ## Finding JSON Schema {#finding-schema}
@@ -228,6 +237,16 @@ Base schema. Applies to all domains.
 }
 ```
 
+**Tests audit** — additional fields:
+```json
+{
+  "layer": "unit|integration|e2e",
+  "currentConfidence": 0.0,
+  "closestTestMatch": "path | none",
+  "effort": "Hours|Days"
+}
+```
+
 ---
 
 ## Drift Analysis Findings {#drift-findings}
@@ -242,7 +261,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Category | IMPL \| TEST \| SCENARIO \| DRIFT | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match |
 | File | path or — | Source file where the issue was detected |
 | Description | string | What is missing or mismatched |
-| Suggestion | string | How to fix: implement the req, add a test, or add an override marker |
+| Suggestion | string | How to fix: implement the requirement or add the missing test |
 | Requirement ID | REQ-XX or — | Linked requirement, if applicable |
 | Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
 | Scenario ID | SC-XX or — | Linked scenario, if applicable |
@@ -284,12 +303,14 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ```json
 {
   "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | DRIFT",
+  "category": "IMPL | TEST | SCENARIO | DRIFT",
   "title": "string",
   "description": "string",
   "suggestion": "string",
   "requirementId": "REQ-XX | null",
   "criterionId": "AC-XX | null",
+  "scenarioId": "SC-XX | null",
+  "layer": "unit | integration | e2e | null",
   "filePath": "string | null",
   "line": "number | null"
 }
@@ -971,6 +992,15 @@ Fields that **replace or add to** the base template per domain:
 - **Requires migration:** <Yes | No>                                   # adds
 ```
 
+**Tests audit** (`audit/tests.md`) — category: `TEST`
+```markdown
+- **Layer:** <unit | integration | e2e>                                # adds
+- **Current confidence:** <0.0–1.0>                                    # adds
+- **Closest test match:** <path or none>                               # adds
+- **Effort:** <Hours | Days>                                           # adds
+- **Suggestion:** <Fix snippet — example test that would cover the AC/SC>  # specializes Suggestion
+```
+
 ---
 
 ## Finding JSON Schema {#finding-schema}
@@ -1024,6 +1054,16 @@ Base schema. Applies to all domains.
 }
 ```
 
+**Tests audit** — additional fields:
+```json
+{
+  "layer": "unit|integration|e2e",
+  "currentConfidence": 0.0,
+  "closestTestMatch": "path | none",
+  "effort": "Hours|Days"
+}
+```
+
 ---
 
 ## Drift Analysis Findings {#drift-findings}
@@ -1038,7 +1078,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Category | IMPL \| TEST \| SCENARIO \| DRIFT | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match |
 | File | path or — | Source file where the issue was detected |
 | Description | string | What is missing or mismatched |
-| Suggestion | string | How to fix: implement the req, add a test, or add an override marker |
+| Suggestion | string | How to fix: implement the requirement or add the missing test |
 | Requirement ID | REQ-XX or — | Linked requirement, if applicable |
 | Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
 | Scenario ID | SC-XX or — | Linked scenario, if applicable |
@@ -1080,12 +1120,14 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ```json
 {
   "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | DRIFT",
+  "category": "IMPL | TEST | SCENARIO | DRIFT",
   "title": "string",
   "description": "string",
   "suggestion": "string",
   "requirementId": "REQ-XX | null",
   "criterionId": "AC-XX | null",
+  "scenarioId": "SC-XX | null",
+  "layer": "unit | integration | e2e | null",
   "filePath": "string | null",
   "line": "number | null"
 }
@@ -1514,6 +1556,15 @@ Fields that **replace or add to** the base template per domain:
 - **Requires migration:** <Yes | No>                                   # adds
 ```
 
+**Tests audit** (`audit/tests.md`) — category: `TEST`
+```markdown
+- **Layer:** <unit | integration | e2e>                                # adds
+- **Current confidence:** <0.0–1.0>                                    # adds
+- **Closest test match:** <path or none>                               # adds
+- **Effort:** <Hours | Days>                                           # adds
+- **Suggestion:** <Fix snippet — example test that would cover the AC/SC>  # specializes Suggestion
+```
+
 ---
 
 ## Finding JSON Schema {#finding-schema}
@@ -1567,6 +1618,16 @@ Base schema. Applies to all domains.
 }
 ```
 
+**Tests audit** — additional fields:
+```json
+{
+  "layer": "unit|integration|e2e",
+  "currentConfidence": 0.0,
+  "closestTestMatch": "path | none",
+  "effort": "Hours|Days"
+}
+```
+
 ---
 
 ## Drift Analysis Findings {#drift-findings}
@@ -1581,7 +1642,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Category | IMPL \| TEST \| SCENARIO \| DRIFT | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match |
 | File | path or — | Source file where the issue was detected |
 | Description | string | What is missing or mismatched |
-| Suggestion | string | How to fix: implement the req, add a test, or add an override marker |
+| Suggestion | string | How to fix: implement the requirement or add the missing test |
 | Requirement ID | REQ-XX or — | Linked requirement, if applicable |
 | Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
 | Scenario ID | SC-XX or — | Linked scenario, if applicable |
@@ -1623,12 +1684,14 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 ```json
 {
   "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | DRIFT",
+  "category": "IMPL | TEST | SCENARIO | DRIFT",
   "title": "string",
   "description": "string",
   "suggestion": "string",
   "requirementId": "REQ-XX | null",
   "criterionId": "AC-XX | null",
+  "scenarioId": "SC-XX | null",
+  "layer": "unit | integration | e2e | null",
   "filePath": "string | null",
   "line": "number | null"
 }
