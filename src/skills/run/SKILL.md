@@ -123,7 +123,7 @@ Then populate the canonical files in a single batch:
 
    Write the SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`.
 
-5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove whether `ship:develop` actually mutated anything. Same hashing mechanism as the pre-fix snapshot:
+5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove whether `ship:develop` actually mutated anything. This is the **authoritative per-file content-snapshot idiom** reused by steps 2.6 and the Surgical Re-run Procedure (each writes to its own `<name>.txt` and diffs two snapshots with `comm -13`):
 
    ```bash
    BASE=$(git merge-base origin/main HEAD)
@@ -144,64 +144,10 @@ Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 
 > **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
 
-Classify the diff **deterministically** (no LLM) using the rules below. Read `diff.md` from the scratch dir and `ship/config.md` for sensitive-path overrides.
+Run the deterministic classification exactly as specified in @ship/patterns/diff-classifier.md (metric bash, sensitive-path parsing, top-down rules, output, and log format).
 
-**Step 1 — Compute metrics** (run inline bash, no agent needed):
-
-```bash
-DIFF=".context/ship-run/<task-id>/diff.md"
-
-# Total changed lines (+/- excluding headers)
-LINES=$(grep -E '^[+-]' "$DIFF" | grep -Ev '^(\+\+\+|---)' | wc -l | tr -d ' ')
-
-# Logical files modified (excluding doc/config extensions)
-LOGICAL_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
-  | grep -Ev '\.(md|json|lock|txt|ya?ml)$' | sort -u | wc -l | tr -d ' ')
-
-# All modified files (to detect trivial-only)
-ALL_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' | sort -u | wc -l | tr -d ' ')
-DOC_ONLY_FILES=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
-  | grep -E '\.(md|json|lock|txt|ya?ml)$' | sort -u | wc -l | tr -d ' ')
-
-# New endpoint patterns
-NEW_ENDPOINTS=$(grep '^+' "$DIFF" | grep -Ev '^\+\+\+' \
-  | grep -cE 'route\(|app\.(get|post|put|patch|delete)\(|@(Get|Post|Put|Patch|Delete)\(' || true)
-```
-
-**Step 2 — Read sensitive paths** from `ship/config.md`:
-- If `## Sensitive Paths` section is present, parse non-comment lines starting with `- ` and strip the `- ` prefix → use as sensitive prefixes.
-- If section is absent, use defaults: `auth/`, `payment/`, `query`, `migrations/`.
-
-**Step 3 — Check sensitive path matches**:
-
-```bash
-SENSITIVE_HITS=$(grep '^+++ b/' "$DIFF" | sed 's|^+++ b/||' \
-  | grep -cE '^(auth/|payment/|query|migrations/)' || true)
-# (replace the grep -E pattern with the actual sensitive prefixes from step 2)
-```
-
-**Step 4 — Classify** (first match wins):
-
-| Check | Class |
-|-------|-------|
-| `ALL_FILES == DOC_ONLY_FILES` AND `SENSITIVE_HITS == 0` AND `LINES < 50` | `trivial` |
-| `LINES > 1000` OR `LOGICAL_FILES > 10` | `large` |
-| `LINES < 100` AND `LOGICAL_FILES <= 1` AND `NEW_ENDPOINTS == 0` | `minor` |
-| (everything else) | `normal` |
-
-**Step 5 — Write result**:
-
-```bash
-echo "<class>" > .context/ship-run/<task-id>/diff-class.txt
-```
-
-**Step 6 — Log to user**:
-
-```
-Diff class (baseline): <class> (<reason>)
-```
-
-Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines, no sensitive paths`).
+- **Inputs**: `.context/ship-run/<task-id>/diff.md` (the pre-develop baseline) and `ship/config.md` (`## Sensitive Paths` overrides).
+- **Outputs**: write the class word to `.context/ship-run/<task-id>/diff-class.txt`, then log `Diff class (baseline): <class> (<reason>)` (note the `(baseline)` qualifier — the pattern's default log line omits it).
 
 ### 1. Load task context
 
@@ -228,7 +174,7 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
 
    **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
 
-   **Determine the phases tier**: the Ship model-routing policy (see @ship/patterns/model-routing.md) runs the reasoning leaves on `sonnet` and the orchestrators on `haiku`. Quality phases (`perf`, `security`) run on `sonnet`; the `plan` phase runs on `sonnet`; `develop` and `test` are `haiku` orchestrators that fan out `sonnet` leaf workers (`ship-develop-implement`, `ship-test-*`); the pipeline orchestrator itself is `haiku`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (which is the standard case); if all enabled phases use only one model tier, use that single label.
+   **Determine the phases tier** from the Ship model-routing policy in @ship/patterns/model-routing.md. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -267,6 +213,8 @@ Where `<reason>` is a brief explanation (e.g., `only doc/config files, 12 lines,
    - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
    - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
    - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
+
+   **Language convention (applies to every phase dispatch below):** include the line `Artifact language: <artifact_language>` (resolved value from step 6) in each dispatched phase's inline context. Phase SKILL.md files use this injected value for all user-facing output and do NOT re-load `@ship/patterns/language.md`. The per-phase context blocks below show this line without repeating the rationale.
 
 > **MANDATORY — LINEAR MODE: Move issue to its started state before doing anything else**
 >
@@ -367,16 +315,9 @@ Storage mode: <linear|local>
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
-1. **Compute what develop actually changed** — compare the post-develop working tree against the `pre-develop-files.txt` snapshot captured in step 0.5:
+1. **Compute what develop actually changed** — run the content-snapshot idiom from step 0.5, writing to `post-develop-files.txt`, then diff it against the `pre-develop-files.txt` snapshot to list the files develop created or whose content changed this phase:
 
    ```bash
-   BASE=$(git merge-base origin/main HEAD)
-   git add -A -N
-   git diff "$BASE" --name-only | while read -r f; do
-     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
-   done | sort > .context/ship-run/<task-id>/post-develop-files.txt
-
-   # files develop created or whose content changed during this phase
    comm -13 .context/ship-run/<task-id>/pre-develop-files.txt \
             .context/ship-run/<task-id>/post-develop-files.txt | awk '{print $2}' | sort -u
    ```
@@ -403,7 +344,7 @@ Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+- Artifact language: `<artifact_language>`
 
 **The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
 
@@ -427,11 +368,11 @@ If any test fails after fix attempts:
 DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
 ```
 
-Apply the following adjustments **on top of** the effective phase set:
+Apply the per-class adjustments **on top of** the effective phase set exactly as specified in @ship/patterns/diff-classifier.md → "Behavior per Class" (which agents run, the log message, and the PASS rows to append to `phase-status.md`):
 
-- **`trivial`**: Skip all quality phases (`perf`, `security`, `review`). Log: `Diff trivial — fases de qualidade puladas`. Append a PASS row for each skipped phase to `phase-status.md` with notes `diff trivial — pulado`. Proceed directly to Phase 5 (gate=PASS).
-- **`minor`**: Skip `perf` and `review`. Launch only 1 combined security agent (covers all OWASP categories in a single pass). Log: `Diff minor — security combinado, perf/review pulados`. Append PASS rows for `perf` and `review` to `phase-status.md` with notes `diff minor — pulado`.
-- **`normal`** or **`large`**: No adjustment — proceed with the standard agent setup below.
+- **`trivial`**: all quality phases skipped → proceed directly to Phase 5 (gate=PASS).
+- **`minor`**: only 1 combined security agent runs (`perf`/`review` skipped).
+- **`normal`** or **`large`**: no adjustment — proceed with the standard agent setup below.
 
 Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-perf` (named agent, runs with full Sonnet reasoning).
@@ -478,7 +419,7 @@ Severity Overrides: <severity-overrides or "none">
 - Analyze the diff for this task only
 - Write findings to `.context/ship-run/<task-id>/review-findings.md` (canonical scratch-dir path). In Linear mode, **do NOT** create `ship/changes/<feature>/` — the scratch dir is the only allowed write location.
 - **Scratch dir:** `.context/ship-run/<task-id>/`
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+- Artifact language: `<artifact_language>`
 
 ### 5. GATE CHECK
 
@@ -517,42 +458,22 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Iteration limit**: Track a `$FIX_ITERATION` counter (starting at 1 for the first fix attempt). Before each fix attempt, check: if `$FIX_ITERATION > 3`, abort the pipeline immediately — inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária." Do NOT proceed to acceptance. Increment the counter after each fix.
 
-> **Applies to both `on_fail: fix` and `on_warn: fix`**: both paths share this procedure and all edge cases below.
+> **Rationale, edge cases, and scope mapping** for this procedure live in @ship/patterns/gates.md ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
 
-> **Why not `git diff <sha> HEAD`**: nothing is committed during the pipeline — `ship:develop` and the fix Agent both write to the working tree, and the first commit happens only in `ship:pr`. So HEAD never advances and `git diff <sha> HEAD` is always empty. The fix's changes are detected by comparing a per-file content snapshot of the working tree taken **before** the fix against one taken **after** it.
-
-**Pre-fix snapshot** — capture this **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first):
-
-```bash
-BASE=$(git merge-base origin/main HEAD)
-git add -A -N   # surface untracked files; scratch dir is gitignored and never added
-git diff "$BASE" --name-only | while read -r f; do
-  printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
-done | sort > .context/ship-run/<task-id>/pre-fix-files.txt
-```
+**Pre-fix snapshot** — run the content-snapshot idiom from step 0.5, writing to `.context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
 
 After the fix agent completes, determine which quality phases to re-run:
 
 1. **Read `on_fail_rerun`** from `ship/config.md → Gate Behavior` (values: `surgical` | `all`, default: `surgical` if absent).
 
-2. **Compute the set of files the fix changed** (snapshot diff — no commits involved):
+2. **Compute the set of files the fix changed** (snapshot diff — no commits involved). Run the content-snapshot idiom from step 0.5, writing to `post-fix-files.txt`, then list the entries new or content-changed since the pre-fix snapshot:
 
    ```bash
-   BASE=$(git merge-base origin/main HEAD)
-   git add -A -N
-   git diff "$BASE" --name-only | while read -r f; do
-     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
-   done | sort > .context/ship-run/<task-id>/post-fix-files.txt
-
-   # entries that are new or whose content hash changed since the pre-fix snapshot
    comm -13 .context/ship-run/<task-id>/pre-fix-files.txt \
             .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the resulting file list is **empty** (fix made no working-tree changes):
-   - Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
-   - For each phase that failed/warned: append a row to `phase-status.md` with gate=`warn`, run=`#<N>`, timestamp=current ISO-8601, files=`-`, and notes=`fix sem mudanças — revisão manual necessária`.
-   - Skip all re-run logic and continue to acceptance.
+   If the resulting file list is **empty** (fix made no working-tree changes), apply @ship/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
 
 3. **If `on_fail_rerun: all`**: re-run all quality phases that were originally enabled (same set as Phase 4). Skip the scope mapping below.
 
@@ -560,28 +481,13 @@ After the fix agent completes, determine which quality phases to re-run:
 
    a. The modified files list was already computed in step 2 above.
 
-   b. **Check for out-of-scope files**: if ANY modified file does not match any phase scope rule (not under `src/**`, `lib/**`, or any path covered by the active phases), treat as "unknown area" and re-run ALL originally enabled quality phases in conservative mode:
-      - Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
-      - Launch all originally enabled quality phases in parallel (same setup as Phase 4).
-      - Skip to step 4f (no further scope filtering needed).
+   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
 
-   c. **Apply phase → scope mapping** for each phase that previously ran:
-
-      | Phase | Scope |
-      |-------|-------|
-      | `perf` | Files matching `src/**` or `lib/**`, excluding `*.test.*`, `*.spec.*`, `**/__tests__/**` |
-      | `security` | All files in the diff (broad scope — always re-runs if it previously ran) |
-      | `review` | All files in the original diff |
-      | `analyze` | All files in the original diff (broad scope — always re-runs if it previously ran) |
+   c. **Apply the phase → scope mapping** from @ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
 
    d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
 
-   e. **Log the decision** before launching agents:
-      ```
-      Fix tocou: <file1>, <file2> (<N> arquivo(s))
-      Re-run cirúrgico: <phase1> (<reason>), <phase2> (<reason>)
-      Re-run pulado: <phase3> (não analisava arquivos modificados)
-      ```
+   e. **Log the decision** before launching agents, in the format defined in @ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
    f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
@@ -604,7 +510,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Pass results to the Correlation Engine
 - Generate the drift report + compute gate
 - Persist `drift-report.md` and `drift-findings.json` to scratch dir
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+- Artifact language: `<artifact_language>`
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
@@ -619,11 +525,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
 - Gate **PASS** → continue to Phase 7
 
-**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):**
-
-| Phase | Scope |
-|-------|-------|
-| `analyze` | All files in the original diff (broad scope — re-run if any file changed) |
+**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see @ship/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
 
 ### 7. PHASE: User Acceptance
 
@@ -634,7 +536,7 @@ Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases,
 - Consolidate findings into a quality report
 - Present the report for this task
 - Wait for user approval
-- **Artifact language**: `<artifact_language>` — use this for all user-facing output (reports, summaries, gate results, status messages). Do not re-load `@ship/patterns/language.md`.
+- Artifact language: `<artifact_language>`
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
