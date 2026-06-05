@@ -41,7 +41,7 @@ The drift detection is a four-step pipeline:
 
 1. **Spec extraction** — pull REQ-XX, AC-XX, and `@SC-XX` from the loaded artifacts.
 2. **Code & test extraction** — parse the diff for changed files/identifiers and discover test files in the affected workspace.
-3. **Correlation** — Jaccard similarity between spec keyword sets and code/test keyword sets, with override markers and Test Scope filtering.
+3. **Correlation** — keyword Jaccard similarity between spec keyword sets and code/test keyword sets, with Test Scope filtering (no override markers — correlation is purely keyword-based).
 4. **Report generation** — produce a structured drift report, compute the gate, persist artifacts.
 
 Steps 1 and 2 are independent and **MUST run in parallel** via the Agent tool (single message, two tool uses). Step 3 starts only after both complete.
@@ -184,11 +184,16 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 | low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 | low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 
+See @ship/patterns/severity.md (## Drift) for full severity definitions.
+See @ship/report-templates.md#drift-findings for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
+
 **Gate decision (considers only findings from enabled layers):**
 - Any `critical` or `high` finding → **FAIL**.
 - Any `medium` finding (no critical/high) → **WARN**.
 - Only `low` or no findings → **PASS**.
 - Findings from **disabled** layers are never counted toward the gate — they appear only in the informational block.
+
+See @ship/patterns/gates.md for gate rules and severity override handling.
 
 **Before finalizing findings**, apply severity overrides: read `Severity Overrides` from injected context (or `ship/config.md → Severity Overrides` if not injected). For each override rule (e.g., `high → warn`), downgrade any matching findings accordingly. If the field is absent, no downgrade is applied.
 
@@ -292,7 +297,7 @@ To audit coverage for these layers, run `/ship:audit:run`.
 
 ### 7.2 Lazy-load rendering (user-facing output)
 
-When presenting the drift report to the user:
+Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md. When presenting the drift report to the user:
 
 - **Gate = PASS**: emit a single summary line — do NOT embed findings:
   ```

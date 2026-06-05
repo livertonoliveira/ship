@@ -50,9 +50,10 @@ check_file() {
     END { print count }
   ' "$file")
 
-  # Check for subagent_type: ship-* reference
+  # Check for a named-agent dispatch: subagent_type: ship-* or the
+  # plugin-prefixed form subagent_type: ship:ship-* (the form skills actually use).
   local has_subagent
-  has_subagent=$(grep -c 'subagent_type:[[:space:]]*ship-' "$file" || true)
+  has_subagent=$(grep -cE 'subagent_type:[[:space:]]*(ship:)?ship-' "$file" || true)
 
   if [[ "$content_lines" -gt "$LINE_LIMIT" ]]; then
     echo "VIOLATION: src/skills/${worker}/SKILL.md"

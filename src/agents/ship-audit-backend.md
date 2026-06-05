@@ -258,31 +258,13 @@ Logging sensitive values can expose them to log aggregation systems (Datadog, Cl
 
 ## 4. Consolidate findings
 
-Each agent produces findings using this format:
+Each agent produces findings per @ship/report-templates.md#finding-entry with the Backend audit domain extensions (Effort, Maintenance window).
 
-```markdown
-### [SEVERITY] <Descriptive Title>
-- **Category:** DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH
-- **File:** <path>:<line>
-- **Description:** <what the problem is>
-- **Impact:** <estimated impact>
-- **Effort:** <Hours | Days | Weeks>
-- **Maintenance window:** <Yes | No>
-- **Suggestion:** <specific fix with code example if helpful>
-```
-
-Severity definitions for backend performance:
-- **critical**: Will cause visible performance degradation in production (e.g., N+1 on every request, full table scan on large table)
-- **high**: Likely to cause issues under load (e.g., missing pagination on growing dataset)
-- **medium**: Suboptimal but will not cause immediate issues (e.g., missing cache on moderately accessed data)
-- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint)
+Severity definitions: see @ship/patterns/severity.md (## Performance).
 
 Apply severity overrides from `ship/config.md → Severity Overrides` (phase: `backend`) before gate decision.
 
-**Gate rules:**
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
+Gate rules: see @ship/patterns/gates.md.
 
 ---
 
@@ -333,84 +315,12 @@ Write to `ship/audits/backend-<YYYY-MM-DD>.md`.
 
 ### Linear mode
 
-Apply the Linear audit template:
-
-**Step 1 — Create Linear project** via `mcp__linear-server__save_project`:
-- **Name**: `Backend Performance Audit — <YYYY-MM-DD>`
-- **Team**: from `ship/config.md → Linear Integration → Team ID`
-- **Description**: includes runtime, framework, database, gate result and findings count, one-sentence summary of most critical issue
-
-> Never search for or reuse an existing project — each audit run gets its own dedicated project.
-
-**Step 2 — Create report document** via `mcp__linear-server__save_document`:
-- **Title**: `Backend Performance Audit — <YYYY-MM-DD>`
-- **Project**: the project created in Step 1
-- **Content**: the full audit report in markdown
-
-**Step 3 — Create milestones per severity** via `mcp__linear-server__save_milestone` for each severity level that has at least one finding:
-- `critical` findings → milestone "Critical Fixes"
-- `high` findings → milestone "High Fixes"
-- `medium` findings → milestone "Medium Fixes"
-- `low` findings → milestone "Low Fixes"
-
-**Step 4 — Create issues per finding** via `mcp__linear-server__save_issue` for each finding:
-- **Title**: `[PERF] <finding title>`
-- **Team**: from `ship/config.md → Linear Integration → Team ID`
-- **Project**: the project created in Step 1
-- **Priority**: Urgent (critical) / High (high) / Medium (medium) / Low (low)
-- **Labels**: `performance`
-- **Milestone**: corresponding milestone from Step 3
-- **Description**:
-  ```markdown
-  ## Problem
-  <What the problem is, with concrete evidence from the code. Cite file and line.>
-
-  ## Impact
-  <Estimated impact — latency, memory, security risk, data integrity.>
-
-  ## Evidence
-  - **File:** <path>:<line>
-  - **Code:** <relevant snippet showing the issue>
-
-  ## Fix
-  <Specific fix with a code example in the project's language and framework.>
-
-  ## Acceptance Criteria
-  - [ ] <Specific, verifiable criterion>
-  - [ ] No regressions in related tests
-
-  ## Notes
-  - **Effort:** <Hours | Days | Weeks>
-  - **Maintenance window required:** <Yes | No>
-  ```
+Apply the Linear audit template: see @ship/linear-audit-template.md (Backend Performance variation). Use issue prefix `[PERF]`, label `performance`.
 
 ---
 
 ## 6. Return JSON summary
 
-After writing the report, output the following JSON block as the **very last content** of your response. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
+After writing the report, output the audit summary JSON block as the **very last content** of your response. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
 
-```json
-{
-  "audit": "backend",
-  "gate": "<PASS|WARN|FAIL>",
-  "score": "<A|B|C|D|F>",
-  "counts": {
-    "critical": 0,
-    "high": 0,
-    "medium": 0,
-    "low": 0
-  },
-  "top_findings": [
-    {
-      "id": "<FINDING-ID>",
-      "severity": "<critical|high|medium|low>",
-      "title": "<short title>",
-      "file": "<path/to/file.ts:line>"
-    }
-  ],
-  "report_path": "ship/audits/backend-<YYYY-MM-DD>.md"
-}
-```
-
-Score scale: A = no findings, B = low only, C = medium only, D = high, F = critical.
+Emit the JSON per @ship/patterns/audit-summary-schema.md with `audit=backend` and `report_path=ship/audits/backend-<YYYY-MM-DD>.md`.

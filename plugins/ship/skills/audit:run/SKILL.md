@@ -73,7 +73,7 @@ Launching <N> audits in parallel...
 
 ### 4. Launch all applicable audits in parallel
 
-Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
+Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill is a thin wrapper that declares `context: fork` + `model: "haiku"` in its frontmatter and delegates to its named `ship-audit-*` agent (which runs the heavy analysis on `sonnet`), so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
 
 - **`ship:audit:backend`**: returns the findings report from the full backend audit
 - **`ship:audit:database`**: returns the findings report from the full database audit

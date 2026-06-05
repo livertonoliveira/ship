@@ -94,7 +94,7 @@ This avoids N × file-size token cost when fanning out to multiple agents. The o
 
 ## src/ → plugins/ship/ Build
 
-`src/` is the single source of truth for both skills and agents. The build script at `plugins/ship/scripts/build.js` regenerates `plugins/ship/skills/` and `plugins/ship/agents/` from `src/skills/` and `src/agents/`, resolving any `@ship/patterns/*.md` references inline.
+`src/` is the single source of truth for both skills and agents. The build script at `plugins/ship/scripts/build.js` regenerates `plugins/ship/skills/` and `plugins/ship/agents/` from `src/skills/` and `src/agents/`, resolving any `@ship/<file>.md` reference inline. A reference with an anchor (`@ship/report-templates.md#finding-entry`) inlines only that markdown section; an anchorless reference inlines the whole file.
 
 **Workflow:**
 1. Edit `src/agents/ship-<name>.md` or `src/skills/<name>/SKILL.md`.

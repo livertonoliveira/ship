@@ -16,8 +16,8 @@ const OUTPUT_AGENTS = path.join(PLUGIN_ROOT, 'agents');
 const OUTPUT_HOOKS = path.join(PLUGIN_ROOT, 'hooks');
 
 const MAX_DEPTH = 10;
-const HAS_REF = /@ship\/([^\s)]+\.md)/;
-const REPLACE_REF = /@ship\/([^\s)]+\.md)/g;
+const HAS_REF = /@ship\/[^\s)]+\.md(?:#[A-Za-z0-9_-]+)?/;
+const REPLACE_REF = /@ship\/([^\s)]+\.md)(?:#([A-Za-z0-9_-]+))?/g;
 
 const readCache = new Map();
 
@@ -40,6 +40,38 @@ function walkSkillFiles(dir, results = []) {
   return results;
 }
 
+function extractSection(content, anchor, refLabel, skillRelPath) {
+  const lines = content.split('\n');
+  const headingRe = /^(#{1,6})\s/;
+  const markerRe = new RegExp('\\{#' + anchor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\}');
+
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(headingRe);
+    if (m && markerRe.test(lines[i])) {
+      start = i;
+      level = m[1].length;
+      break;
+    }
+  }
+  if (start === -1) {
+    console.error(`Erro: âncora não encontrada em ${skillRelPath}: @ship/${refLabel}`);
+    process.exit(1);
+  }
+
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(headingRe);
+    if (m && m[1].length <= level) {
+      end = i;
+      break;
+    }
+  }
+
+  return lines.slice(start, end).join('\n').trim();
+}
+
 function resolveRefs(content, skillRelPath) {
   let result = content;
   let depth = 0;
@@ -52,14 +84,16 @@ function resolveRefs(content, skillRelPath) {
       process.exit(1);
     }
 
-    result = result.replace(REPLACE_REF, (match, ref) => {
+    result = result.replace(REPLACE_REF, (match, ref, anchor) => {
       const refPath = path.join(SOURCE_ROOT, ref);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);
         process.exit(1);
       }
-      console.log(`  ${skillRelPath} ← @ship/${ref}`);
-      return readFileCached(refPath).trim();
+      const fileContent = readFileCached(refPath).trim();
+      const refLabel = anchor ? `${ref}#${anchor}` : ref;
+      console.log(`  ${skillRelPath} ← @ship/${refLabel}`);
+      return anchor ? extractSection(fileContent, anchor, refLabel, skillRelPath) : fileContent;
     });
 
     depth++;
