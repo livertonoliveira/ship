@@ -20,11 +20,7 @@ You are the Ship frontend audit worker. Your mission: conduct a comprehensive, p
 
 **If the caller already injected `## Stack` and `## Config` sections inline in the prompt**, use ONLY that injected context — skip file reads for stack and config. Likewise, if `Artifact language` and `Storage mode` are already present in the prompt, skip reading `ship/config.md` for those fields.
 
-**Only when invoked standalone (no inline context)**, fall back:
-<!-- This duplicates the SKILL.md wrapper detection — intentional, to support standalone agent invocation. -->
-
-
-Read `ship/config.md` and extract:
+**Only when invoked standalone (no inline context)**, fall back and read `ship/config.md` and extract:
 - `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
 - `Conventions → Artifact language`
 - `Frontend` → framework (Next.js, React, Vue, Angular, Svelte, etc.)
@@ -55,211 +51,295 @@ Use the **Agent** tool to launch **3 agents in parallel in a SINGLE call**.
 
 ### Agent A — Client/Server Boundary
 
-Scan the entire `app/` directory tree for two heuristics:
+Scan the entire `app/` directory tree for these two heuristics:
 
 #### Heuristic A1 — Use Client Leakage (Medium)
 
 **What to look for:** App Router files that declare `"use client"` but contain no interactivity.
 
 **Detection pattern:**
-1. Find all `.tsx`, `.ts`, `.jsx`, `.js` files under `app/`
-2. For each file: check for `"use client"` directive (literal string appearing as standalone statement)
+1. Find all `.tsx`, `.ts`, `.jsx`, `.js` files under the `app/` directory
+2. For each file: check if it contains the `"use client"` directive (the literal string `'use client'` or `"use client"` appearing as a standalone statement, typically on the first non-blank line)
 3. If `"use client"` is present, check the entire file for any interactive signal: `useState`, `useEffect`, `useRef`, `useCallback`, `useReducer`, `useContext`, `onClick`, `onChange`, `onSubmit`, `onInput`, `onKeyDown`, `onKeyUp`, `onMouseOver`, `onFocus`, `onBlur`
 4. If `"use client"` is present AND none of the interactive signals are found → finding at line 1
 
 **Severity:** Medium | **Category:** `BOUNDARY`
 
-**Remediation:** Remove `"use client"` — component will be a Server Component by default. Extract interactive parts into a small child component ("push `use client` to the leaves").
+**Remediation:** Remove `"use client"` — the component will be treated as a Server Component by default. If interactivity is needed in only part of the component tree, extract the interactive parts into a small child component with `"use client"` and keep the parent as a Server Component ("push `use client` to the leaves").
+
+**Example fix:**
+```tsx
+// Before — "use client" on a display-only component
+"use client"
+export function ProductCard({ name, price }: Props) {
+  return <div>{name} — ${price}</div>; // no state, no event handlers
+}
+
+// After — Server Component (no directive needed)
+export function ProductCard({ name, price }: Props) {
+  return <div>{name} — ${price}</div>;
+}
+```
 
 ---
 
 #### Heuristic A2 — Missing Cache Config (Medium)
 
-**What to look for:** Route Handler files (App Router) that export HTTP methods without explicit cache configuration.
+**What to look for:** Route Handler files (App Router) that export HTTP methods without an explicit cache configuration.
 
 **Detection pattern:**
-1. Find all files under `app/` containing any of: `export async function GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS`
-2. For each such file, check if ANY cache config signal is present: `export const dynamic =`, `export const revalidate =`, `cache: 'force-cache'`, `cache: 'no-store'`, `next: { revalidate`, `unstable_cache`
-3. If no cache config signal found → finding (report line of first HTTP method export)
+1. Find all files under `app/` that contain at least one of: `export async function GET`, `export async function POST`, `export async function PUT`, `export async function DELETE`, `export async function PATCH`, `export async function HEAD`, `export async function OPTIONS`
+2. For each such file, check if ANY of these cache config signals are present anywhere in the file:
+   - `export const dynamic =`
+   - `export const revalidate =`
+   - `cache: 'force-cache'` or `cache: 'no-store'`
+   - `next: { revalidate`
+   - `unstable_cache`
+3. If no cache config signal is found → finding (report the line of the first matching HTTP method export)
 
 **Severity:** Medium | **Category:** `CACHE`
 
-**Remediation:** Add explicit cache configuration: `export const dynamic = 'force-dynamic'` for per-request routes, `export const revalidate = <seconds>` for ISR, `export const dynamic = 'force-static'` for static routes.
+**Remediation:** Add an explicit cache configuration to every Route Handler:
+- `export const dynamic = 'force-dynamic'` for routes that must run on every request (auth, user-specific data)
+- `export const revalidate = <seconds>` for routes that can use ISR
+- `export const dynamic = 'force-static'` for routes with no dynamic data
+
+**Example fix:**
+```ts
+// Explicit: cache product categories for 1 hour
+export const revalidate = 3600;
+
+export async function GET() {
+  const categories = await getCategories();
+  return Response.json(categories);
+}
+```
 
 ---
 
 ### Agent B — Cache & Revalidation
 
-Scan the entire `app/` directory tree for two heuristics:
+Scan the entire `app/` directory tree for these two heuristics:
 
 #### Heuristic B1 — Revalidation Anti-Pattern (Medium)
 
-**What to look for:** Three sub-checks that defeat ISR caching.
+**What to look for:** Three specific anti-patterns that defeat ISR caching.
 
-**Detection (3 independent sub-checks per file):**
-1. **`revalidate = 0`**: Search `export const revalidate = 0` → finding: "`revalidate = 0` disables ISR"
-2. **Low revalidate**: Search `export const revalidate = (10|[1-9])\b` → finding: "ISR revalidate interval too low (≤ 10s)"
-3. **Root path invalidation**: Search `revalidatePath('/')` or `revalidatePath("/")` → finding: "`revalidatePath('/')` busts all cached routes"
+**Detection pattern (3 independent sub-checks per file):**
 
-Sub-checks 1 and 2 are mutually exclusive per file. Sub-check 3 is independent.
+1. **`revalidate = 0`**: Search for `export const revalidate = 0`. If found → finding: "`revalidate = 0` disables ISR (effectively force-dynamic)"
+2. **Low revalidate interval**: Search for `export const revalidate =` followed by a value of 1 through 10 (single digit, or exactly `10`). Regex equivalent: `export const revalidate = (10|[1-9])\b`. If found → finding: "ISR revalidate interval too low (≤ 10 seconds)"
+3. **Root path invalidation**: Search for `revalidatePath('/')` or `revalidatePath("/")`. If found → finding: "`revalidatePath('/')` busts all cached routes on every mutation"
 
-**Severity:** Medium | **Category:** `REVALIDATION`
+Note: sub-checks 1 and 2 are mutually exclusive per file. Sub-check 3 is independent and may co-occur with either.
+
+**Severity:** Medium for all three sub-checks | **Category:** `REVALIDATION`
 
 **Remediation:**
-- Replace `revalidate = 0` with `export const dynamic = 'force-dynamic'`
-- Raise low revalidate intervals to match actual data change frequency
-- Replace `revalidatePath('/')` with scoped `revalidatePath('/specific-route')` or `revalidateTag('tag-name')`
+- Replace `revalidate = 0` with `export const dynamic = 'force-dynamic'` to signal explicit SSR intent; or set a positive value if the data tolerates brief caching
+- For low revalidate intervals: raise the value to match actual data change frequency (e.g., `3600` for product listings, `86400` for static content)
+- Replace `revalidatePath('/')` with scoped invalidation:
+  ```ts
+  revalidatePath('/products')       // scope to one route
+  revalidateTag('products-list')    // or tag-based invalidation
+  ```
 
 ---
 
 #### Heuristic B2 — Static Prerendering Gaps (Medium)
 
-**What to look for:** App Router files that perform data fetching without explicit cache configuration.
+**What to look for:** App Router files that perform data fetching without explicit cache configuration, risking accidental SSR.
 
 **Detection pattern:**
-1. Find all files in `app/` tree
-2. Check for any data fetch: `await fetch(`, `await prisma.`, `await db.`, `await orm.`, `await supabase.`, `await drizzle.`, `await repository.`, `await dataSource.`
-3. If data fetch found, check entire file for ANY cache config signal: `export const revalidate =`, `export const dynamic =`, `cache: 'force-cache'`, `cache: 'no-store'`, `next: { revalidate`, `unstable_cache`, `generateStaticParams`
-4. Data fetch present AND no cache config signal → finding (report line of first data fetch)
+1. Find all files in the `app/` directory tree
+2. For each file, check if it contains any data fetch call:
+   - `await fetch(`
+   - `await prisma.`, `await db.`, `await orm.`, `await supabase.`, `await drizzle.`, `await repository.`, `await dataSource.`
+   - (do NOT flag generic `await client.` — too broad; only flag the specific ORM/client names above)
+3. If a data fetch is found, check the entire file for ANY explicit cache config signal:
+   - `export const revalidate =`
+   - `export const dynamic =`
+   - `cache: 'force-cache'` or `cache: 'no-store'`
+   - `next: { revalidate`
+   - `unstable_cache`
+   - `generateStaticParams`
+4. If data fetch is present AND no cache config signal → finding (report the line of the first data fetch call)
 
 **Severity:** Medium | **Category:** `PRERENDER`
 
-**Deduplication:** When consolidating, skip any file already reported by A2 in B2's results.
+**Deduplication:** Heuristics A2 and B2 both scan `app/` files for cache config signals. When consolidating, skip any file already reported by A2 in B2's results — report the finding only once, citing the most specific heuristic.
 
-**Remediation:** Add `export const revalidate` or `export const dynamic` directive; for `fetch()` add inline `{ next: { revalidate: 3600 } }`; for direct DB queries wrap with `unstable_cache`.
+**Remediation:**
+- Add a file-level `export const revalidate` or `export const dynamic` directive
+- For `fetch()` calls, add inline cache options: `fetch(url, { next: { revalidate: 3600 } })`
+- For direct DB queries in Server Components, wrap with `unstable_cache`:
+  ```ts
+  import { unstable_cache } from 'next/cache'
+
+  const getProducts = unstable_cache(
+    async () => db.select().from(products),
+    ['products'],
+    { revalidate: 3600, tags: ['products'] }
+  )
+  ```
 
 ---
 
 ### Agent C — Edge Runtime / Middleware
 
-Scan the project root and `src/` directory:
+Scan the project root and `src/` directory for this heuristic:
 
 #### Heuristic C1 — Middleware Bundle Size (High)
 
 **What to look for:** Heavy library imports in Next.js middleware files.
 
 **Detection pattern:**
-1. Locate middleware files: `middleware.ts`, `middleware.js`, `src/middleware.ts`, `src/middleware.js` (use first found)
-2. If no middleware file found → no findings
-3. For each middleware file, scan all `import` statements
-4. Flag any import whose package name equals or starts with:
+1. Locate middleware files: check for `middleware.ts`, `middleware.js`, `src/middleware.ts`, `src/middleware.js` (use the first found)
+2. If no middleware file is found → no findings (skip heuristic)
+3. For each found middleware file, scan all `import` statements — lines matching `import ... from '<package>'`
+4. Flag any import whose package name equals or starts with any of these heavy libraries:
    - **Date/utility**: `lodash`, `moment`, `moment-timezone`, `date-fns`
    - **HTTP client**: `axios`
    - **UI frameworks/styling**: `@mui/`, `@chakra-ui/`, `@emotion/`, `styled-components`
    - **Node-heavy utilities**: `react-dom`, `sharp`, `fs-extra`, `rimraf`, `glob`
    - **Database drivers / ORMs**: `pg`, `mysql`, `mysql2`, `mongodb`, `@prisma/client`, `prisma`, `typeorm`, `sequelize`, `mongoose`, `drizzle-orm`
    - **Validation**: `yup`, `joi`, `class-validator`
-5. Each unique heavy package in middleware → one finding
+5. Each unique heavy package found in middleware → one finding
 
 **Severity:** High | **Category:** `MIDDLEWARE`
 
+**Why this matters:** Next.js middleware runs on every request in the Edge Runtime, which has a 1 MB bundle size limit. Heavy imports inflate cold-start latency, may exceed the limit (causing deployment failures), and degrade performance for all users on every page load.
+
 **Remediation:**
-- Date: use `Intl.DateTimeFormat` (native Edge API) instead of `moment`/`date-fns`
-- HTTP: use native `fetch` (available in Edge Runtime) instead of `axios`
-- Database: move DB logic to Route Handler (`export const runtime = 'nodejs'`) and call from middleware via `fetch`
-- Validation: replace `yup`/`joi`/`class-validator` with `zod` (Edge-compatible)
+- **Date formatting**: Use `Intl.DateTimeFormat` (native Edge API) instead of `moment`/`date-fns`
+- **HTTP**: Use native `fetch` (available in Edge Runtime) instead of `axios`
+- **Database access**: Move DB logic to a Route Handler (`export const runtime = 'nodejs'`) and call it from middleware via `fetch` if needed — never query the DB directly from middleware
+- **Validation**: Replace `yup`/`joi`/`class-validator` with `zod` (Edge-compatible)
+- If the logic genuinely requires a heavy library, move it out of middleware to a Route Handler with Node.js runtime
+
+**Example fix:**
+```ts
+// Before — imports DB driver (Edge Runtime incompatible)
+import { PrismaClient } from '@prisma/client'; // ❌
+
+export async function middleware(request: NextRequest) {
+  const db = new PrismaClient();
+  const user = await db.user.findUnique({ where: { id: request.headers.get('x-user-id') } });
+  // ...
+}
+
+// After — delegate to Route Handler
+export async function middleware(request: NextRequest) {
+  const res = await fetch(`${request.nextUrl.origin}/api/internal/auth`, {
+    headers: { 'x-user-id': request.headers.get('x-user-id') ?? '' },
+  });
+  // ...
+}
+```
+
+> **Next.js path → proceed to steps 4 and 5 below** (Consolidate findings + Write report).
 
 ---
 
 ## Generic Frontend Path — 3 parallel agents
 
-> **Static analysis only**: all findings must be based on source code, config files, or build artifacts — not runtime metrics.
+> **Static analysis only**: all findings must be based on source code, config files, or build artifacts — not runtime metrics. If a problem can only be confirmed at runtime (e.g., actual TTFB values), report it as a hypothesis in the Blind Spots section, not as a finding.
 
 ### Agent A — NET + BUNDLE + LOAD
 
 #### Network / Assets
-| Issue | Static indicator |
-|-------|-----------------|
-| **No CDN** | No CDN config in `vercel.json`, `netlify.toml`, `cloudfront.json`, `nginx.conf`; `express.static()` without CDN |
-| **Assets without cache headers** | `express.static()` without `maxAge`; no `Cache-Control` header in server middleware |
-| **No compression** | Express app without `compression()`; NestJS without `CompressionModule`; Fastify without `@fastify/compress` |
-| **Missing streaming** | SSR entry point with sequential `await` DB/API calls that could use `Promise.all` or Suspense |
+| Issue | Static indicator to look for |
+|---|---|
+| **No CDN** | No CDN config in deployment files (`vercel.json`, `netlify.toml`, `cloudfront.json`, `nginx.conf`); custom server with `express.static()` serving files directly |
+| **Assets without cache headers** | `express.static()` without `maxAge` option; no `Cache-Control` header in server middleware or config |
+| **No compression** | Express app without `compression()` middleware; NestJS without `CompressionModule`; Fastify without `@fastify/compress` |
+| **Missing streaming (potential TTFB)** | SSR entry point (`getServerSideProps`, route `loader`) with sequential `await` DB/API calls that could use `Promise.all` or `Suspense` |
 
 #### Bundle
-| Issue | Static indicator |
-|-------|-----------------|
-| **Heavy imports** | `import _ from 'lodash'` or `import * as R from 'ramda'` — full library imported |
-| **No code splitting** | No `dynamic(() => import(...))`, no `React.lazy()`, no route-level splitting |
-| **Tree shaking failures** | Barrel files (`index.ts`) re-exporting all named exports |
-| **Duplicate dependencies** | Two `package.json` files declaring different versions of the same library |
-| **Dev-only code in production** | `process.env.NODE_ENV` guard missing around devtools imports |
+| Issue | Static indicator to look for |
+|---|---|
+| **Heavy imports** | `import _ from 'lodash'` or `import * as R from 'ramda'` — full library imported when only one function is used |
+| **No code splitting** | Single large bundle entry; no `dynamic(() => import(...))`, no `React.lazy()`, no route-level splitting |
+| **Tree shaking failures** | Barrel files (`index.ts`) that re-export all named exports; check `src/index.ts`, `components/index.ts` |
+| **Duplicate dependencies** | Two `package.json` files declaring different versions of the same library (monorepo); check `node_modules/.pnpm` or `yarn.lock` for duplicate entries |
+| **Dev-only code in production** | `process.env.NODE_ENV` guard missing around devtools imports; `devtools`, `redux-devtools-extension` imported unconditionally |
 
 #### Loading Strategy
-| Issue | Static indicator |
-|-------|-----------------|
-| **Render-blocking CSS/JS** | `<link rel="stylesheet">` or `<script src=...>` in `<head>` without `async`/`defer` |
-| **Missing lazy loading** | Large page sections imported statically instead of `dynamic()`/`React.lazy()` |
-| **Preload misuse** | More than 5 `<link rel="preload">` in `<head>` |
-| **Missing resource hints** | External domains in `fetch()` or `<img>` without `<link rel="preconnect">` |
+| Issue | Static indicator to look for |
+|---|---|
+| **Render-blocking CSS/JS** | `<link rel="stylesheet">` or `<script src=...>` in `<head>` without `async` or `defer` attributes in HTML template / `_document.tsx` |
+| **Missing lazy loading** | Large page sections or routes imported with static `import` instead of `dynamic()`/`React.lazy()` |
+| **Preload misuse** | More than 5 `<link rel="preload">` in `<head>` — over-preloading competes for bandwidth |
+| **Missing resource hints** | External domains used in `fetch()` or `<img src=...>` without a matching `<link rel="preconnect">` |
 
 ---
 
 ### Agent B — RENDER + JS + HYDRAT + ARCH
 
 #### Rendering / Paint
-| Issue | Static indicator |
-|-------|-----------------|
-| **Layout thrashing** | Reading `offsetHeight`, `offsetWidth`, `getBoundingClientRect`, `scrollTop` inside a loop that also writes to DOM |
-| **Missing GPU compositing** | CSS `transition` or `animation` on `top`, `left`, `width`, `height`, `margin`, `padding`, `box-shadow` instead of `transform`/`opacity` |
-| **Missing virtualization** | `.map(` rendering a list in JSX without `react-window`, `react-virtual`, `@tanstack/virtual`, `react-virtuoso` |
+| Issue | Static indicator to look for |
+|---|---|
+| **Layout thrashing** | Reading `offsetHeight`, `offsetWidth`, `getBoundingClientRect`, `scrollTop` inside a loop that also writes to the DOM |
+| **Missing GPU compositing** | CSS `transition` or `animation` on `top`, `left`, `width`, `height`, `margin`, `padding`, or `box-shadow` instead of `transform`/`opacity` |
+| **Missing virtualization** | `.map(` rendering a list in JSX without `react-window`, `react-virtual`, `@tanstack/virtual`, or `react-virtuoso` |
 
 #### JavaScript Execution
-| Issue | Static indicator |
-|-------|-----------------|
-| **Synchronous heavy work** | `JSON.parse`/`JSON.stringify` on large payloads, `sort()`/`filter()` over arrays >1000 items, complex regex inside render path |
-| **Missing `useMemo`/`useCallback`** | Expensive inline computations or object/array literals directly in JSX props |
-| **Unnecessary re-renders** | Expensive components without `React.memo`; inline `{}` or `[]` in JSX props |
-| **Context overuse** | Context value updated on every state change with inline object (`value={{ ... }}`) |
-| **Event listeners not cleaned up** | `addEventListener` inside `useEffect` without cleanup `return () => removeEventListener(...)` |
+| Issue | Static indicator to look for |
+|---|---|
+| **Synchronous heavy work** | `JSON.parse` / `JSON.stringify` on large payloads, `sort()` or `filter()` over arrays >1000 items, or complex regex (`/[...]{5,}/`) inside a render path (component body or event handler) |
+| **Missing `useMemo` / `useCallback`** | Expensive inline computations or object/array literals directly in JSX props without memoization |
+| **Unnecessary re-renders** | Expensive components (marked with `// expensive`, wrapping large trees) without `React.memo`; inline `{}` or `[]` in JSX props |
+| **Context overuse** | Context value updated on every state change where value is an object created inline (`value={{ ... }}`), causing all consumers to re-render |
+| **Event listeners not cleaned up** | `addEventListener` inside `useEffect` without a `return () => removeEventListener(...)` cleanup |
 
 #### Hydration
-| Issue | Static indicator |
-|-------|-----------------|
-| **Hydration mismatches** | `Date.now()`, `Math.random()`, `window.*`, `document.*` in component render (not inside `useEffect`) |
-| **Over-hydration** | Pure display components (no state, no handlers) with SSR that could use `{ ssr: false }` |
-| **Hydration waterfall** | Nested components each with their own `useEffect` data fetch |
+| Issue | Static indicator to look for |
+|---|---|
+| **Hydration mismatches** | `Date.now()`, `Math.random()`, `window.*`, or `document.*` used directly in component render (not inside `useEffect`) |
+| **Over-hydration** | Pure display components (no state, no handlers) with SSR that could use `{ ssr: false }` or server-only rendering |
+| **Hydration waterfall** | Nested components each with their own `useEffect` data fetch — should be lifted or parallelized |
 
 #### Architecture
-| Issue | Static indicator |
-|-------|-----------------|
-| **Request waterfalls** | Component B's data fetch depends on data from Component A's fetch |
-| **Over-fetching** | API call response used with only 2–3 fields but schema has 10+ fields |
-| **Missing SWR/React Query** | `useEffect` + `useState` for remote data fetching without caching library |
-| **Client-side computation** | Heavy array transformations on API call data — should be server-side or memoized |
+| Issue | Static indicator to look for |
+|---|---|
+| **Request waterfalls** | Component B's data fetch depends on data from Component A's fetch — look for prop-drilling of IDs followed by a new fetch |
+| **Over-fetching** | API call response used with only 2–3 fields but response type/schema has 10+ fields; no GraphQL field selection or query parameter filtering |
+| **Missing SWR / React Query** | `useEffect` + `useState` for remote data fetching without `swr`, `@tanstack/react-query`, or equivalent |
+| **Client-side computation** | Heavy array transformations (`sort`, `reduce`, `groupBy`) on data from an API call — should be server-side or memoized |
 
 ---
 
 ### Agent C — IMG + FONT + MEM + 3P
 
 #### Images / Media
-| Issue | Static indicator |
-|-------|-----------------|
-| **Unoptimized images** | `<img src=...>` without `width`/`height`; image files in `public/` without WebP/AVIF alternatives |
-| **Missing lazy loading** | `<img>` for below-the-fold images without `loading="lazy"` |
-| **Missing srcset** | `<img>` without `srcset` or `sizes`; full-resolution images used for thumbnails |
-| **Large SVGs inlined** | SVG files >10KB inlined directly in JSX/HTML |
-| **Autoplay video** | `<video autoplay>` without `muted` and `preload="none"` |
+| Issue | Static indicator to look for |
+|---|---|
+| **Unoptimized images** | `<img src=...>` without `width`/`height` attributes (causes CLS); image files in `public/` without WebP/AVIF alternatives |
+| **Missing lazy loading** | `<img>` tags for below-the-fold images (not in hero section) without `loading="lazy"` |
+| **Missing srcset** | `<img>` without `srcset` or `sizes` attributes; full-resolution images used for thumbnails |
+| **Large SVGs inlined** | SVG files >10KB inlined directly in JSX/HTML instead of referenced as external files |
+| **Autoplay video** | `<video autoplay>` without `muted` and `preload="none"` — causes layout shift and bandwidth waste on load |
 
 #### Fonts
-| Issue | Static indicator |
-|-------|-----------------|
-| **FOUT / FOIT** | `@font-face` without `font-display: swap` or `font-display: optional` |
-| **Fonts not preloaded** | Custom fonts for above-the-fold content without `<link rel="preload" as="font">` |
-| **Too many font variants** | More than 4 `font-weight`/`font-style` combinations for a single font family |
+| Issue | Static indicator to look for |
+|---|---|
+| **FOUT / FOIT** | `@font-face` declarations in CSS without `font-display: swap` or `font-display: optional` |
+| **Fonts not preloaded** | Custom fonts used in above-the-fold content (e.g., `h1`, hero text) without `<link rel="preload" as="font">` in the document head |
+| **Too many font variants** | More than 4 different `font-weight`/`font-style` combinations loaded for a single font family |
 
 #### Memory
-| Issue | Static indicator |
-|-------|-----------------|
-| **Memory leaks in SPA** | `addEventListener`, `setInterval`, or `subscribe(` inside `useEffect` without cleanup |
-| **Unbounded state growth** | Array/object state that only ever appends with no upper bound or eviction |
-| **Closures accumulating** | Large objects in `useCallback` without exhaustive deps |
+| Issue | Static indicator to look for |
+|---|---|
+| **Memory leaks in SPA** | `addEventListener`, `setInterval`, or `subscribe(` inside `useEffect` without a cleanup `return` function |
+| **Unbounded state growth** | Array or object state that only ever appends (`[...prev, newItem]`) with no upper bound or eviction |
+| **Closures accumulating** | Large objects referenced inside `useCallback` without exhaustive deps — stale closure retaining previous render's data |
 
 #### Third-party Scripts
-| Issue | Static indicator |
-|-------|-----------------|
-| **Render-blocking third parties** | Analytics (`gtag`, `fbq`), chat widgets, or ad scripts in `<head>` without `async`/`defer` |
-| **Undeferred scripts** | `<script src=...>` without `async` or `defer` |
-| **Missing facades** | `<iframe src="https://www.youtube.com/...">` or Intercom/Zendesk scripts loaded eagerly |
+| Issue | Static indicator to look for |
+|---|---|
+| **Render-blocking third parties** | Analytics (`gtag`, `fbq`, `_hsq`), chat widgets, or ad scripts loaded via `<script src=...>` in `<head>` without `async`/`defer` or `<Script strategy="lazyOnload">` |
+| **Undeferred scripts** | `<script src=...>` without `async` or `defer` in HTML template |
+| **Missing facades** | `<iframe src="https://www.youtube.com/...">` or Intercom/Zendesk scripts loaded eagerly on page load instead of on user interaction |
 
 ---
 
@@ -267,30 +347,16 @@ Scan the project root and `src/` directory:
 
 Read `Severity Overrides` from injected context (or `ship/config.md`) and apply downgrade rules before finalizing.
 
-**Severity classification (Frontend):**
-
-Uses Core Web Vitals thresholds:
-- **critical**: Core Web Vital in "Poor" range; severely impacting UX or conversion
-- **high**: Core Web Vital in "Needs Improvement"; measurable impact on bounce/conversion
-- **medium**: Relevant technical inefficiency, no immediate critical impact
-- **low**: Incremental optimization, good for backlog
-
-**Categories (Next.js):** `STRATEGY | BOUNDARY | CACHE | REVALIDATION | PRERENDER | MIDDLEWARE | ARCH`
-**Categories (Generic):** `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
-
-**Finding format:**
-```markdown
-### [SEVERITY] <Descriptive Title>
-- **Category:** <category>
-- **File:** <path>:<line>
-- **Description:** <what the problem is>
+Each agent must produce findings using the template from @ship/report-templates.md#finding-entry, extended with:
 - **Metric affected:** LCP | INP | CLS | FCP | TTFB | TBT | First Load JS | Bundle size
-- **Impact:** <estimated impact>
 - **Effort:** <Hours | Days | Weeks>
-- **Suggestion:** <specific fix with code example if helpful>
-```
 
-**Gate rules:** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
+Category values for Next.js: `STRATEGY | BOUNDARY | CACHE | REVALIDATION | PRERENDER | MIDDLEWARE | ARCH`
+Category values for Generic: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
+
+For severity definitions, see @ship/patterns/severity.md (## Frontend).
+
+**Gate rules:** See @ship/patterns/gates.md.
 
 ---
 
@@ -337,32 +403,16 @@ Methodology: <Next.js 5-heuristic | Generic 11-category>
 
 **Local mode:** Write to `ship/audits/frontend-<YYYY-MM-DD>.md`
 
-**Linear mode:** Create Linear project + document + milestones + issues per the Ship linear-audit-template pattern:
-1. `mcp__linear-server__save_project` — name: `Frontend Performance Audit — <YYYY-MM-DD>`; description includes framework, methodology, gate result, and most critical finding
-2. `mcp__linear-server__save_document` — title: `Frontend Performance Audit — <YYYY-MM-DD>`; content: full report
-3. `mcp__linear-server__save_milestone` per severity level with findings (Critical Fixes / High Fixes / Medium Fixes / Low Fixes)
-4. `mcp__linear-server__save_issue` per finding — prefix `[PERF]`; priority: Urgent/High/Medium/Low; labels: `performance`; link to milestone; include `## Impact`, `## Evidence`, `## Fix`, `## Notes` (with `Affected Web Vital`)
+**Linear mode:** Follow @ship/linear-audit-template.md — Frontend Performance variation:
+- **Issue prefix**: `[PERF]`
+- **Label**: `performance`
+- **Extra field** (append to `## Notes` in issue description): `- **Affected Web Vital:** <LCP | CLS | INP | TTFB | FCP | TBT>`
 
 ---
 
 ## 6. Emit machine-readable summary
 
-After writing the report, emit this JSON block (used by `ship:audit:run` orchestrator):
-
-```json
-{
-  "audit": "frontend",
-  "gate": "<PASS|WARN|FAIL>",
-  "score": "<A|B|C|D|F>",
-  "counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-  "top_findings": [
-    {"id": "<ID>", "severity": "<critical|high|medium|low>", "title": "<title>", "file": "<file:line>"}
-  ],
-  "report_path": "ship/audits/frontend-<YYYY-MM-DD>.md"
-}
-```
-
-Scoring: A = no findings or only low | B = no critical/high, at least one medium | C = no critical, 1–2 high | D = no critical, 3+ high | F = at least one critical
+After writing the report, emit the JSON block per @ship/patterns/audit-summary-schema.md with `audit=frontend` and `report_path=ship/audits/frontend-<YYYY-MM-DD>.md`. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
 
 ---
 
@@ -372,6 +422,7 @@ Scoring: A = no findings or only low | B = no critical/high, at least one medium
 - **Auto-route by config**: always read `ship/config.md` before choosing methodology. If absent, probe for `next.config.*`.
 - **No false positives**: only report with concrete evidence. Cite file and line.
 - **Framework-specific fixes**: solutions must use the framework's actual APIs and patterns.
+- **Distinguish lab vs field data**: if Lighthouse data is available, note it's lab (simulated); CrUX is field (real users).
 - **ALWAYS launch 3 agents in parallel** — never sequentially. Single Agent tool call.
 - **Highlight quick wins**: flag findings fixable in ≤1 day.
 - **Language**: use the `Artifact language` passed by the caller for all user-facing output. Code, variable names: always English.
