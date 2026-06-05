@@ -2,6 +2,20 @@
 
 Histórico reconstruído a partir do versionamento automático (`plugin.json`) e dos commits de cada release. Versões em ordem decrescente.
 
+## 2.11.0 — 2026-06-04
+
+### Changes
+- Orquestradores `ship:develop` e `ship:test` movidos de **Haiku → Sonnet**. Eles não são dispatchers puramente determinísticos: fazem slicing/de-identificação de contexto, ordenação de dependências e precisam despachar de forma confiável (não narrar). Pela Boundary rule do `model-routing.md`, isso os mantém no tier de raciocínio. Não é fix do vazamento de spec ID (o hook já garante isso) — é robustez geral do orquestrador. `model-routing.md`, tabela e `run/SKILL.md` atualizados.
+
+### Features
+- **Prevenção por construção (defesa primária)**: os orquestradores `ship:develop`/`ship:test` agora **de-identificam** o contexto antes de injetar nos workers — removem os tags/IDs (`@SC-XX`, `@AC-YY`, `REQ-/AC-/SC-/IMPL-`, chave Linear) das `## Scenarios`/`## Test Contract`/`## Module`, mantendo só o conteúdo comportamental. O worker não ecoa um ID que nunca recebeu. Novo pattern `deidentify-context.md`; workers iteram "scenarios" em vez de `@SC-XX`. Traceability não é afetada — o `ship:analyze` correlaciona por keyword (Jaccard), não por marcador no código (`ship-analyze.md:89`).
+- Hygiene gate agora é **determinístico de verdade**: hook `PostToolUse` (`hooks/hygiene-scan.sh`) dispara em todo `Write`/`Edit`, escaneia o arquivo recém-escrito e, ao achar violação, sai com código 2 — o Claude Code bloqueia e devolve os `file:line` ao modelo, que faz o rename/remoção (correção semântica que um script não faz com segurança).
+- Antes, o "gate determinístico" (#83) era só um passo de SKILL executado pelo orquestrador Haiku — podia ser narrado como PASS sem nunca rodar o grep. Era a causa de `AC-`/`SC-` vazarem para nomes de testes mesmo na versão mais recente.
+- Escopo por regra: **spec IDs** (`REQ-/AC-/SC-/IMPL-/TEST-<n>` + chave Linear do branch) são bloqueados em qualquer `Write`; **comentários** só dentro de um run ativo do Ship (marcador `.context/ship-run/`), para não policiar código escrito à mão pelo usuário.
+- Passos de hygiene em `ship:develop`/`ship:test` rebaixados a varredura final (cinto-e-suspensório) atrás do hook.
+- Sweep retroativo: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/hygiene-scan.sh" --all` lista violações já gravadas em runs anteriores (não corrigidas pelo hook).
+- `build.js` agora copia `src/hooks/` → `plugins/ship/hooks/`.
+
 ## 2.7.7 — 2026-06-03
 
 ### Docs

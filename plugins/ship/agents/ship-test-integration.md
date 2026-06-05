@@ -48,8 +48,8 @@ Responsibility: test interactions between modules, API endpoints, and database o
 
 **Read efficiency**: each pattern/source file at most ONCE. Do not re-Read after Edit/Write.
 
-**Scenario mode (normal — `@SC-XX` scenarios provided inline):**
-For each provided `@SC-XX`:
+**Scenario mode (normal — scenarios provided inline):**
+The orchestrator de-identifies inline scenarios — the `@SC-XX`/`@AC-YY` tags are stripped, leaving the `Scenario` title and steps. Iterate the scenario blocks by their behavior; there is no ID to carry. For each provided scenario:
 - Generate **exactly one** test: arrange = `Given`/`Background`, act = `When`, assert = `Then`.
 - A `Scenario Outline` → one parameterized test iterating its `Examples` rows.
 - Name the test by the **observable behavior** it asserts. **NEVER** put spec IDs (`SC-XX`, `AC-XX`, `REQ-XX`, `Impl`) **or the Linear issue key** (any team prefix — `<TEAM>-NNN`, e.g. `MOB-1734`, `ENG-42`, `PROJ-7`) in **any** identifier the test framework uses to name or group a test — in **whatever language the project uses**. This covers the **group/suite** level (JS `describe`/`context`, Go `t.Run("...")` label, JUnit `@Nested` class or `@DisplayName`, test-class name) **and** the **individual case** level (JS `it`/`test`, JUnit `@Test` method name, .NET `[Fact]`/`[Theory]` method name, Go `func TestXxx`). Forbidden in any language: `describe('MOB-1734 — Redis Setup Integration Tests')`, `it('AC-43: ...')`, `@DisplayName("SC-003 | AC-43: Build passes")`, `void AC43_BuildPasses()`, `func TestSC003Build(...)`. Correct: name by component/feature + behavior (e.g. `describe('Redis setup')`, `@DisplayName("build passes after install")`, `func TestBuildPassesAfterInstall(...)`). **NEVER** add `// TEST-SC-XX` (or any) marker comments — no comments of any kind in test files.
@@ -94,7 +94,7 @@ Integration Tests:
 - **Tests must be deterministic**: no dependency on external state or ordering.
 - **Use the project's patterns**: follow existing integration test setup exactly.
 - **Do not install test frameworks**: use what is already configured in the project.
-- **Scenarios drive the tests**: when `@SC-XX` scenarios are provided, each must have exactly one corresponding test, named by behavior. **No marker comments, no spec IDs in any test identifier** — not in suite/group names, class names, display names, method names, or case titles, in any language. Describe what the test verifies, never the spec reference.
+- **Scenarios drive the tests**: when scenarios are provided, each must have exactly one corresponding test, named by behavior. **No marker comments, no spec IDs in any test identifier** — not in suite/group names, class names, display names, method names, or case titles, in any language. Describe what the test verifies, never the spec reference.
 - **No comments in test files** — no JSDoc, no `// TEST-*` markers, no `// arrange/act/assert`, no spec IDs anywhere. Naming carries the meaning.
 - **Language**: use the `Artifact language` passed by the caller for user-facing output. Code, variable names: always English.
 - **Read efficiency**: re-read a file only if modified externally, likely compacted, or explicitly requested.
