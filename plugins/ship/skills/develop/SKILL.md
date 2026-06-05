@@ -4,7 +4,7 @@ description: "Ship Phase 2: implementation orchestrator — reads the plan and f
 argument-hint: "<task-id | linear-issue-id>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 context: fork
 ---
 
@@ -14,7 +14,7 @@ You are the Ship implementation orchestrator. You do NOT write code yourself —
 
 > **CRITICAL — you MUST act, not narrate.** Describing the plan, summarizing what a worker "would do", or returning a status without having issued the Agent tool calls is a **hard failure** of this skill, not an acceptable shortcut. You have no Edit/Write tools precisely because the ONLY way you can produce code is by calling the Agent tool. If you finish your turn without having dispatched at least one `ship-develop-implement` worker via the Agent tool, you have failed — the caller will detect a zero-mutation working tree and mark this phase FAILED. There is no path where "the plan is clear so I'll just report it" is correct. Read the plan, then immediately dispatch.
 
-This body is **deterministic** — the semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. That is why this orchestrator runs on Haiku while the workers run on Sonnet.
+The heavy semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. But this orchestrator still makes non-trivial judgment calls — slicing per-module context, **de-identifying** it before injection, dependency ordering, integration checks — and must reliably act (dispatch) rather than narrate. Per the Boundary rule in `ship/patterns/model-routing.md`, that keeps it at the reasoning tier (Sonnet); the workers it fans out are Sonnet too.
 
 **Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and inline spec/design passed by the caller).
 
@@ -124,6 +124,53 @@ Artifact language: <artifact_language>
 - Zero spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`) and zero Linear issue keys anywhere in source. Naming carries the meaning.
 ```
 
+**De-identify before injecting.** Strip the spec-ID tags/tokens from the `## Scenarios`, `## Module`, and `## Design` text you slice into each worker prompt, keeping the behavioral content — so the worker cannot echo an ID it never received. Keep the `SC-XX → module` mapping in your own notes for the report.
+
+# De-identify the worker context — prevention before detection
+
+> A worker emits `SC-43` in a test name mainly because it **received** `SC-43` in its prompt and
+> copied it across a boundary it should not have. The most reliable fix is not to forbid the copy
+> harder — it is to **not hand over the token in the first place**. Strip the spec IDs from the
+> behavioral context you inject; what the worker never sees, it cannot echo.
+>
+> This is the **primary** defense. The worker-prompt rule ("never put spec IDs in test names") and
+> the `PostToolUse` hygiene hook remain as the net for the paths this cannot reach (standalone
+> workers that read artifacts directly, a Linear key picked up from the branch, comments — which
+> have no input to strip).
+
+## What to strip — when slicing context into a worker prompt
+
+Before you inject `## Scenarios`, `## Test Contract`, `## Module`, or `## Design` into a worker's
+prompt, remove from that **injected text only**:
+
+- Scenario / criterion / requirement tags: `@SC-XX`, `@AC-YY`, `@REQ-XX` (and the already-resolved
+  layer tag `@unit`/`@integration`/`@e2e` — you used it to route; the worker does not need it).
+- Bare spec IDs in prose: `REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`, `TEST-*`.
+- The task's Linear issue key (`<TEAM>-<n>`, e.g. `MOB-1734`).
+
+## What to KEEP — the behavioral content the worker (and analyze) needs
+
+- The `Scenario:` / `Scenario Outline:` **titles** and the `Given` / `When` / `Then` / `Examples`
+  steps. This is the behavior the worker tests, and the `When`/`Then` keywords are exactly what
+  `ship:analyze` correlates against test names — stripping the *tags* does not weaken traceability.
+- `arrange` / `act` / `assert` notes, the `Files` set, and the module `Contract`.
+
+A de-identified scenario block keeps its title and steps and drops only its tag line, e.g.:
+
+```
+# injected as (de-identified):
+Scenario: ignores a duplicate event for the same transactionId
+  When the same event is delivered twice
+  Then the second delivery is a no-op
+```
+
+## Keep the mapping — traceability lives in the artifact, not the code
+
+You (the orchestrator) still hold the `SC-XX → module/test-file` mapping from `plan.md` / the spec.
+Keep it for the **report / phase artifacts** so `ship:analyze` and humans can trace spec→test. It
+belongs in markdown artifacts and Linear — never carried into a source or test identifier. Iterate
+the worker over **scenarios** (one test per scenario block), not over "`@SC-XX`".
+
 For the **single-module fallback** (no `plan.md`), dispatch one worker with the full inline spec/design as its `## Module` context.
 
 ---
@@ -149,21 +196,96 @@ On failure:
 
 ---
 
-## 6. Hygiene gate (MANDATORY — deterministic)
+## 6. Hygiene gate — final sweep (MANDATORY)
 
-The worker prompts forbid comments and spec IDs, but that is advice an LLM can slip on. Before you trust the diff, **verify it** with the deterministic gate — do not rely on the workers' word:
+The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygiene-scan.sh`), which already blocked any comment/spec-ID at the moment each source file was written. This step is the **final sweep** behind that hook — a whole-tree re-check so nothing slips through if the hook was disabled or the plugin out of date. Do not treat it as the primary defense:
 
-# Hygiene Gate — deterministic post-generation scan for comments & spec IDs
+# Hygiene Gate — deterministic enforcement for comments & spec IDs
 
-> Canonical, **deterministic** enforcement of the zero-comments / zero-spec-IDs rule.
-> The worker prompts already forbid comments and spec IDs, but a prompt is advice, not a
-> guarantee — an LLM occasionally emits them anyway. This gate is the backstop: a grep over
-> the freshly generated working tree that **catches** violations and **auto-fixes** them before
-> the phase returns. Used by `ship:develop` (source) and `ship:test` (test files).
+> Canonical enforcement of the zero-comments / zero-spec-IDs rule. The worker prompts forbid
+> comments and spec IDs, but a prompt is advice, not a guarantee — an LLM occasionally emits
+> them anyway.
 >
-> The grep is a **tripwire, not a judge**: it flags candidate files cheaply; the dispatched
-> cleanup worker decides what is a genuine comment / spec ID and strips only those, leaving
-> legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
+> **Three layers, distinct roles — do not collapse them:**
+>
+> 0. **Prevention by construction (the real fix): de-identify the worker context.** The
+>    orchestrators strip spec IDs from the scenario/contract text before injecting it into a worker
+>    — what the worker never receives, it cannot echo. See `# De-identify the worker context — prevention before detection
+
+> A worker emits `SC-43` in a test name mainly because it **received** `SC-43` in its prompt and
+> copied it across a boundary it should not have. The most reliable fix is not to forbid the copy
+> harder — it is to **not hand over the token in the first place**. Strip the spec IDs from the
+> behavioral context you inject; what the worker never sees, it cannot echo.
+>
+> This is the **primary** defense. The worker-prompt rule ("never put spec IDs in test names") and
+> the `PostToolUse` hygiene hook remain as the net for the paths this cannot reach (standalone
+> workers that read artifacts directly, a Linear key picked up from the branch, comments — which
+> have no input to strip).
+
+## What to strip — when slicing context into a worker prompt
+
+Before you inject `## Scenarios`, `## Test Contract`, `## Module`, or `## Design` into a worker's
+prompt, remove from that **injected text only**:
+
+- Scenario / criterion / requirement tags: `@SC-XX`, `@AC-YY`, `@REQ-XX` (and the already-resolved
+  layer tag `@unit`/`@integration`/`@e2e` — you used it to route; the worker does not need it).
+- Bare spec IDs in prose: `REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`, `TEST-*`.
+- The task's Linear issue key (`<TEAM>-<n>`, e.g. `MOB-1734`).
+
+## What to KEEP — the behavioral content the worker (and analyze) needs
+
+- The `Scenario:` / `Scenario Outline:` **titles** and the `Given` / `When` / `Then` / `Examples`
+  steps. This is the behavior the worker tests, and the `When`/`Then` keywords are exactly what
+  `ship:analyze` correlates against test names — stripping the *tags* does not weaken traceability.
+- `arrange` / `act` / `assert` notes, the `Files` set, and the module `Contract`.
+
+A de-identified scenario block keeps its title and steps and drops only its tag line, e.g.:
+
+```
+# injected as (de-identified):
+Scenario: ignores a duplicate event for the same transactionId
+  When the same event is delivered twice
+  Then the second delivery is a no-op
+```
+
+## Keep the mapping — traceability lives in the artifact, not the code
+
+You (the orchestrator) still hold the `SC-XX → module/test-file` mapping from `plan.md` / the spec.
+Keep it for the **report / phase artifacts** so `ship:analyze` and humans can trace spec→test. It
+belongs in markdown artifacts and Linear — never carried into a source or test identifier. Iterate
+the worker over **scenarios** (one test per scenario block), not over "`@SC-XX`".`.
+>    This removes the dominant leak path (inline pipeline generation) at the source. The two layers
+>    below are the net for what prevention cannot reach (standalone workers, a Linear key picked up
+>    from the branch, and comments — which have no input to strip).
+> 1. **Detection (genuinely deterministic): the `PostToolUse` hook.** The plugin ships
+>    `hooks/hygiene-scan.sh`, wired as a `PostToolUse` hook on `Write|Edit`. It fires the moment
+>    a file is written, scans *that* file, and on a hit **exits 2** so Claude Code blocks the
+>    turn and feeds the `file:line` violations back to the model — which then renames the
+>    identifier / removes the comment inline (the semantic fix a script cannot do safely). This
+>    layer does **not** depend on any agent choosing to run it; it is the actual guarantee that
+>    nothing passes. It catches violations per-file, at the source, while the model still holds
+>    full context.
+> 2. **Final sweep (belt-and-suspenders): the SKILL step below.** Runs the same grep over the
+>    whole working tree at phase end and dispatches a `Mode: clean` worker for anything left.
+>    With the hook in place this should normally find nothing; it is a redundant safety net, **not**
+>    the primary defense. Never treat this step as the thing standing between you and a leak — the
+>    hook is.
+>
+> The grep is a **tripwire, not a judge**: it flags candidate files cheaply; the model (hook) or
+> the dispatched cleanup worker (sweep) decides what is a genuine comment / spec ID and strips
+> only those, leaving legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
+>
+> **Scope of the hook (two rules, two reaches):**
+> - **Spec IDs** (`REQ-/AC-/SC-/IMPL-/TEST-<n>` + the branch's Linear key) are flagged on **every**
+>   `Write`/`Edit` — they are always wrong in code, and the precise regex never false-positives on
+>   `UTF-8`/`SHA-256`/etc.
+> - **Comments** are a Ship convention, not a universal rule, so they are flagged **only inside an
+>   active Ship run** (a `.context/ship-run/` marker dir at the repo root). Outside a run, the hook
+>   does not police the user's hand-written comments. The whole-tree `--all` sweep enables both.
+>
+> **Caveat:** the hook only catches `Write`/`Edit` going forward and only where the Ship plugin
+> is enabled. Spec IDs already committed in earlier runs are not swept retroactively — run
+> `bash "${CLAUDE_PLUGIN_ROOT}/hooks/hygiene-scan.sh" --all` once to list them for manual cleanup.
 
 ## What counts as a violation
 

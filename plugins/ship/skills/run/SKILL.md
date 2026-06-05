@@ -740,10 +740,12 @@ an Agent tool dispatch overrides the frontmatter.
    parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
    Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
    and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
-   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` phases are **Haiku
-   orchestrators** (see the Orchestrator-on-Haiku pattern below) — their semantic judgment was
-   front-loaded into `plan` (which emits `plan.md`), so the skill body is deterministic dispatch
-   and the reasoning lives in the Sonnet leaves they fan out.
+   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` **orchestrators are also Sonnet**:
+   although `plan` front-loads the heavy decomposition, their bodies still make non-trivial judgment
+   calls — slicing per-module/per-layer context, **de-identifying** it before injection, dependency
+   ordering, integration checks — and must reliably dispatch rather than narrate. Per the Boundary
+   rule (below), that keeps them at the reasoning tier rather than pinning Haiku. They still fan out
+   Sonnet leaves for the actual code/test generation.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
    to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
@@ -764,8 +766,8 @@ an Agent tool dispatch overrides the frontmatter.
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
 | `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
-| `ship:develop`        | haiku (orchestrator) | Deterministic: reads `plan.md`, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks |
-| `ship:test`           | haiku (orchestrator) | Deterministic: reads Test Scope + `plan.md`, fans out Sonnet `ship-test-*` leaves |
+| `ship:develop`        | sonnet (orchestrator) | Judgment dispatch: slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks. Kept at reasoning tier per the Boundary rule. |
+| `ship:test`           | sonnet (orchestrator) | Judgment dispatch: resolves/de-identifies scenarios by layer, fans out Sonnet `ship-test-*` leaves. Kept at reasoning tier per the Boundary rule. |
 | `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
 | `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
 | `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
@@ -787,17 +789,21 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 1. Set the skill's frontmatter to `model: "haiku"`.
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
-3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
-   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
-   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
-   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
+3. Sub-agents dispatched by an orchestrator run at the tier their own SKILL.md frontmatter
+   declares, not the parent's — e.g. `run` (Haiku) dispatches `develop`/`test`, which run on Sonnet
+   because their frontmatter declares `model: "sonnet"` (they are judgment orchestrators, not pure
+   template phases — see the Boundary note). Pure template/aggregation sub-agents that declare or
+   inherit Haiku stay on Haiku. Note: `homolog` is the exception among the Haiku phases — it is
+   **not** forked (it is an interactive gate), so it runs inline in the caller's context rather than
+   as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
-ambiguous classification), either keep it at session tier or rewrite the judgment as a
-deterministic rule before downgrading. See the multi-task note in `ship:run` for an example
-mitigation (dependency inference removed in favor of deterministic Linear milestone order).
+ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
+pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
+the judgment as a deterministic rule before downgrading. `ship:run` itself stays Haiku by taking
+the latter route — see its multi-task note (dependency inference removed in favor of deterministic
+Linear milestone order).
 
 ---
 
@@ -1023,7 +1029,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator (reads `plan.md`, fans out Sonnet `ship-develop-implement` workers, integrates, typechecks), so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` workers, integrates, and typechecks, so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -1104,7 +1110,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator that fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that resolves/de-identifies scenarios by layer and fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only
@@ -1186,10 +1192,12 @@ an Agent tool dispatch overrides the frontmatter.
    parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
    Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
    and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
-   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` phases are **Haiku
-   orchestrators** (see the Orchestrator-on-Haiku pattern below) — their semantic judgment was
-   front-loaded into `plan` (which emits `plan.md`), so the skill body is deterministic dispatch
-   and the reasoning lives in the Sonnet leaves they fan out.
+   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` **orchestrators are also Sonnet**:
+   although `plan` front-loads the heavy decomposition, their bodies still make non-trivial judgment
+   calls — slicing per-module/per-layer context, **de-identifying** it before injection, dependency
+   ordering, integration checks — and must reliably dispatch rather than narrate. Per the Boundary
+   rule (below), that keeps them at the reasoning tier rather than pinning Haiku. They still fan out
+   Sonnet leaves for the actual code/test generation.
 
 4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
    to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
@@ -1210,8 +1218,8 @@ an Agent tool dispatch overrides the frontmatter.
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
 | `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
-| `ship:develop`        | haiku (orchestrator) | Deterministic: reads `plan.md`, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks |
-| `ship:test`           | haiku (orchestrator) | Deterministic: reads Test Scope + `plan.md`, fans out Sonnet `ship-test-*` leaves |
+| `ship:develop`        | sonnet (orchestrator) | Judgment dispatch: slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks. Kept at reasoning tier per the Boundary rule. |
+| `ship:test`           | sonnet (orchestrator) | Judgment dispatch: resolves/de-identifies scenarios by layer, fans out Sonnet `ship-test-*` leaves. Kept at reasoning tier per the Boundary rule. |
 | `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
 | `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
 | `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
@@ -1233,17 +1241,21 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 1. Set the skill's frontmatter to `model: "haiku"`.
 2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
    sub-agent that does reasoning work (implementation, analysis, generation, correlation).
-3. Sub-agents that themselves do template/aggregation work inherit Haiku from the parent — no
-   explicit model parameter needed (e.g., the `develop`/`test` Haiku orchestrators dispatched by
-   `run` keep Haiku because their own SKILL.md frontmatter already declares `model: "haiku"`).
-   Note: `homolog` is the exception among the Haiku phases — it is **not** forked (it is an
-   interactive gate), so it runs inline in the caller's context rather than as a sub-agent.
+3. Sub-agents dispatched by an orchestrator run at the tier their own SKILL.md frontmatter
+   declares, not the parent's — e.g. `run` (Haiku) dispatches `develop`/`test`, which run on Sonnet
+   because their frontmatter declares `model: "sonnet"` (they are judgment orchestrators, not pure
+   template phases — see the Boundary note). Pure template/aggregation sub-agents that declare or
+   inherit Haiku stay on Haiku. Note: `homolog` is the exception among the Haiku phases — it is
+   **not** forked (it is an interactive gate), so it runs inline in the caller's context rather than
+   as a sub-agent.
 
 **Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
-ambiguous classification), either keep it at session tier or rewrite the judgment as a
-deterministic rule before downgrading. See the multi-task note in `ship:run` for an example
-mitigation (dependency inference removed in favor of deterministic Linear milestone order).
+ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
+pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
+the judgment as a deterministic rule before downgrading. `ship:run` itself stays Haiku by taking
+the latter route — see its multi-task note (dependency inference removed in favor of deterministic
+Linear milestone order).
 
 ---
 

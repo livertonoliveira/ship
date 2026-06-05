@@ -1,14 +1,46 @@
-# Hygiene Gate — deterministic post-generation scan for comments & spec IDs
+# Hygiene Gate — deterministic enforcement for comments & spec IDs
 
-> Canonical, **deterministic** enforcement of the zero-comments / zero-spec-IDs rule.
-> The worker prompts already forbid comments and spec IDs, but a prompt is advice, not a
-> guarantee — an LLM occasionally emits them anyway. This gate is the backstop: a grep over
-> the freshly generated working tree that **catches** violations and **auto-fixes** them before
-> the phase returns. Used by `ship:develop` (source) and `ship:test` (test files).
+> Canonical enforcement of the zero-comments / zero-spec-IDs rule. The worker prompts forbid
+> comments and spec IDs, but a prompt is advice, not a guarantee — an LLM occasionally emits
+> them anyway.
 >
-> The grep is a **tripwire, not a judge**: it flags candidate files cheaply; the dispatched
-> cleanup worker decides what is a genuine comment / spec ID and strips only those, leaving
-> legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
+> **Three layers, distinct roles — do not collapse them:**
+>
+> 0. **Prevention by construction (the real fix): de-identify the worker context.** The
+>    orchestrators strip spec IDs from the scenario/contract text before injecting it into a worker
+>    — what the worker never receives, it cannot echo. See `@ship/patterns/deidentify-context.md`.
+>    This removes the dominant leak path (inline pipeline generation) at the source. The two layers
+>    below are the net for what prevention cannot reach (standalone workers, a Linear key picked up
+>    from the branch, and comments — which have no input to strip).
+> 1. **Detection (genuinely deterministic): the `PostToolUse` hook.** The plugin ships
+>    `hooks/hygiene-scan.sh`, wired as a `PostToolUse` hook on `Write|Edit`. It fires the moment
+>    a file is written, scans *that* file, and on a hit **exits 2** so Claude Code blocks the
+>    turn and feeds the `file:line` violations back to the model — which then renames the
+>    identifier / removes the comment inline (the semantic fix a script cannot do safely). This
+>    layer does **not** depend on any agent choosing to run it; it is the actual guarantee that
+>    nothing passes. It catches violations per-file, at the source, while the model still holds
+>    full context.
+> 2. **Final sweep (belt-and-suspenders): the SKILL step below.** Runs the same grep over the
+>    whole working tree at phase end and dispatches a `Mode: clean` worker for anything left.
+>    With the hook in place this should normally find nothing; it is a redundant safety net, **not**
+>    the primary defense. Never treat this step as the thing standing between you and a leak — the
+>    hook is.
+>
+> The grep is a **tripwire, not a judge**: it flags candidate files cheaply; the model (hook) or
+> the dispatched cleanup worker (sweep) decides what is a genuine comment / spec ID and strips
+> only those, leaving legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
+>
+> **Scope of the hook (two rules, two reaches):**
+> - **Spec IDs** (`REQ-/AC-/SC-/IMPL-/TEST-<n>` + the branch's Linear key) are flagged on **every**
+>   `Write`/`Edit` — they are always wrong in code, and the precise regex never false-positives on
+>   `UTF-8`/`SHA-256`/etc.
+> - **Comments** are a Ship convention, not a universal rule, so they are flagged **only inside an
+>   active Ship run** (a `.context/ship-run/` marker dir at the repo root). Outside a run, the hook
+>   does not police the user's hand-written comments. The whole-tree `--all` sweep enables both.
+>
+> **Caveat:** the hook only catches `Write`/`Edit` going forward and only where the Ship plugin
+> is enabled. Spec IDs already committed in earlier runs are not swept retroactively — run
+> `bash "${CLAUDE_PLUGIN_ROOT}/hooks/hygiene-scan.sh" --all` once to list them for manual cleanup.
 
 ## What counts as a violation
 

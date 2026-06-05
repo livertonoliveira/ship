@@ -4,7 +4,7 @@ description: "Ship Phase 3: fan-out orchestrator — only layers enabled in Test
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 context: fork
 agent: general-purpose
 ---
@@ -28,7 +28,7 @@ Read `.context/ship-run/<task-id>/stack.md` if it exists (fallback: `ship/config
 **Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, read its `## Test Contract` section. Each entry (`@SC-XX -> <layer> -> <test file>` with `arrange/act/assert`) is the concrete test slot already mapped from the scenario by `ship:plan` — the same single interpretation `ship:develop` built code from. Pass each layer's slots to its worker (step 3) so code and tests stay derived from one source instead of two independent reads. If `plan.md` is absent (planner skipped for a `minor`/`trivial` diff, or standalone), fall back to the raw scenarios below.
 
 **If `## Scenarios` was NOT injected inline by the orchestrator** — parse the task's `## Scenarios` Gherkin block from artifacts:
-- **Linear mode**: read the issue body via MCP (`mcp__linear-server__get_issue`). If MCP tools are not available (haiku has no MCP in `allowed-tools`), skip Linear and fall back to local mode — log a warning: `"WARNING: MCP unavailable — falling back to proposal.md for ACs"`.
+- **Linear mode**: read the issue body via MCP (`mcp__linear-server__get_issue`). If MCP tools are not available (this orchestrator's `allowed-tools` does not include MCP), skip Linear and fall back to local mode — log a warning: `"WARNING: MCP unavailable — falling back to proposal.md for ACs"`.
 - **Local mode** (or MCP unavailable): read `ship/changes/<feature>/proposal.md` and extract the `## Acceptance Criteria` section as the scenario source.
 
 Group scenarios by their declared `@layer` tag — do NOT re-classify. Log:
@@ -73,15 +73,18 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
    <relevant diff content or file excerpts>
    ```
    When `## Test Contract` is present, the worker uses those mapped slots (file + arrange/act/assert) as the source of truth and treats `## Scenarios` as the behavioral reference behind them.
-4. Agents that receive these sections inline MUST NOT fall back to standalone discovery mode.
+4. **De-identify before injecting.** Strip the spec-ID tags/tokens from `## Scenarios` and `## Test Contract`, keeping the behavioral steps — so the worker cannot echo an ID it never received. Keep the `SC-XX → test file` mapping in your own notes for the report.
+
+   @ship/patterns/deidentify-context.md
+5. Agents that receive these sections inline MUST NOT fall back to standalone discovery mode.
 
 Pass inline in each agent's prompt: `Artifact language`, `## Scenarios` subset for the layer, list of modified files, task ID.
 
 If some (not all) layers are disabled, after skip logs output: "Layers pulados por configuração: [&lt;list&gt;]. Para habilitá-los, edite `Test Scope` em `ship/config.md`."
 
-## 3b. Hygiene gate (MANDATORY — deterministic)
+## 3b. Hygiene gate — final sweep (MANDATORY)
 
-Test workers are told never to put comments or spec IDs in test files, but that is advice an LLM can slip on. Before consolidating, **verify the generated test files** with the deterministic gate — do not rely on the workers' word:
+The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygiene-scan.sh`), which already blocked any comment/spec-ID at the moment each test file was written. This step is the **final sweep** behind that hook — a whole-tree re-check so nothing slips through if the hook was disabled or the plugin out of date. Do not treat it as the primary defense:
 
 @ship/patterns/hygiene-gate.md
 

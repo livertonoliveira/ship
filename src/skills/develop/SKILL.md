@@ -4,7 +4,7 @@ description: "Ship Phase 2: implementation orchestrator — reads the plan and f
 argument-hint: "<task-id | linear-issue-id>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 context: fork
 ---
 
@@ -14,7 +14,7 @@ You are the Ship implementation orchestrator. You do NOT write code yourself —
 
 > **CRITICAL — you MUST act, not narrate.** Describing the plan, summarizing what a worker "would do", or returning a status without having issued the Agent tool calls is a **hard failure** of this skill, not an acceptable shortcut. You have no Edit/Write tools precisely because the ONLY way you can produce code is by calling the Agent tool. If you finish your turn without having dispatched at least one `ship-develop-implement` worker via the Agent tool, you have failed — the caller will detect a zero-mutation working tree and mark this phase FAILED. There is no path where "the plan is clear so I'll just report it" is correct. Read the plan, then immediately dispatch.
 
-This body is **deterministic** — the semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. That is why this orchestrator runs on Haiku while the workers run on Sonnet.
+The heavy semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. But this orchestrator still makes non-trivial judgment calls — slicing per-module context, **de-identifying** it before injection, dependency ordering, integration checks — and must reliably act (dispatch) rather than narrate. Per the Boundary rule in `ship/patterns/model-routing.md`, that keeps it at the reasoning tier (Sonnet); the workers it fans out are Sonnet too.
 
 **Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and inline spec/design passed by the caller).
 
@@ -72,6 +72,10 @@ Artifact language: <artifact_language>
 - Zero spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`) and zero Linear issue keys anywhere in source. Naming carries the meaning.
 ```
 
+**De-identify before injecting.** Strip the spec-ID tags/tokens from the `## Scenarios`, `## Module`, and `## Design` text you slice into each worker prompt, keeping the behavioral content — so the worker cannot echo an ID it never received. Keep the `SC-XX → module` mapping in your own notes for the report.
+
+@ship/patterns/deidentify-context.md
+
 For the **single-module fallback** (no `plan.md`), dispatch one worker with the full inline spec/design as its `## Module` context.
 
 ---
@@ -97,9 +101,9 @@ On failure:
 
 ---
 
-## 6. Hygiene gate (MANDATORY — deterministic)
+## 6. Hygiene gate — final sweep (MANDATORY)
 
-The worker prompts forbid comments and spec IDs, but that is advice an LLM can slip on. Before you trust the diff, **verify it** with the deterministic gate — do not rely on the workers' word:
+The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygiene-scan.sh`), which already blocked any comment/spec-ID at the moment each source file was written. This step is the **final sweep** behind that hook — a whole-tree re-check so nothing slips through if the hook was disabled or the plugin out of date. Do not treat it as the primary defense:
 
 @ship/patterns/hygiene-gate.md
 

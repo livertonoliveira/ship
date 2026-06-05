@@ -318,7 +318,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
 
-Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator (reads `plan.md`, fans out Sonnet `ship-develop-implement` workers, integrates, typechecks), so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` workers, integrates, and typechecks, so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -399,7 +399,7 @@ Storage mode: <linear|local>
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "haiku"` in its frontmatter — it is a deterministic orchestrator that fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that resolves/de-identifies scenarios by layer and fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 - Use the task's acceptance criteria to guide test generation
 - Generate and run tests scoped to THIS task only
