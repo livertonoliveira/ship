@@ -139,24 +139,11 @@ If tests were created/modified in the diff:
 
 Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
 
-**Severity classification (Code Review):**
-- **critical**: Architectural issue that will cause significant problems if not addressed (e.g., circular dependency, broken abstraction that leaks implementation details across the entire system)
-- **high**: Significant design issue that will make the code hard to maintain/extend (e.g., god class, tight coupling between modules)
-- **medium**: Code smell that should be addressed but does not block (e.g., duplicated logic, overly complex conditional)
-- **low**: Minor improvement opportunity (e.g., naming could be clearer, slightly long function)
+**Severity classification (Code Review):** see `@ship/patterns/severity.md` (## Code Review).
 
 **Before finalizing findings:** read `Severity Overrides` from injected context (or `ship/config.md → Severity Overrides` if not injected). For each override rule (e.g., `high → warn`), downgrade any matching findings accordingly. If the field is absent, no downgrade is applied.
 
-**Finding format** (Code Review pipeline extension):
-
-```markdown
-### [SEVERITY] <Descriptive Title>
-- **Principle:** <SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST>
-- **File:** <path>:<line>
-- **Problem:** <what's wrong and why it matters>
-- **Impact:** <estimated impact>
-- **Suggestion:** <specific fix with code example>
-```
+**Finding format:** use `@ship/report-templates.md#finding-entry` with the Code Review pipeline extension (`Principle` replaces `Category`, `Problem` replaces `Description`).
 
 ---
 
@@ -185,9 +172,7 @@ Format:
 [findings here, ordered by severity]
 ```
 
-**Gate rules:** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
-
-Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate.
+**Gate rules:** see `@ship/patterns/gates.md`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate.
 
 ---
 
