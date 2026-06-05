@@ -41,12 +41,7 @@ Read `Security Focus → categories` from `ship/config.md` (already loaded above
 
 ### Category → OWASP mapping
 
-| Category         | Active OWASP IDs                                 |
-|------------------|--------------------------------------------------|
-| `all` (default)  | A01, A02, A03, A04, A05, A06, A07, A08, A09, A10 |
-| `web-api`        | A01, A02, A03, A05, A07, A08                     |
-| `mobile`         | A01, A02, A03, A07                               |
-| `infrastructure` | A05, A06, A09, A10                               |
+See @ship/patterns/security-categories.md for the full category → OWASP ID mapping and focus-logging format.
 
 Log to user:
 - When `n = 10`: `Audit security focus: all (10/10 OWASP categorias ativas)`
@@ -91,22 +86,23 @@ Scan the entire codebase for:
 
 | Vulnerability | What to look for |
 |---|---|
-| **NoSQL Injection** | User input passed directly to MongoDB/Redis queries without sanitization |
+| **NoSQL Injection** | User input passed directly to MongoDB/Redis queries without sanitization (e.g., `{ email: req.body.email }` where body could be `{ "$gt": "" }`) |
 | **SQL Injection** | String concatenation in SQL, missing parameterized queries, template literals in raw SQL |
 | **Command Injection** | `exec()`, `spawn()`, `eval()`, `Function()` with user input; `child_process` with unsanitized args |
 | **XSS** | User input rendered without escaping, `dangerouslySetInnerHTML`, `innerHTML`, unescaped template interpolation |
 | **SSTI** | User data injected into server-side templates without escaping |
-| **Path Traversal** | File paths constructed with user input without validation |
-| **ReDoS** | Complex regex patterns applied to user input |
+| **Path Traversal** | File paths constructed with user input without validation (`../../etc/passwd`) |
+| **ReDoS** | Complex regex patterns applied to user input that could cause catastrophic backtracking |
 | **Header Injection** | HTTP headers constructed with unsanitized user input |
-| **Log Injection** | User data written directly to logs |
-| **Incomplete Input Validation** | DTOs/schemas missing validation rules, query params without validation, file uploads without type/size checks |
-| **LDAP Injection** | LDAP queries with unsanitized input |
+| **Log Injection** | User data written directly to logs, enabling log forging |
+| **Incomplete Input Validation** | DTOs/schemas missing validation rules, query params without validation, path params not validated, file uploads without type/size checks |
+| **LDAP Injection** | LDAP queries with unsanitized input (if applicable) |
 
 **Stack-specific:**
 - **Node.js/NestJS**: class-validator completeness, Zod schemas, middleware ordering
 - **Python/Django/Flask**: form validation, SQL ORM injection points, template auto-escaping
 - **Go**: `sql.Prepare` usage, template escaping, `os/exec` calls
+- **Any ORM**: raw query usage, query builder injection points
 
 ---
 
@@ -130,7 +126,7 @@ Scan the entire codebase for:
 | Vulnerability | What to look for |
 |---|---|
 | **Missing Authentication** | Endpoints without auth guard/middleware that should be protected |
-| **IDOR** | Resources accessed by ID without ownership verification |
+| **IDOR** | Resources accessed by ID without ownership verification (e.g., `GET /items/:id` without tenant check) |
 | **Mass Assignment** | Fields like `role`, `isAdmin`, `companyId` accepted in request bodies without protection |
 | **Vertical Privilege Escalation** | Regular user reaching admin functionality |
 | **Horizontal Privilege Escalation** | User accessing another user's data at the same permission level |
@@ -168,7 +164,7 @@ Scan the entire codebase for:
 | **Missing Security Headers** | No Helmet/equivalent; missing CSP, HSTS, X-Frame-Options, X-Content-Type-Options |
 | **Missing Rate Limiting** | Auth endpoints, public APIs, or expensive operations without throttling |
 | **Debug Endpoints Exposed** | `/debug`, `/metrics`, `/swagger`, `/graphql` accessible without auth in production |
-| **Default Credentials** | Default credentials not changed on services |
+| **Default Credentials** | Default credentials not changed on services (MongoDB without auth, Redis without password) |
 | **Version Exposed** | `X-Powered-By`, `Server` headers revealing stack and version |
 | **Dependency Vulnerabilities** | Packages with known CVEs — run `pnpm audit` / `npm audit` / `pip-audit` |
 | **Insecure TLS Configuration** | Accepting self-signed certs in production, TLS 1.0/1.1 allowed |
@@ -176,6 +172,7 @@ Scan the entire codebase for:
 **Stack-specific:**
 - **Node.js**: Helmet config, error handler middleware, environment-based debug mode
 - **Python**: `DEBUG=True` in production, Flask debug mode, logging configuration
+- **Any framework**: Error handling middleware, response serialization, logging config
 
 ---
 
@@ -186,20 +183,20 @@ Scan the entire codebase for:
 #### Business Logic
 | Vulnerability | What to look for |
 |---|---|
-| **Race Conditions** | Non-atomic check-then-act (e.g., double-spend, double-booking) |
-| **Validation Bypass** | Validations only on one endpoint but not on another performing the same operation |
+| **Race Conditions** | Non-atomic check-then-act (e.g., double-spend, double-booking); check if operations use transactions or atomic DB operations |
+| **Validation Bypass** | Validations only on one endpoint but not on another that performs the same operation |
 | **Unlimited Resource Creation** | Features allowing unbounded resource creation without quota/rate limit |
 | **State Machine Bypass** | Multi-step flows where steps can be skipped or reordered |
 | **TOCTOU** | Time-of-check to time-of-use: permission check separated from action |
-| **Price/Quantity Tampering** | Calculated values passed from client without server-side recalculation |
+| **Price/Quantity Tampering** | Calculated values (prices, totals, quantities) passed from client without server-side recalculation |
 | **Webhook Verification Missing** | Incoming webhooks not verifying HMAC signatures |
 
 #### Compliance / Privacy (GDPR/LGPD)
 | Requirement | What to look for |
 |---|---|
-| **Missing Data Deletion** | No mechanism to delete user data |
+| **Missing Data Deletion** | No mechanism to delete user data (soft delete may not be sufficient) |
 | **Missing Data Export** | No endpoint for users to export their data |
-| **Data Minimization** | Collecting more personal data than needed |
+| **Data Minimization** | Collecting more personal data than needed for the functionality |
 | **No Data Retention Policy** | Data kept indefinitely without a retention or purge mechanism |
 | **No Audit Trail** | No logging of access to sensitive personal data |
 | **Consent Missing** | Personal data collected without recording consent |
@@ -208,27 +205,9 @@ Scan the entire codebase for:
 
 ## 5. Produce findings
 
-Each sub-agent produces findings in the following format:
+Each sub-agent produces findings per @ship/report-templates.md#finding-entry with the Security audit domain extensions (OWASP, CWE, Vector, Proof of Concept, Effort, Urgent deploy). Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`.
 
-```markdown
-### [SEVERITY] <Descriptive Title>
-- **Category:** INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV
-- **OWASP:** <e.g., A03:2021 Injection>
-- **CWE:** <e.g., CWE-89>
-- **File:** <path>:<line>
-- **Vector:** <how this could be exploited — 1-2 sentences>
-- **Impact:** <what an attacker or a data breach would yield>
-- **Proof of Concept:** <example malicious request/payload — critical/high only>
-- **Fix:** <specific code change with example using the project's patterns>
-- **Effort:** <Hours | Days | Weeks>
-- **Urgent deploy:** <Yes | No>
-```
-
-**Severity:**
-- **critical**: Remote exploitation without authentication, unrestricted access to sensitive data. Requires immediate fix.
-- **high**: Exploitation possible with authentication or specific conditions. Significant impact risk.
-- **medium**: Hard to exploit but relevant impact, or easy to exploit with limited impact.
-- **low**: Theoretical risk, defense-in-depth, or best practice not followed.
+See @ship/patterns/severity.md (## Security) for severity definitions.
 
 Apply `Severity Overrides` from `ship/config.md` before finalizing severities.
 
@@ -261,12 +240,7 @@ Scan routes/controllers to produce:
 
 **Local mode:** Write to `ship/audits/security-<YYYY-MM-DD>.md`
 
-**Linear mode:** Create Linear project + document + milestones + issues per finding using the linear-audit-template:
-- Project name: `Security Audit — <YYYY-MM-DD>`
-- Project description: includes runtime, framework, database, and overall A–F score
-- Issue prefix: `[SEC]`
-- Labels: `security`
-- Each issue uses the Security issue template (Vulnerability, Attack Vector, Impact, Proof of Concept, Fix, Acceptance Criteria, Effort, Urgent deploy)
+**Linear mode:** See @ship/linear-audit-template.md. Apply the Security variation: issue prefix `[SEC]`, label `security` (includes Attack Vector and Proof of Concept fields).
 
 **Report format:**
 
@@ -350,38 +324,11 @@ Scan routes/controllers to produce:
 |------------|----------------|-----------------|
 ```
 
-**Gate rules:** `critical` or `high` → **FAIL** | `medium` → **WARN** | only `low` or none → **PASS**
-
-Apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
+**Gate rules:** See @ship/patterns/gates.md. Apply severity overrides from `ship/config.md → Severity Overrides` before computing the gate.
 
 ### Return JSON summary
 
-After writing the report, output the following JSON block as the **very last content** of your tool result. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
-
-Each `ship:audit:*` agent must output this JSON block as the **very last content** of its tool result. `ship:audit:run` reads it directly from the agent result (already in context) — no file I/O needed.
-
-```json
-{
-  "audit": "security",
-  "gate": "<PASS|WARN|FAIL>",
-  "score": "<A|B|C|D|F>",
-  "counts": {
-    "critical": 0,
-    "high": 0,
-    "medium": 0,
-    "low": 0
-  },
-  "top_findings": [
-    {
-      "id": "<FINDING-ID>",
-      "severity": "<critical|high|medium|low>",
-      "title": "<short title>",
-      "file": "<path/to/file.ts:line>"
-    }
-  ],
-  "report_path": "ship/audits/security-<YYYY-MM-DD>.md"
-}
-```
+After writing the report, emit the JSON summary block per @ship/patterns/audit-summary-schema.md with `audit: security` and `report_path: ship/audits/security-<YYYY-MM-DD>.md`, as the very last content of your tool result.
 
 ---
 
