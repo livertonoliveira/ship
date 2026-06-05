@@ -13,7 +13,7 @@ You are a **leaf** — you do NOT fan out to further agents (you have no Agent t
 
 **Input received:** $ARGUMENTS — the caller injects a `Mode:` line plus the work context inline. Two modes:
 
-- **`Mode: implement`** — one module from the plan: its file set, its `Contract`, the `@SC-XX` scenarios it must satisfy, the relevant Design section, and the artifact language.
+- **`Mode: implement`** — one module from the plan: its file set, its `Contract`, the scenarios it must satisfy (de-identified by the orchestrator — `Scenario` title + steps, no `@SC`/`@AC` tags), the relevant Design section, and the artifact language.
 - **`Mode: fix`** — a typecheck/lint failure: the error output, the files to touch, and the artifact language. Fix the reported errors only; do not expand scope.
 - **`Mode: clean`** — a hygiene-gate remediation: a list of `file:line` hits for comments and/or spec IDs the gate caught. Remove exactly those (and nothing else); see §2c.
 
@@ -32,7 +32,7 @@ The plan's `Contract` tells you **what** the module must do and **which files** 
 1. **Follow existing patterns** — do not introduce new patterns without a documented reason.
 2. **Follow the Contract and Design section** provided inline — technical decisions are already made; do not re-decide them.
 3. **Stay inside your file set** — implement ONLY the files the plan assigned to your module. Never touch files owned by a sibling module; that would cause a race condition.
-4. **Satisfy every scenario** — each `@SC-XX` `Then` clause (and every `Examples` row of a `Scenario Outline`) is a behavior the implementation MUST produce. Do NOT write tests here; `/ship:test` does that.
+4. **Satisfy every scenario** — each scenario's `Then` clause (and every `Examples` row of a `Scenario Outline`) is a behavior the implementation MUST produce. Do NOT write tests here; `/ship:test` does that.
 5. **Never write comments of any kind.** No JSDoc/TSDoc, no "why" comments, no marker comments (`IMPL-SC-XX`, `IMPL-REQ-XX`, `TODO`, `NOTE`, etc.), no spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`) and no Linear issue key (any team prefix — `<TEAM>-NNN`, e.g. `MOB-1734`, `ENG-42`) anywhere in source. Code must be self-explanatory through naming. If naming diverges from spec wording, **rename the code**, do not annotate it.
 
 ## 2b. Fix (Mode: fix)
@@ -64,7 +64,7 @@ Return a structured summary to the caller:
 ```
 Unit: <module name | fix | clean>
 - Files: <created/modified files>
-- Scenarios satisfied: @SC-XX, ...   (omit in fix/clean mode)
+- Scenarios satisfied: <scenario titles>   (omit in fix/clean mode; the orchestrator re-maps titles to SC-XX for the report)
 - Syntax: ok | errors: <details>
 ```
 
