@@ -155,7 +155,7 @@ Open the findings markdown file for this phase, then filter before embedding:
        - [x] User has verified acceptance criteria
        - [x] User approves for PR — Approved on YYYY-MM-DD (direct /ship:pr)
        ```
-     - `mcp__linear-server__save_issue`: transition the issue to its completed state. **Do not pass the literal `"Done"`** — resolve the team's completed-state name per # Linear Status — resolve, set, and verify workflow-state transitions
+     - Transition the issue to its completed state by following the **full** recipe in # Linear Status — resolve, set, and verify workflow-state transitions
 
 > Canonical recipe for moving a task issue between workflow states.
 > Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
@@ -216,7 +216,7 @@ a name-agnostic check.
 If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
 may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
 to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
-loop indefinitely..
+loop indefinitely. — resolve the target, call `mcp__linear-server__save_issue`, **then verify with `get_issue` that `state.type == "completed"` and retry once if it did not stick.** Do **not** pass the literal `"Done"` and do **not** stop after a single `save_issue` call: the set silently no-ops when the resolved name is stale, and this fast path has no later safety net. If it still fails after one retry, surface it to the user with the resolved value instead of proceeding silently.
 
        Then re-fetch `mcp__linear-server__list_comments` **once** and replace the cached result, so the downstream Quality Report Aggregation (Step 6) and Step C see the comment just posted.
    - **Local mode:** write/update `ship/changes/<feature>/report.md` with the consolidated report and the same Homologation block, and mark `tasks.md` item 4.1 as completed.
@@ -552,13 +552,74 @@ EOF
 > Call `mcp__linear-server__save_comment` to post a comment on the issue with the PR URL.
 > The comment must include the PR URL and a brief summary (e.g., "PR created: <url>").
 
-> **MANDATORY STEP C — Verify both quality report AND PR link exist on issue**
+> **MANDATORY STEP C — Verify the quality report, the PR link, AND the issue state**
 >
 > The quality report comment was already verified via the cached result from Prerequisites — no extra call needed for it.
 > Use the **cached `list_comments` result** to confirm the quality report is present. If it is missing, warn the user (homolog did not complete properly).
 > The PR link comment was just posted above (Step B) — trust it succeeded unless the call returned an error.
 >
-> Do NOT change the issue status — it was already set to "Done" during homolog approval (or during the implicit homologation in Prerequisite 1).
+> **Re-read the issue state.** Call `mcp__linear-server__get_issue` and confirm `state.type == "completed"`. The transition was supposed to happen during homolog approval or the implicit homologation in Prerequisite 1, but a `save_issue` no-op (stale state name) can leave it open silently. If `state.type != "completed"`, transition it now by following the full recipe in # Linear Status — resolve, set, and verify workflow-state transitions
+
+> Canonical recipe for moving a task issue between workflow states.
+> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
+
+A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
+or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
+ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
+does not match, the transition silently no-ops and the issue is left in its previous state.
+
+Because a state **ID** never changes on rename, prefer resolving to the target state's **ID** and
+passing that to `save_issue` — it is the only match key that cannot silently no-op. Fall back to the
+state **name** only when an ID is not available. Either way, always verify (step 3) — verification is
+what turns a silent no-op into a caught, retriable failure.
+
+Likewise, `get_issue_status` does **not** read an issue's current state — it requires
+`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
+currently in, use `get_issue` and inspect its `state` field.
+
+Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
+
+| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
+|------------|---------------------|--------------------------------------|--------------|
+| Start work | `started`           | `In Progress Status`                 | `In Progress` |
+| Complete   | `completed`         | `Done Status`                        | `Done` |
+
+---
+
+## 1. Resolve the target state (do this once per transition)
+
+1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
+   `ship/config.md → Linear Integration`.
+2. If the field is present and not `not configured`, use it as the target state name. To get the
+   unambiguous **ID** (preferred — see below), call `mcp__linear-server__list_issue_statuses` with
+   the `Team ID` and pick the state whose `type` matches the transition (`started`/`completed`),
+   preferring the one whose name equals the configured name; use its `id`. If you cannot list
+   statuses, fall back to passing the configured name.
+3. If the config field is **absent** (older config) or `not configured`: call
+   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
+   matches the transition (`started` or `completed`), and use its **`id`** as the target. If more
+   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
+   for started; `Done`/`Concluído` for completed); otherwise take the first.
+
+Call the resolved value `<target-state>` — an ID whenever one was obtained, otherwise a name.
+
+## 2. Set the state
+
+Call `mcp__linear-server__save_issue` with:
+- `id`: the task issue identifier (e.g., `MOB-1147`)
+- `state`: `<target-state>` — pass the resolved **ID** when available (immune to renames); a name
+  only as the fallback.
+
+## 3. Verify (never use `get_issue_status` for this)
+
+Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
+The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
+a name-agnostic check.
+
+If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
+may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
+to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
+loop indefinitely. (resolve → set → verify), then continue.
 
 **Local mode:**
 1. Update `tasks.md`: mark item 4.2 (PR created) as completed
@@ -624,5 +685,5 @@ If `Artifact language` is already injected inline in the current prompt (e.g., b
 
 Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Verify acceptance**: never create a PR without recorded acceptance. Acceptance is recorded either by a prior `/ship:homolog` approval or, on the direct fast path, by the explicit `/ship:pr` invocation itself (which triggers implicit homologation in Prerequisite 1) — never silently skip posting the quality report and closing the issue
-- **Linear mode**: attach PR URL and post PR link comment — do NOT change issue status (already "Done" from homolog)
+- **Linear mode**: attach PR URL and post PR link comment, and verify the issue reached its completed state (Step C) — re-driving the transition only if a prior `save_issue` no-op left it open
 - **Local mode**: archive the feature folder after PR creation

@@ -63,7 +63,7 @@ Triggered **only** when the approval marker is absent. The user's explicit `/shi
        - [x] User has verified acceptance criteria
        - [x] User approves for PR — Approved on YYYY-MM-DD (direct /ship:pr)
        ```
-     - `mcp__linear-server__save_issue`: transition the issue to its completed state. **Do not pass the literal `"Done"`** — resolve the team's completed-state name per @ship/patterns/linear-status.md.
+     - Transition the issue to its completed state by following the **full** recipe in @ship/patterns/linear-status.md — resolve the target, call `mcp__linear-server__save_issue`, **then verify with `get_issue` that `state.type == "completed"` and retry once if it did not stick.** Do **not** pass the literal `"Done"` and do **not** stop after a single `save_issue` call: the set silently no-ops when the resolved name is stale, and this fast path has no later safety net. If it still fails after one retry, surface it to the user with the resolved value instead of proceeding silently.
 
        Then re-fetch `mcp__linear-server__list_comments` **once** and replace the cached result, so the downstream Quality Report Aggregation (Step 6) and Step C see the comment just posted.
    - **Local mode:** write/update `ship/changes/<feature>/report.md` with the consolidated report and the same Homologation block, and mark `tasks.md` item 4.1 as completed.
@@ -218,13 +218,13 @@ EOF
 > Call `mcp__linear-server__save_comment` to post a comment on the issue with the PR URL.
 > The comment must include the PR URL and a brief summary (e.g., "PR created: <url>").
 
-> **MANDATORY STEP C — Verify both quality report AND PR link exist on issue**
+> **MANDATORY STEP C — Verify the quality report, the PR link, AND the issue state**
 >
 > The quality report comment was already verified via the cached result from Prerequisites — no extra call needed for it.
 > Use the **cached `list_comments` result** to confirm the quality report is present. If it is missing, warn the user (homolog did not complete properly).
 > The PR link comment was just posted above (Step B) — trust it succeeded unless the call returned an error.
 >
-> Do NOT change the issue status — it was already set to "Done" during homolog approval (or during the implicit homologation in Prerequisite 1).
+> **Re-read the issue state.** Call `mcp__linear-server__get_issue` and confirm `state.type == "completed"`. The transition was supposed to happen during homolog approval or the implicit homologation in Prerequisite 1, but a `save_issue` no-op (stale state name) can leave it open silently. If `state.type != "completed"`, transition it now by following the full recipe in @ship/patterns/linear-status.md (resolve → set → verify), then continue.
 
 **Local mode:**
 1. Update `tasks.md`: mark item 4.2 (PR created) as completed
@@ -279,5 +279,5 @@ Inform the user:
 - **Never force push**: unless the user explicitly requests it
 - **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
 - **Verify acceptance**: never create a PR without recorded acceptance. Acceptance is recorded either by a prior `/ship:homolog` approval or, on the direct fast path, by the explicit `/ship:pr` invocation itself (which triggers implicit homologation in Prerequisite 1) — never silently skip posting the quality report and closing the issue
-- **Linear mode**: attach PR URL and post PR link comment — do NOT change issue status (already "Done" from homolog)
+- **Linear mode**: attach PR URL and post PR link comment, and verify the issue reached its completed state (Step C) — re-driving the transition only if a prior `save_issue` no-op left it open
 - **Local mode**: archive the feature folder after PR creation
