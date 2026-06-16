@@ -234,6 +234,8 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
+**Persist spec + design to the scratch dir (once).** Write the full task spec — issue description + ACs + `@SC-XX` scenarios + the Proposal document (REQ-XX requirements) — to `.context/ship-run/<task-id>/spec.md`, and the full Design document to `.context/ship-run/<task-id>/design.md`. The `plan`, `develop`, and `analyze` phases read these files from the scratch dir instead of having them re-inlined into every dispatch — capture them here once. In Local mode, source them from `proposal.md`/`design.md`; still write the scratch copies so every phase has a single canonical path.
+
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
 > **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted. Decide from the **baseline** classification (step 0.7), which measures only work that existed *before* this run:
@@ -255,11 +257,7 @@ Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 
-## Spec
-<inline: issue description + ACs + @SC-XX scenarios>
-
-## Design
-<inline: full design document content>
+Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline).
 ```
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -276,11 +274,7 @@ Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 
-## Spec
-<inline: issue description + ACs>
-
-## Design
-<inline: full design document content>
+Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline).
 ```
 
 **Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module.
@@ -411,7 +405,7 @@ Stack: <stack>
 Severity Overrides: <severity-overrides or "none">
 
 ## Diff
-<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
 **Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-security`. Pass all context inline:
@@ -428,7 +422,7 @@ Security Focus: <security-focus-category>
 Severity Overrides: <severity-overrides or "none">
 
 ## Diff
-<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
@@ -520,7 +514,7 @@ Continue automatically.
 
 Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so drift correlation (spec↔code↔tests) runs in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-- Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
+- Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; not injected inline)
 - Use the code diff from `.context/ship-run/<task-id>/diff.md`
 - Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
 - Pass results to the Correlation Engine
