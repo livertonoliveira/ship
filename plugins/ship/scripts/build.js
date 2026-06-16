@@ -72,34 +72,56 @@ function extractSection(content, anchor, refLabel, skillRelPath) {
   return lines.slice(start, end).join('\n').trim();
 }
 
+function titleCase(slug) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+// A repeated reference to a pattern already inlined earlier in the SAME output
+// file becomes a short textual pointer instead of a second full copy. The first
+// occurrence carries the content; later ones (typically prose cross-references
+// like "see @ship/patterns/gates.md → Edge case 4") just point back to it. This
+// keeps each pattern's body in the built file exactly once.
+function pointerFor(ref, anchor) {
+  if (anchor) {
+    return `the ${titleCase(anchor)} section (included above)`;
+  }
+  return `the ${path.basename(ref)} pattern (included above)`;
+}
+
 function resolveRefs(content, skillRelPath) {
-  let result = content;
-  let depth = 0;
+  const seen = new Set();
 
-  while (true) {
-    if (!HAS_REF.test(result)) break;
-
+  function expand(text, depth) {
     if (depth >= MAX_DEPTH) {
       console.error(`Erro: possível referência circular em ${skillRelPath} (profundidade máxima ${MAX_DEPTH} atingida)`);
       process.exit(1);
     }
 
-    result = result.replace(REPLACE_REF, (match, ref, anchor) => {
+    return text.replace(REPLACE_REF, (match, ref, anchor) => {
+      const refKey = anchor ? `${ref}#${anchor}` : ref;
+
+      if (seen.has(refKey)) {
+        return pointerFor(ref, anchor);
+      }
+      seen.add(refKey);
+
       const refPath = path.join(SOURCE_ROOT, ref);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);
         process.exit(1);
       }
       const fileContent = readFileCached(refPath).trim();
-      const refLabel = anchor ? `${ref}#${anchor}` : ref;
-      console.log(`  ${skillRelPath} ← @ship/${refLabel}`);
-      return anchor ? extractSection(fileContent, anchor, refLabel, skillRelPath) : fileContent;
+      console.log(`  ${skillRelPath} ← @ship/${refKey}`);
+      const body = anchor ? extractSection(fileContent, anchor, refKey, skillRelPath) : fileContent;
+      return expand(body, depth + 1);
     });
-
-    depth++;
   }
 
-  return result;
+  return expand(content, 0);
 }
 
 function walkAgentFiles(dir, results = []) {
