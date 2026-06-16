@@ -63,7 +63,7 @@ Triggered **only** when the approval marker is absent. The user's explicit `/shi
        - [x] User has verified acceptance criteria
        - [x] User approves for PR — Approved on YYYY-MM-DD (direct /ship:pr)
        ```
-     - Transition the issue to its completed state by following the **full** recipe in @ship/patterns/linear-status.md — resolve the target, call `mcp__linear-server__save_issue`, **then verify with `get_issue` that `state.type == "completed"` and retry once if it did not stick.** Do **not** pass the literal `"Done"` and do **not** stop after a single `save_issue` call: the set silently no-ops when the resolved name is stale, and this fast path has no later safety net. If it still fails after one retry, surface it to the user with the resolved value instead of proceeding silently.
+     - Transition the issue to its completed state by following the **full** recipe in @@ship/patterns/linear-status.md — resolve the target, call `mcp__linear-server__save_issue`, **then verify with `get_issue` that `state.type == "completed"` and retry once if it did not stick.** Do **not** pass the literal `"Done"` and do **not** stop after a single `save_issue` call: the set silently no-ops when the resolved name is stale, and this fast path has no later safety net. If it still fails after one retry, surface it to the user with the resolved value instead of proceeding silently.
 
        Then re-fetch `mcp__linear-server__list_comments` **once** and replace the cached result, so the downstream Quality Report Aggregation (Step 6) and Step C see the comment just posted.
    - **Local mode:** write/update `ship/changes/<feature>/report.md` with the consolidated report and the same Homologation block, and mark `tasks.md` item 4.1 as completed.
@@ -224,7 +224,7 @@ EOF
 > Use the **cached `list_comments` result** to confirm the quality report is present. If it is missing, warn the user (homolog did not complete properly).
 > The PR link comment was just posted above (Step B) — trust it succeeded unless the call returned an error.
 >
-> **Re-read the issue state.** Call `mcp__linear-server__get_issue` and confirm `state.type == "completed"`. The transition was supposed to happen during homolog approval or the implicit homologation in Prerequisite 1, but a `save_issue` no-op (stale state name) can leave it open silently. If `state.type != "completed"`, transition it now by following the full recipe in @ship/patterns/linear-status.md (resolve → set → verify), then continue.
+> **Re-read the issue state.** Call `mcp__linear-server__get_issue` and confirm `state.type == "completed"`. The transition was supposed to happen during homolog approval or the implicit homologation in Prerequisite 1, but a `save_issue` no-op (stale state name) can leave it open silently. If `state.type != "completed"`, transition it now by following the full recipe in @@ship/patterns/linear-status.md (resolve → set → verify), then continue.
 
 **Local mode:**
 1. Update `tasks.md`: mark item 4.2 (PR created) as completed
