@@ -58,6 +58,18 @@ For each `@SC-XX`, derive the concrete test slot **without recreating the scenar
 
 ---
 
+## 4.5. AC outcome completeness (close sub-AC coverage gaps)
+
+The `@SC-XX` scenarios are the test source of truth, but an AC can require **more outcomes than the scenarios enumerate**. A single AC like *"watching applies ×N; **skipping or unavailable** applies base"* has **three** distinct outcomes, yet the spec may ship only two scenarios — leaving a conditional branch with no test. `ship:analyze` matches at AC granularity (Jaccard over the whole AC text), so it scores such an AC as "covered" and **cannot** see the missing branch. You are the only phase that holds both the ACs and the scenarios, so you must close this gap here.
+
+For **each AC**, enumerate its distinct **outcomes** — the mutually-exclusive result branches its wording implies. Signals of a branch: `ou` / `or`, `senão` / `otherwise`, `se … / caso …` / `if … / when …`, `indisponível` / `unavailable`, `falha` / `failure`, negations, and any "X does A, Y does B" contrast. A flat AC with one result is one outcome.
+
+Then check each outcome maps to **at least one** `@SC-XX`. For every outcome with **no** scenario:
+- **Synthesize a derived test slot** in the Test Contract so the branch gets a test. Mark it `(derived: no @SC)` and infer its layer from the sibling scenarios of the same AC (fall back to `unit`).
+- **Record it** under a `## Coverage Gaps` section in `plan.md` so the gap is visible downstream and the user can backfill a real scenario at spec time.
+
+Do **not** invent behavior the AC does not state — only enumerate outcomes the AC's own wording requires. When an AC is genuinely single-outcome, add nothing.
+
 ## 5. Prescription boundary (do not over-specify)
 
 Stay strictly on the **what / where**, never the **how**:
@@ -106,6 +118,13 @@ Write `plan.md` to the scratch dir (`.context/ship-run/<task-id>/plan.md`). Exac
 - arrange: ...
 - act: ...
 - assert: ...
+### AC-07 (skip outcome) -> unit -> <test file> (derived: no @SC)
+- arrange: <outcome's precondition>
+- act: <outcome's trigger>
+- assert: <outcome's expected result>
+
+## Coverage Gaps
+- AC-07 outcome "skip applies base reward" had no @SC scenario — derived test slot added; backfill a real scenario at spec time.
 
 ## Parallelism
 - Parallel batch: M1, M3
@@ -118,7 +137,7 @@ In **standalone** invocation with no scratch dir, print the plan to the user ins
 
 ## 7. Report
 
-Summarize to the caller in the artifact language: number of modules, the parallel batches, and how many scenarios were mapped to each layer. Do not echo the full `plan.md` back — it lives in the scratch dir.
+Summarize to the caller in the artifact language: number of modules, the parallel batches, and how many scenarios were mapped to each layer. If `## Coverage Gaps` is non-empty, list each AC outcome that lacked a scenario and got a derived test slot — the caller surfaces these so the user can backfill real scenarios. Do not echo the full `plan.md` back — it lives in the scratch dir.
 
 ---
 
