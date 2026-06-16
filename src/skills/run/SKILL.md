@@ -174,7 +174,7 @@ Run the deterministic classification exactly as specified in @ship/patterns/diff
 
    **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
 
-   **Determine the phases tier** from the Ship model-routing policy in @ship/patterns/model-routing.md. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
+   **Determine the phases tier** from the Ship model-routing policy — read `@@ship/patterns/model-routing.md`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -220,7 +220,7 @@ Run the deterministic classification exactly as specified in @ship/patterns/diff
 >
 > Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
 >
-> @ship/patterns/linear-status.md
+> Read `@@ship/patterns/linear-status.md` and follow that recipe.
 >
 > Then call `mcp__linear-server__save_issue` with `state: <target-state>` right now.
 > Do NOT continue to the development phase until this API call is confirmed.
@@ -389,7 +389,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Sonnet per @ship/patterns/model-routing.md.
+The orchestrator itself runs on Sonnet per @@ship/patterns/model-routing.md.
 
 **Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
@@ -468,7 +468,7 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Iteration limit**: Track a `$FIX_ITERATION` counter (starting at 1 for the first fix attempt). Before each fix attempt, check: if `$FIX_ITERATION > 3`, abort the pipeline immediately — inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária." Do NOT proceed to acceptance. Increment the counter after each fix.
 
-> **Rationale, edge cases, and scope mapping** for this procedure live in @ship/patterns/gates.md ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
+> **Read `@@ship/patterns/gates.md` completely before applying this procedure.** Its rationale, edge cases, and scope mapping ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") live there — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
 
 **Pre-fix snapshot** — run the content-snapshot idiom from step 0.5, writing to `.context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
 
@@ -483,7 +483,7 @@ After the fix agent completes, determine which quality phases to re-run:
             .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the resulting file list is **empty** (fix made no working-tree changes), apply @ship/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
+   If the resulting file list is **empty** (fix made no working-tree changes), apply @@ship/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
 
 3. **If `on_fail_rerun: all`**: re-run all quality phases that were originally enabled (same set as Phase 4). Skip the scope mapping below.
 
@@ -491,13 +491,13 @@ After the fix agent completes, determine which quality phases to re-run:
 
    a. The modified files list was already computed in step 2 above.
 
-   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
+   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @@ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
 
-   c. **Apply the phase → scope mapping** from @ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
+   c. **Apply the phase → scope mapping** from @@ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
 
    d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
 
-   e. **Log the decision** before launching agents, in the format defined in @ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
+   e. **Log the decision** before launching agents, in the format defined in @@ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
    f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
@@ -535,7 +535,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
 - Gate **PASS** → continue to Phase 7
 
-**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see @ship/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
+**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see @@ship/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
 
 ### 7. PHASE: User Acceptance
 
@@ -577,7 +577,7 @@ After homolog approval:
    > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
    > First, resolve the team's **completed**-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > @ship/patterns/linear-status.md
+   > Read `@@ship/patterns/linear-status.md` and follow that recipe.
    > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
    >
    > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.

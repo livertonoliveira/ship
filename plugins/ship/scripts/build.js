@@ -19,6 +19,14 @@ const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/[^\s)]+\.md(?:#[A-Za-z0-9_-]+)?/;
 const REPLACE_REF = /@ship\/([^\s)]+\.md)(?:#([A-Za-z0-9_-]+))?/g;
 
+// Lazy reference: `@@ship/<path>.md`. Unlike `@ship/...` (inlined at build time),
+// a lazy ref is NOT inlined — the referenced file is copied next to the skill and
+// the token is replaced with `${CLAUDE_SKILL_DIR}/<path>.md`, a render-time
+// substitution that resolves to an absolute path so the model can Read the file
+// on demand. This keeps heavy/conditional patterns out of the always-loaded skill
+// body. Skills only — agents have no ${CLAUDE_SKILL_DIR}. Whole-file only (no #anchor).
+const REPLACE_LAZY = /@@ship\/([^\s)]+\.md)(#[A-Za-z0-9_-]+)?/g;
+
 const readCache = new Map();
 
 function readFileCached(absPath) {
@@ -124,6 +132,31 @@ function resolveRefs(content, skillRelPath) {
   return expand(content, 0);
 }
 
+// Process `@@ship/...` lazy refs in a skill: copy each referenced source file
+// next to the skill's SKILL.md (preserving its relative path) and replace the
+// token with `${CLAUDE_SKILL_DIR}/<path>`. Inline @ship refs inside the copied
+// file are resolved first so the runtime copy is self-contained. Returns the
+// rewritten content. `skillOutDir` is the skill's output directory.
+function processLazyRefs(content, skillRelPath, skillOutDir) {
+  return content.replace(REPLACE_LAZY, (match, ref, anchor) => {
+    if (anchor) {
+      console.error(`Erro: lazy ref com âncora não é suportado em ${skillRelPath}: @@ship/${ref}${anchor} (lazy é whole-file; remova a âncora ou use @ship inline)`);
+      process.exit(1);
+    }
+    const srcPath = path.join(SOURCE_ROOT, ref);
+    if (!fs.existsSync(srcPath)) {
+      console.error(`Erro: lazy ref quebrada em ${skillRelPath}: @@ship/${ref}`);
+      process.exit(1);
+    }
+    const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
+    const destPath = path.join(skillOutDir, ref);
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, resolved, 'utf8');
+    console.log(`  ${skillRelPath} ⇢ @@ship/${ref} (bundled, lazy)`);
+    return '${CLAUDE_SKILL_DIR}/' + ref;
+  });
+}
+
 function walkAgentFiles(dir, results = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -142,9 +175,10 @@ function buildSkills() {
   for (const skillPath of skillFiles) {
     const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
     const raw = fs.readFileSync(skillPath, 'utf8');
-    const substituted = resolveRefs(raw, skillRelPath);
     const outPath = path.join(OUTPUT_SKILLS, skillRelPath);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const lazyResolved = processLazyRefs(raw, skillRelPath, path.dirname(outPath));
+    const substituted = resolveRefs(lazyResolved, skillRelPath);
     fs.writeFileSync(outPath, substituted, 'utf8');
     console.log(`✓ skills/${skillRelPath}`);
     count++;

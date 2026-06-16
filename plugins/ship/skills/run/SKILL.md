@@ -611,178 +611,7 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
    **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
 
-   **Determine the phases tier** from the Ship model-routing policy in # Model Routing Policy
-
----
-
-## Principle
-
-Ship pins the model per skill instead of inheriting from the session. This decouples cost
-control from quality: users can pick Haiku as their session model to economize across the
-weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
-analysis, generation, correlation). Symmetrically, pure template/control-flow skills (report
-rendering, findings aggregation, PR expansion, one-shot config setup) are pinned to Haiku because
-they gain nothing from a higher tier. Judgment-heavy orchestrators (`run`, `develop`, `test`) stay
-on the reasoning tier even though they also dispatch — see the Boundary rule.
-
-This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
-an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
-frontmatter `model:` field overrides the session tier, and an explicit `model:` parameter on
-an Agent tool dispatch overrides the frontmatter.
-
----
-
-## Rules
-
-1. **Use only tier aliases** — `"haiku"`, `"sonnet"`, `"opus"`. Never use versioned IDs like
-   `claude-haiku-4-5-20251001`. Aliases resolve dynamically to the latest model in that tier,
-   eliminating churn when models are upgraded.
-
-2. **Template phases declare `model: "haiku"` in SKILL.md frontmatter.**
-
-3. **Reasoning units declare `model: "sonnet"` in frontmatter.** They never inherit from the
-   parent session — Sonnet is pinned so behavior is identical standalone or via an orchestrator.
-   Sonnet reasoning lives in the `plan`, `perf`, `security`, `review`, `analyze`, `spec` skills
-   and all `audit:*` skills except `audit:run`; plus the leaf workers `ship-develop-implement`
-   and `ship-test-{unit,integration,e2e}`. The `develop` and `test` **orchestrators are also Sonnet**:
-   although `plan` front-loads the heavy decomposition, their bodies still make non-trivial judgment
-   calls — slicing per-module/per-layer context, **de-identifying** it before injection, dependency
-   ordering, integration checks — and must reliably dispatch rather than narrate. Per the Boundary
-   rule (below), that keeps them at the reasoning tier rather than pinning Haiku. They still fan out
-   Sonnet leaves for the actual code/test generation.
-
-4. **Reasoning agents launched by Haiku orchestrators must pass `model: "sonnet"` explicitly**
-   to the Agent tool call. Redundant with rule 3 (the frontmatter would already pin Sonnet),
-   but kept as a belt-and-suspenders so the dispatch site is self-documenting and any future
-   reasoning skill added without `model: "sonnet"` in frontmatter still runs on Sonnet when
-   dispatched. The symmetric rule also holds: **consolidation/template agents inside Sonnet
-   contexts** (e.g., the Step 5 agent in `ship:audit:run`) must pass `model: "haiku"` explicitly.
-
----
-
-## Phase classification
-
-| Skill / Phase         | Tier    | Reason                                          |
-|-----------------------|---------|-------------------------------------------------|
-| `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
-| `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:run`            | sonnet (orchestrator) | Judgment dispatch: although much of the body is control-flow (file reads, deterministic diff classification, gate eval, dispatch), the working-tree diff refresh, surgical re-run scoping, and gate decisions proved to need reliable multi-step instruction-following that Haiku fumbled in practice (e.g. corrupting `diff.md` / staged-vs-unstaged confusion). Pinned to the reasoning tier per the Boundary rule. Still spawns Sonnet leaves for code/test generation. |
-| `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
-| `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
-| `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
-| `ship:develop`        | sonnet (orchestrator) | Judgment dispatch: slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` leaves, integrates, typechecks. Kept at reasoning tier per the Boundary rule. |
-| `ship:test`           | sonnet (orchestrator) | Judgment dispatch: resolves/de-identifies scenarios by layer, fans out Sonnet `ship-test-*` leaves. Kept at reasoning tier per the Boundary rule. |
-| `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | sonnet (leaf) | Code / test generation — needs full reasoning |
-| `ship:perf`           | sonnet   | Performance analysis — needs full reasoning     |
-| `ship:security`       | sonnet   | Security analysis — needs full reasoning        |
-| `ship:review`         | sonnet   | Code review — needs full reasoning              |
-| `ship:analyze`        | sonnet   | Drift detection — needs full reasoning          |
-| `ship:spec`           | sonnet   | Deep specification — needs full reasoning       |
-| `ship:audit:*`        | sonnet   | Project-wide audits — needs full reasoning      |
-
----
-
-## Orchestrator-on-Haiku pattern
-
-When a skill is mostly **control-flow and dispatch** — reading files, running deterministic
-bash for classification, evaluating gates, spawning sub-agents, aggregating results — its body
-gains nothing from a session-tier model. The expensive reasoning lives inside the sub-agents.
-
-For these skills, apply the **Orchestrator-on-Haiku pattern**:
-
-1. Set the skill's frontmatter to `model: "haiku"`.
-2. In every Agent tool dispatch inside the skill, pass `model: "sonnet"` explicitly for any
-   sub-agent that does reasoning work (implementation, analysis, generation, correlation).
-3. Sub-agents dispatched by an orchestrator run at the tier their own SKILL.md frontmatter
-   declares, not the parent's — e.g. `run` (Haiku) dispatches `develop`/`test`, which run on Sonnet
-   because their frontmatter declares `model: "sonnet"` (they are judgment orchestrators, not pure
-   template phases — see the Boundary note). Pure template/aggregation sub-agents that declare or
-   inherit Haiku stay on Haiku. Note: `homolog` is the exception among the Haiku phases — it is
-   **not** forked (it is an interactive gate), so it runs inline in the caller's context rather than
-   as a sub-agent.
-
-**Boundary**: only apply this pattern when the orchestrator's body is genuinely deterministic.
-If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
-ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
-pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
-the judgment as a deterministic rule before downgrading. `ship:run` was originally pinned Haiku via
-the latter route, but observed runs showed its diff-refresh, surgical re-run scoping, and gate
-decisions still demanded reliable multi-step judgment Haiku did not deliver consistently — so it is
-now pinned `model: "sonnet"`. It keeps its deterministic guardrails regardless (exact diff-capture
-command + unified-diff assertion; deterministic Linear milestone ordering with no dependency
-inference). The remaining Haiku orchestrators (`homolog`, `pr`, `init`, `audit:run` consolidation)
-stay Haiku because their bodies are genuinely template/aggregation; revisit individually if a
-quality regression is observed (e.g. `pr` conflict resolution / strict-mode gate eval).
-
----
-
-## How to apply
-
-### In SKILL.md frontmatter (for skills that are themselves template phases):
-
-```yaml
----
-name: ship:homolog
-model: "haiku"
-# ... other fields
----
-```
-
-### In Agent tool calls (Haiku orchestrator launching reasoning sub-agents):
-
-Pass `model: "sonnet"` when calling the Agent tool for reasoning work:
-
-```
-Use the Agent tool to execute development. Pass model: "sonnet" to this agent —
-implementation requires full reasoning.
-```
-
-### In Agent tool calls (Sonnet orchestrator launching consolidation sub-agents):
-
-Pass `model: "haiku"` when calling the Agent tool for consolidation work:
-
-```
-Use the Agent tool to consolidate results. Pass model: "haiku" to this agent —
-it performs template/report aggregation, not reasoning.
-```
-
----
-
-## How to verify routing at runtime
-
-Self-attestation from inside the model context is **not reliable**: the model reads its identity from the system prompt's environment block, which is templated at session start and is not necessarily rewritten when the harness switches model mid-turn (e.g., when a skill's `model:` frontmatter takes effect). A model can be executing as Haiku and still report Opus because that is what the env block said when the session opened.
-
-The ground truth lives in two places:
-
-1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the orchestrator's *intent*: which tool was called with which model parameter. Written by `ship:run` itself.
-
-2. **Claude Code session JSONL** — what the harness *actually executed*. Every API response is logged with the real model ID. Path:
-   ```
-   ~/.claude/projects/<path-encoded>/<session-id>.jsonl
-   ```
-   Sub-agent transcripts live in `~/.claude/projects/<path-encoded>/<session-id>/subagents/agent-*.jsonl`.
-
-   Quick audit of a session:
-   ```bash
-   jq -r '.message.model' <session-id>.jsonl | sort | uniq -c
-   for f in <session-id>/subagents/agent-*.jsonl; do
-     echo "== $(basename "$f") =="; jq -r '.message.model' "$f" | sort -u
-   done
-   ```
-
-   If the orchestrator turns are split between session model and Haiku, the override is working. If they are 100% session model, routing failed.
-
-A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection, and is why Ship no longer emits self-attestation banners.
-
----
-
-## Pattern classification (skill-patterns-convention.md)
-
-`model-routing.md` is a **bundle pattern** (> 30 lines). Reference in SKILL.md via:
-
-```
-For model routing rules, read the file at ./ship/patterns/model-routing.md completely.
-```. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
+   **Determine the phases tier** from the Ship model-routing policy — read `${CLAUDE_SKILL_DIR}/patterns/model-routing.md`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -828,68 +657,7 @@ For model routing rules, read the file at ./ship/patterns/model-routing.md compl
 >
 > Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
 >
-> # Linear Status — resolve, set, and verify workflow-state transitions
-
-> Canonical recipe for moving a task issue between workflow states.
-> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
-
-A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
-or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
-ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
-does not match, the transition silently no-ops and the issue is left in its previous state.
-
-Because a state **ID** never changes on rename, prefer resolving to the target state's **ID** and
-passing that to `save_issue` — it is the only match key that cannot silently no-op. Fall back to the
-state **name** only when an ID is not available. Either way, always verify (step 3) — verification is
-what turns a silent no-op into a caught, retriable failure.
-
-Likewise, `get_issue_status` does **not** read an issue's current state — it requires
-`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
-currently in, use `get_issue` and inspect its `state` field.
-
-Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
-
-| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
-|------------|---------------------|--------------------------------------|--------------|
-| Start work | `started`           | `In Progress Status`                 | `In Progress` |
-| Complete   | `completed`         | `Done Status`                        | `Done` |
-
----
-
-## 1. Resolve the target state (do this once per transition)
-
-1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
-   `ship/config.md → Linear Integration`.
-2. If the field is present and not `not configured`, use it as the target state name. To get the
-   unambiguous **ID** (preferred — see below), call `mcp__linear-server__list_issue_statuses` with
-   the `Team ID` and pick the state whose `type` matches the transition (`started`/`completed`),
-   preferring the one whose name equals the configured name; use its `id`. If you cannot list
-   statuses, fall back to passing the configured name.
-3. If the config field is **absent** (older config) or `not configured`: call
-   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
-   matches the transition (`started` or `completed`), and use its **`id`** as the target. If more
-   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
-   for started; `Done`/`Concluído` for completed); otherwise take the first.
-
-Call the resolved value `<target-state>` — an ID whenever one was obtained, otherwise a name.
-
-## 2. Set the state
-
-Call `mcp__linear-server__save_issue` with:
-- `id`: the task issue identifier (e.g., `MOB-1147`)
-- `state`: `<target-state>` — pass the resolved **ID** when available (immune to renames); a name
-  only as the fallback.
-
-## 3. Verify (never use `get_issue_status` for this)
-
-Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
-The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
-a name-agnostic check.
-
-If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
-may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
-to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
-loop indefinitely.
+> Read `${CLAUDE_SKILL_DIR}/patterns/linear-status.md` and follow that recipe.
 >
 > Then call `mcp__linear-server__save_issue` with `state: <target-state>` right now.
 > Do NOT continue to the development phase until this API call is confirmed.
@@ -1072,7 +840,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Sonnet per the model-routing.md pattern (included above).
+The orchestrator itself runs on Sonnet per ${CLAUDE_SKILL_DIR}/patterns/model-routing.md.
 
 **Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
@@ -1151,125 +919,7 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Iteration limit**: Track a `$FIX_ITERATION` counter (starting at 1 for the first fix attempt). Before each fix attempt, check: if `$FIX_ITERATION > 3`, abort the pipeline immediately — inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária." Do NOT proceed to acceptance. Increment the counter after each fix.
 
-> **Rationale, edge cases, and scope mapping** for this procedure live in # Gate Rules
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-## Snapshot pré-fix
-
-> **No commits happen during the pipeline.** `ship:develop` and the auto-fix Agent write to the working tree; the first commit is created only in `ship:pr`. So HEAD does not advance, and any `git diff <sha> HEAD` is always empty. Re-run scoping must therefore compare working-tree snapshots, not commits.
-
-Two distinct artifacts:
-
-1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
-
-   - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
-   - **Format:** single line containing the SHA from `git rev-parse HEAD`.
-
-2. **`pre-fix-files.txt`** — a per-file content snapshot (`<hash> <path>` per changed file) captured **immediately before the auto-fix Agent runs**. After the fix, the orchestrator recomputes the same snapshot and diffs the two to determine exactly which files the fix touched (see *Re-run cirúrgico* below). This is what drives the `on_fail_rerun` scoping.
-
-**Flag `on_fail_rerun`** (configured in `ship/config.md → Gate Behavior`):
-
-| Value | Behavior |
-|-------|----------|
-| `surgical` *(default)* | After auto-fix is applied, re-run **only the phases that failed or warned**. Phases that already passed are skipped. |
-| `all` | After auto-fix is applied, re-run **all quality phases** (perf, security, review) regardless of their previous result. |
-
-> **Scope note:** M5.1 establishes the schema and snapshot capture step only. The actual re-run logic that reads `on_fail_rerun` and selects which phases to re-launch is implemented in M5.2.
-
-## Re-run cirúrgico
-
-After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selects which quality phases to re-run based on the `on_fail_rerun` config flag.
-
-### Phase → scope mapping
-
-| Phase | Scope | Rationale |
-|-------|-------|-----------|
-| `perf` | Files matching `src/**` or `lib/**`, excluding `*.test.*`, `*.spec.*`, `**/__tests__/**` | Performance issues are in hot paths, not test code |
-| `security` | All files in the diff | Security scope is intentionally broad — any file could introduce a vulnerability |
-| `review` | All files in the original diff | Review covers everything that changed |
-
-### Algorithm (surgical mode)
-
-1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
-2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline). See `run.md` → Surgical Re-run Procedure for the exact commands.
-3. For each phase that previously ran:
-   - Compute intersection of (modified files) and (phase scope)
-   - If intersection is non-empty → re-run phase
-   - If intersection is empty → skip phase
-4. Log decision (see format below)
-5. Launch selected phases in parallel
-
-### Log format
-
-```
-Fix tocou: <file1>, <file2> (<N> arquivo(s))
-Re-run cirúrgico: <phase1> (<reason>), <phase2> (<reason>)
-Re-run pulado: <phase3> (não analisava arquivos modificados), <phase4> (não analisava arquivos modificados)
-```
-
-### Behavior with `on_fail_rerun: all`
-
-When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all quality phases that were originally enabled. This is the "safe" fallback — guaranteed to catch any regression introduced by the fix.
-
-## Example: analyze phase in phase-status.md
-
-```markdown
-| analyze | #1 | 2026-05-01T10:07:00Z | 5 | warn | 0 | 0 | 2 | 1 | 2 criterios sem testes |
-| analyze | #2 | 2026-05-01T10:12:00Z | 5 | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
-```
-
-### analyze phase scope mapping (Surgical Re-run)
-
-| Phase | Scope |
-|-------|-------|
-| `analyze` | All files in the original diff (broad scope — re-run if any file changed by fix) |
-
-The analyze phase is always re-run after a fix because spec↔code correlation depends on the entire diff, not individual files.
-
-## Re-run: edge cases
-
-The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. They are enforced inside the **Surgical Re-run Procedure** in `run.md`.
-
-### Edge case 1 — Fix vazio (sem mudanças)
-
-**Trigger:** the pre-fix vs post-fix snapshot comparison (`comm -13`) returns an empty file list after the fix agent runs.
-
-**Behavior:**
-- Skip all re-run phases (nothing changed, nothing to validate).
-- Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
-- For each phase that failed/warned: write a new row in `phase-status.md` with gate=`warn` and notes=`fix sem mudanças — revisão manual necessária`.
-- Continue to acceptance with the warning visible.
-
-### Edge case 2 — Loop de re-runs (máximo 3 iterações)
-
-**Trigger:** `$FIX_ITERATION` counter exceeds 3 (i.e., the pipeline has already cycled through fix→re-run three times without resolving the gate).
-
-**Behavior:**
-- Abort the pipeline immediately.
-- Inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."
-- Do NOT proceed to acceptance — wait for user action.
-
-### Edge case 3 — `on_warn: fix` usa lógica cirúrgica
-
-**Trigger:** Gate returns exit code 1 (WARN) and `on_warn` is set to `fix`.
-
-**Behavior:** Identical to `on_fail: fix` — apply the full Surgical Re-run Procedure including all edge cases (empty fix, iteration limit, out-of-scope files). No special handling for warnings vs failures.
-
-### Edge case 4 — Fix tocou arquivo fora do scope original
-
-**Trigger:** After the fix, the snapshot comparison returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
-
-**Behavior:**
-- Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
-- Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
-- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4. ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
+> **Read `${CLAUDE_SKILL_DIR}/patterns/gates.md` completely before applying this procedure.** Its rationale, edge cases, and scope mapping ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") live there — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
 
 **Pre-fix snapshot** — run the content-snapshot idiom from step 0.5, writing to `.context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
 
@@ -1284,7 +934,7 @@ After the fix agent completes, determine which quality phases to re-run:
             .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the resulting file list is **empty** (fix made no working-tree changes), apply the gates.md pattern (included above) → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
+   If the resulting file list is **empty** (fix made no working-tree changes), apply ${CLAUDE_SKILL_DIR}/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
 
 3. **If `on_fail_rerun: all`**: re-run all quality phases that were originally enabled (same set as Phase 4). Skip the scope mapping below.
 
@@ -1292,13 +942,13 @@ After the fix agent completes, determine which quality phases to re-run:
 
    a. The modified files list was already computed in step 2 above.
 
-   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow the gates.md pattern (included above) → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
+   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow ${CLAUDE_SKILL_DIR}/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
 
-   c. **Apply the phase → scope mapping** from the gates.md pattern (included above) ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
+   c. **Apply the phase → scope mapping** from ${CLAUDE_SKILL_DIR}/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
 
    d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
 
-   e. **Log the decision** before launching agents, in the format defined in the gates.md pattern (included above) ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
+   e. **Log the decision** before launching agents, in the format defined in ${CLAUDE_SKILL_DIR}/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
    f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
@@ -1336,7 +986,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
 - Gate **PASS** → continue to Phase 7
 
-**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see the gates.md pattern (included above) → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
+**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see ${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
 
 ### 7. PHASE: User Acceptance
 
@@ -1378,7 +1028,7 @@ After homolog approval:
    > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
    > First, resolve the team's **completed**-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > the linear-status.md pattern (included above)
+   > Read `${CLAUDE_SKILL_DIR}/patterns/linear-status.md` and follow that recipe.
    > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
    >
    > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.
