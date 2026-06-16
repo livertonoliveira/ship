@@ -56,6 +56,9 @@ cat > package.json <<'JSON'
 { "name": "ship-e2e", "version": "0.0.0", "type": "module", "scripts": { "test": "node --test" } }
 JSON
 
+# Mirror a real consuming project: the pipeline scratch dir is never committed.
+printf '.context/\nnode_modules/\n' > .gitignore
+
 # Phases for the chosen scope. Full = everything except pr (we stop at homolog).
 if [ "$SCOPE" = "lite" ]; then
   PHASES=$'- dev: enabled\n- test: enabled\n- perf: disabled\n- security: disabled\n- review: disabled\n- analyze: disabled\n- homolog: enabled\n- pr: disabled'
@@ -124,10 +127,11 @@ case "$FIXTURE" in
 esac
 
 # Portable timeout: GNU `timeout`, Homebrew `gtimeout`, or none (run directly).
-if command -v timeout >/dev/null; then TO=(timeout 1200)
-elif command -v gtimeout >/dev/null; then TO=(gtimeout 1200)
-else TO=(); fi
-run_claude() { "${TO[@]}" claude --print --dangerously-skip-permissions --plugin-dir "$PLUGIN" "$1"; }
+# Plain string (not an array) to stay compatible with macOS bash 3.2 under `set -u`.
+TO=""
+if command -v timeout >/dev/null; then TO="timeout 1200"
+elif command -v gtimeout >/dev/null; then TO="gtimeout 1200"; fi
+run_claude() { $TO claude --print --dangerously-skip-permissions --plugin-dir "$PLUGIN" "$1"; }
 
 echo "▶ /ship:spec ..."
 run_claude "/ship:spec $DESC" || { echo "✗ spec invocation failed"; exit 1; }
@@ -156,8 +160,10 @@ else
 fi
 
 # Source + test files in the working tree
-SRC_FILES="$(git diff --name-only origin/main -- 'src/*' 2>/dev/null | grep -v -iE 'test|spec' || true)"
-TEST_FILES="$(git diff --name-only origin/main 2>/dev/null | grep -iE 'test|spec' || true)"
+CHANGED="$(git diff --name-only origin/main 2>/dev/null || true)"
+TEST_RE='\.(test|spec)\.[jt]sx?$|(^|/)(test|tests|__tests__)/'
+SRC_FILES="$(echo "$CHANGED" | grep -E '^src/' | grep -vE "$TEST_RE" || true)"
+TEST_FILES="$(echo "$CHANGED" | grep -E "$TEST_RE" || true)"
 [ -n "$SRC_FILES" ]  && ok "source produced: $(echo "$SRC_FILES" | tr '\n' ' ')" || bad "no source files produced"
 [ -n "$TEST_FILES" ] && ok "tests produced: $(echo "$TEST_FILES" | tr '\n' ' ')" || bad "no test files produced"
 
