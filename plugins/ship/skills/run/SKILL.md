@@ -1167,6 +1167,20 @@ Storage mode: <linear|local>
    git diff "$BASE" > .context/ship-run/<task-id>/diff.md
    ```
 
+   **Use this exact command** — do not improvise a substitute (e.g. `git diff --stat`, a three-dot range, or a hand-written summary). Several downstream consumers (`diff-classifier.md`, perf/security/review slicing) parse `diff.md` as a literal `git diff` unified diff; any other format makes them silently misclassify (e.g. a `--stat` body classifies as `0 logical files`).
+
+   **Assert the output is a real unified diff** before continuing — fail loud rather than letting a malformed `diff.md` poison the quality gate:
+
+   ```bash
+   if [ -s .context/ship-run/<task-id>/diff.md ] \
+      && ! grep -q '^diff --git ' .context/ship-run/<task-id>/diff.md; then
+     echo "✗ diff.md is non-empty but has no 'diff --git' header — not a valid unified diff. Re-capture before proceeding." >&2
+     exit 1
+   fi
+   ```
+
+   A non-empty `diff.md` with no `diff --git` header means the capture was corrupted — re-run the command above; do not proceed to classification or quality phases on a malformed diff. (An empty `diff.md` is legitimate only when `dev` did nothing — handle that in step 2.6, not here.)
+
 2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
 
 3. **Log to the user**:
