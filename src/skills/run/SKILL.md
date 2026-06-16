@@ -4,7 +4,7 @@ description: "Full development pipeline for a task: develop → test → perf �
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 ---
 
 # Ship Run — Development Pipeline
@@ -245,6 +245,8 @@ Additionally:
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
 
+> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Resist deep-reading the codebase, reasoning about the domain semantics (data model, API contract, hook/state flow), or deciding the implementation approach before dispatching `ship:plan`. That analysis is the planner's job and duplicating it here wastes tokens and produces unverified hypotheses that the planner may contradict. Pass the **raw** spec + design inline and trust the returned `plan.md`. The only pre-plan judgment you make is the deterministic baseline classification (step 0.7) that decides *whether* to run the planner at all.
+
 Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
@@ -301,6 +303,20 @@ Storage mode: <linear|local>
    git diff "$BASE" > .context/ship-run/<task-id>/diff.md
    ```
 
+   **Use this exact command** — do not improvise a substitute (e.g. `git diff --stat`, a three-dot range, or a hand-written summary). Several downstream consumers (`diff-classifier.md`, perf/security/review slicing) parse `diff.md` as a literal `git diff` unified diff; any other format makes them silently misclassify (e.g. a `--stat` body classifies as `0 logical files`).
+
+   **Assert the output is a real unified diff** before continuing — fail loud rather than letting a malformed `diff.md` poison the quality gate:
+
+   ```bash
+   if [ -s .context/ship-run/<task-id>/diff.md ] \
+      && ! grep -q '^diff --git ' .context/ship-run/<task-id>/diff.md; then
+     echo "✗ diff.md is non-empty but has no 'diff --git' header — not a valid unified diff. Re-capture before proceeding." >&2
+     exit 1
+   fi
+   ```
+
+   A non-empty `diff.md` with no `diff --git` header means the capture was corrupted — re-run the command above; do not proceed to classification or quality phases on a malformed diff. (An empty `diff.md` is legitimate only when `dev` did nothing — handle that in step 2.6, not here.)
+
 2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
 
 3. **Log to the user**:
@@ -311,7 +327,7 @@ Storage mode: <linear|local>
 
 ### 2.6. Develop evidence gate (MANDATORY)
 
-> **Why this step exists**: `ship:develop` is a forked Haiku orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
+> **Why this step exists**: `ship:develop` is a forked Sonnet orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
@@ -379,7 +395,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+The orchestrator itself runs on Sonnet per @ship/patterns/model-routing.md.
 
 **Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
@@ -595,7 +611,7 @@ After homolog approval:
 
 When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
-1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — the orchestrator runs on Haiku and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
+1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — task ordering stays deterministic and predictable, and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
 2. Process one task at a time through the full pipeline
 3. After each task completion, ask the user before continuing
 4. At the end, present a summary of all completed tasks

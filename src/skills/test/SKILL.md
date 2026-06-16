@@ -54,7 +54,7 @@ For each enabled layer, launch the agent via the Agent tool using `subagent_type
 
 **Context slicing — always pass inline, never rely on the agent to re-read:**
 1. Filter scenarios: keep only those tagged `@unit`, `@integration`, or `@e2e` for the respective agent. Never pass the full list to all agents.
-2. Run `git diff origin/main...HEAD` **once** here (not inside each agent) and pass the resulting diff inline as `## Source`.
+2. Resolve the diff **once** here (not inside each agent) and pass it inline as `## Source`. Never use `git diff origin/main...HEAD` (three-dot) — it compares only **committed** history and is **empty** mid-pipeline (`ship:develop` writes to the working tree without committing). Instead: in **pipeline mode**, read the authoritative `.context/ship-run/<task-id>/diff.md` the orchestrator refreshed after develop (do not recompute); in **standalone** mode, run `BASE=$(git merge-base origin/main HEAD); git add -A -N; git diff "$BASE"` to capture the working tree incl. untracked files.
 3. Structure each agent's prompt with explicit sections:
    ```
    Task ID: <task-id>

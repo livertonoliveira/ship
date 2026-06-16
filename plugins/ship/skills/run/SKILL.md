@@ -4,7 +4,7 @@ description: "Full development pipeline for a task: develop → test → perf �
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 ---
 
 # Ship Run — Development Pipeline
@@ -798,9 +798,10 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 Ship pins the model per skill instead of inheriting from the session. This decouples cost
 control from quality: users can pick Haiku as their session model to economize across the
 weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
-analysis, generation, correlation). Symmetrically, template/control-flow skills (report
-rendering, findings aggregation, PR expansion, orchestration) are pinned to Haiku because they
-gain nothing from a higher tier.
+analysis, generation, correlation). Symmetrically, pure template/control-flow skills (report
+rendering, findings aggregation, PR expansion, one-shot config setup) are pinned to Haiku because
+they gain nothing from a higher tier. Judgment-heavy orchestrators (`run`, `develop`, `test`) stay
+on the reasoning tier even though they also dispatch — see the Boundary rule.
 
 This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
 an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
@@ -843,7 +844,7 @@ an Agent tool dispatch overrides the frontmatter.
 |-----------------------|---------|-------------------------------------------------|
 | `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
+| `ship:run`            | sonnet (orchestrator) | Judgment dispatch: although much of the body is control-flow (file reads, deterministic diff classification, gate eval, dispatch), the working-tree diff refresh, surgical re-run scoping, and gate decisions proved to need reliable multi-step instruction-following that Haiku fumbled in practice (e.g. corrupting `diff.md` / staged-vs-unstaged confusion). Pinned to the reasoning tier per the Boundary rule. Still spawns Sonnet leaves for code/test generation. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
 | `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
@@ -882,9 +883,14 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
 ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
 pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
-the judgment as a deterministic rule before downgrading. `ship:run` itself stays Haiku by taking
-the latter route — see its multi-task note (dependency inference removed in favor of deterministic
-Linear milestone order).
+the judgment as a deterministic rule before downgrading. `ship:run` was originally pinned Haiku via
+the latter route, but observed runs showed its diff-refresh, surgical re-run scoping, and gate
+decisions still demanded reliable multi-step judgment Haiku did not deliver consistently — so it is
+now pinned `model: "sonnet"`. It keeps its deterministic guardrails regardless (exact diff-capture
+command + unified-diff assertion; deterministic Linear milestone ordering with no dependency
+inference). The remaining Haiku orchestrators (`homolog`, `pr`, `init`, `audit:run` consolidation)
+stay Haiku because their bodies are genuinely template/aggregation; revisit individually if a
+quality regression is observed (e.g. `pr` conflict resolution / strict-mode gate eval).
 
 ---
 
@@ -1111,6 +1117,8 @@ Additionally:
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
 
+> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Resist deep-reading the codebase, reasoning about the domain semantics (data model, API contract, hook/state flow), or deciding the implementation approach before dispatching `ship:plan`. That analysis is the planner's job and duplicating it here wastes tokens and produces unverified hypotheses that the planner may contradict. Pass the **raw** spec + design inline and trust the returned `plan.md`. The only pre-plan judgment you make is the deterministic baseline classification (step 0.7) that decides *whether* to run the planner at all.
+
 Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
@@ -1167,6 +1175,20 @@ Storage mode: <linear|local>
    git diff "$BASE" > .context/ship-run/<task-id>/diff.md
    ```
 
+   **Use this exact command** — do not improvise a substitute (e.g. `git diff --stat`, a three-dot range, or a hand-written summary). Several downstream consumers (`diff-classifier.md`, perf/security/review slicing) parse `diff.md` as a literal `git diff` unified diff; any other format makes them silently misclassify (e.g. a `--stat` body classifies as `0 logical files`).
+
+   **Assert the output is a real unified diff** before continuing — fail loud rather than letting a malformed `diff.md` poison the quality gate:
+
+   ```bash
+   if [ -s .context/ship-run/<task-id>/diff.md ] \
+      && ! grep -q '^diff --git ' .context/ship-run/<task-id>/diff.md; then
+     echo "✗ diff.md is non-empty but has no 'diff --git' header — not a valid unified diff. Re-capture before proceeding." >&2
+     exit 1
+   fi
+   ```
+
+   A non-empty `diff.md` with no `diff --git` header means the capture was corrupted — re-run the command above; do not proceed to classification or quality phases on a malformed diff. (An empty `diff.md` is legitimate only when `dev` did nothing — handle that in step 2.6, not here.)
+
 2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
 
 3. **Log to the user**:
@@ -1177,7 +1199,7 @@ Storage mode: <linear|local>
 
 ### 2.6. Develop evidence gate (MANDATORY)
 
-> **Why this step exists**: `ship:develop` is a forked Haiku orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
+> **Why this step exists**: `ship:develop` is a forked Sonnet orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
@@ -1380,7 +1402,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Haiku per # Model Routing Policy
+The orchestrator itself runs on Sonnet per # Model Routing Policy
 
 ---
 
@@ -1389,9 +1411,10 @@ The orchestrator itself runs on Haiku per # Model Routing Policy
 Ship pins the model per skill instead of inheriting from the session. This decouples cost
 control from quality: users can pick Haiku as their session model to economize across the
 weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
-analysis, generation, correlation). Symmetrically, template/control-flow skills (report
-rendering, findings aggregation, PR expansion, orchestration) are pinned to Haiku because they
-gain nothing from a higher tier.
+analysis, generation, correlation). Symmetrically, pure template/control-flow skills (report
+rendering, findings aggregation, PR expansion, one-shot config setup) are pinned to Haiku because
+they gain nothing from a higher tier. Judgment-heavy orchestrators (`run`, `develop`, `test`) stay
+on the reasoning tier even though they also dispatch — see the Boundary rule.
 
 This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
 an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
@@ -1434,7 +1457,7 @@ an Agent tool dispatch overrides the frontmatter.
 |-----------------------|---------|-------------------------------------------------|
 | `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
+| `ship:run`            | sonnet (orchestrator) | Judgment dispatch: although much of the body is control-flow (file reads, deterministic diff classification, gate eval, dispatch), the working-tree diff refresh, surgical re-run scoping, and gate decisions proved to need reliable multi-step instruction-following that Haiku fumbled in practice (e.g. corrupting `diff.md` / staged-vs-unstaged confusion). Pinned to the reasoning tier per the Boundary rule. Still spawns Sonnet leaves for code/test generation. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
 | `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
@@ -1473,9 +1496,14 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
 ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
 pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
-the judgment as a deterministic rule before downgrading. `ship:run` itself stays Haiku by taking
-the latter route — see its multi-task note (dependency inference removed in favor of deterministic
-Linear milestone order).
+the judgment as a deterministic rule before downgrading. `ship:run` was originally pinned Haiku via
+the latter route, but observed runs showed its diff-refresh, surgical re-run scoping, and gate
+decisions still demanded reliable multi-step judgment Haiku did not deliver consistently — so it is
+now pinned `model: "sonnet"`. It keeps its deterministic guardrails regardless (exact diff-capture
+command + unified-diff assertion; deterministic Linear milestone ordering with no dependency
+inference). The remaining Haiku orchestrators (`homolog`, `pr`, `init`, `audit:run` consolidation)
+stay Haiku because their bodies are genuinely template/aggregation; revisit individually if a
+quality regression is observed (e.g. `pr` conflict resolution / strict-mode gate eval).
 
 ---
 
@@ -2530,7 +2558,7 @@ loop indefinitely.
 
 When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
-1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — the orchestrator runs on Haiku and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
+1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — task ordering stays deterministic and predictable, and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
 2. Process one task at a time through the full pipeline
 3. After each task completion, ask the user before continuing
 4. At the end, present a summary of all completed tasks
