@@ -50,6 +50,8 @@ If launching parallel agents, pass each agent the full reviewing methodology fro
 
 ## 3. Analyze the code
 
+**Read diff hunks correctly first.** Lines starting with `-` are REMOVED — they are NOT present in the final file. Only `+` and context lines reflect the post-change code. Never flag duplication (DRY), dead code, or "redefinition" by counting a symbol that appears in both a `-` and a `+` line of the same hunk — that is a replacement, not a duplicate. When a finding depends on whether a symbol exists more than once in the final file, **Read the actual file to confirm before reporting it**.
+
 For each new/modified file in the diff, evaluate the following dimensions:
 
 ---
@@ -172,7 +174,7 @@ Format:
 [findings here, ordered by severity]
 ```
 
-**Gate rules:** see `@ship/patterns/gates.md`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate.
+**Gate rules:** see `@ship/patterns/gates.md`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate. Compute the gate **deterministically from the severity counts**: any critical/high → `FAIL`; else any medium → `WARN`; else `PASS`. The `Gate:` value in the Summary and the gate column written to `phase-status.md` (step 6) MUST be identical and MUST match these counts — **never emit `PASS` while Medium > 0**.
 
 ---
 

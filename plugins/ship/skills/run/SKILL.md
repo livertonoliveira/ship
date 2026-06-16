@@ -894,6 +894,8 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 - **WARN** — no critical/high findings, but at least one medium finding remains
 - **PASS** — only low/info findings, or no findings at all
 
+> **Compute the gate purely from the aggregated severity counts — you are NOT re-reviewing.** Do not reclassify, discount, or discard an individual finding because you personally believe it is a false positive. If you suspect a false positive, the correct path is still to honor `on_warn`/`on_fail`: the fix Agent inspects the code and, if there is nothing real to change, produces an empty fix — `${CLAUDE_SKILL_DIR}/patterns/gates.md` → "Re-run: edge cases" Edge case 1 then records it as `fix sem mudanças — revisão manual necessária` and continues. Never declare `PASS` by overriding a worker's finding inline.
+
 **Before handling gate results:** Read the `Gate Behavior` section from `ship/config.md`:
 - `on_fail`: controls behavior for exit code 2 (`ask` | `fix` | `defer`). Default: `ask`.
 - `on_warn`: controls behavior for exit code 1 (`ask` | `fix` | `pass`). Default: `ask`.
