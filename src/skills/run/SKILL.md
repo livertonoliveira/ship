@@ -174,7 +174,7 @@ Run the deterministic classification exactly as specified in @ship/patterns/diff
 
    **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
 
-   **Determine the phases tier** from the Ship model-routing policy in @ship/patterns/model-routing.md. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
+   **Determine the phases tier** from the Ship model-routing policy — read `@@ship/patterns/model-routing.md`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
 
    **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
 
@@ -220,7 +220,7 @@ Run the deterministic classification exactly as specified in @ship/patterns/diff
 >
 > Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
 >
-> @ship/patterns/linear-status.md
+> Read `@@ship/patterns/linear-status.md` and follow that recipe.
 >
 > Then call `mcp__linear-server__save_issue` with `state: <target-state>` right now.
 > Do NOT continue to the development phase until this API call is confirmed.
@@ -234,6 +234,8 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
+**Persist spec + design to the scratch dir (once).** Write the full task spec — issue description + ACs + `@SC-XX` scenarios + the Proposal document (REQ-XX requirements) — to `.context/ship-run/<task-id>/spec.md`, and the full Design document to `.context/ship-run/<task-id>/design.md`. The `plan`, `develop`, and `analyze` phases read these files from the scratch dir instead of having them re-inlined into every dispatch — capture them here once. In Local mode, source them from `proposal.md`/`design.md`; still write the scratch copies so every phase has a single canonical path.
+
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
 > **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted. Decide from the **baseline** classification (step 0.7), which measures only work that existed *before* this run:
@@ -245,7 +247,7 @@ Additionally:
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
 
-> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Resist deep-reading the codebase, reasoning about the domain semantics (data model, API contract, hook/state flow), or deciding the implementation approach before dispatching `ship:plan`. That analysis is the planner's job and duplicating it here wastes tokens and produces unverified hypotheses that the planner may contradict. Pass the **raw** spec + design inline and trust the returned `plan.md`. The only pre-plan judgment you make is the deterministic baseline classification (step 0.7) that decides *whether* to run the planner at all.
+> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Do not deep-read the codebase or decide the implementation approach before dispatching `ship:plan`; that wastes tokens on hypotheses the planner may contradict. The spec and design are already in the scratch dir for the planner to read — just trust the returned `plan.md`. Your only pre-plan judgment is the baseline classification (step 0.7). (Rationale: `docs/design-notes/pipeline-rationale.md`.)
 
 Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
@@ -255,11 +257,7 @@ Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 
-## Spec
-<inline: issue description + ACs + @SC-XX scenarios>
-
-## Design
-<inline: full design document content>
+Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline).
 ```
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
@@ -276,11 +274,7 @@ Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 
-## Spec
-<inline: issue description + ACs>
-
-## Design
-<inline: full design document content>
+Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline).
 ```
 
 **Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module.
@@ -291,7 +285,7 @@ Storage mode: <linear|local>
 
 ### 2.5. Refresh diff + classification (authoritative)
 
-> **Why this step exists**: `ship:develop` integrates code into the **working tree** and does not commit. The baseline `diff.md` captured in step 0.5 therefore does **not** contain the implementation that develop just produced. Re-capture it here so the quality phases analyze real code. This refreshed `diff.md` and the recomputed `diff-class.txt` are the **authoritative** inputs for the diff-class quality gate and the `perf` / `security` / `review` phases in Phase 4.
+> **Refresh the diff after develop.** `ship:develop` writes to the working tree without committing, so the baseline `diff.md` does not contain its output. This refreshed `diff.md` + `diff-class.txt` are the authoritative inputs for the Phase 4 gate and perf/security/review. (Rationale: `docs/design-notes/pipeline-rationale.md`.)
 
 > **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
 
@@ -303,7 +297,7 @@ Storage mode: <linear|local>
    git diff "$BASE" > .context/ship-run/<task-id>/diff.md
    ```
 
-   **Use this exact command** — do not improvise a substitute (e.g. `git diff --stat`, a three-dot range, or a hand-written summary). Several downstream consumers (`diff-classifier.md`, perf/security/review slicing) parse `diff.md` as a literal `git diff` unified diff; any other format makes them silently misclassify (e.g. a `--stat` body classifies as `0 logical files`).
+   **Use this exact command** — downstream consumers parse `diff.md` as a literal unified diff; `--stat`, three-dot ranges, or hand-written summaries silently misclassify (e.g. a `--stat` body reads as `0 logical files`).
 
    **Assert the output is a real unified diff** before continuing — fail loud rather than letting a malformed `diff.md` poison the quality gate:
 
@@ -327,7 +321,7 @@ Storage mode: <linear|local>
 
 ### 2.6. Develop evidence gate (MANDATORY)
 
-> **Why this step exists**: `ship:develop` is a forked Sonnet orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
+> **Prove develop produced code — never trust its self-report.** `ship:develop` can narrate a plan and return a success-looking status without dispatching any worker, leaving the working tree untouched. This gate verifies real mutation from the working-tree snapshots; never accept develop as `pass` on its word alone. (Rationale: `docs/design-notes/pipeline-rationale.md`.)
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
@@ -395,7 +389,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Sonnet per @ship/patterns/model-routing.md.
+The orchestrator itself runs on Sonnet per @@ship/patterns/model-routing.md.
 
 **Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
@@ -411,7 +405,7 @@ Stack: <stack>
 Severity Overrides: <severity-overrides or "none">
 
 ## Diff
-<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
 **Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-security`. Pass all context inline:
@@ -428,7 +422,7 @@ Security Focus: <security-focus-category>
 Severity Overrides: <severity-overrides or "none">
 
 ## Diff
-<inline: full diff content from .context/ship-run/<task-id>/diff.md>
+Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
 **Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
@@ -474,7 +468,7 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Iteration limit**: Track a `$FIX_ITERATION` counter (starting at 1 for the first fix attempt). Before each fix attempt, check: if `$FIX_ITERATION > 3`, abort the pipeline immediately — inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária." Do NOT proceed to acceptance. Increment the counter after each fix.
 
-> **Rationale, edge cases, and scope mapping** for this procedure live in @ship/patterns/gates.md ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
+> **Read `@@ship/patterns/gates.md` completely before applying this procedure.** Its rationale, edge cases, and scope mapping ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") live there — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
 
 **Pre-fix snapshot** — run the content-snapshot idiom from step 0.5, writing to `.context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
 
@@ -489,7 +483,7 @@ After the fix agent completes, determine which quality phases to re-run:
             .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
    ```
 
-   If the resulting file list is **empty** (fix made no working-tree changes), apply @ship/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
+   If the resulting file list is **empty** (fix made no working-tree changes), apply @@ship/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
 
 3. **If `on_fail_rerun: all`**: re-run all quality phases that were originally enabled (same set as Phase 4). Skip the scope mapping below.
 
@@ -497,13 +491,13 @@ After the fix agent completes, determine which quality phases to re-run:
 
    a. The modified files list was already computed in step 2 above.
 
-   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
+   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @@ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
 
-   c. **Apply the phase → scope mapping** from @ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
+   c. **Apply the phase → scope mapping** from @@ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
 
    d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
 
-   e. **Log the decision** before launching agents, in the format defined in @ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
+   e. **Log the decision** before launching agents, in the format defined in @@ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
    f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
@@ -520,7 +514,7 @@ Continue automatically.
 
 Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so drift correlation (spec↔code↔tests) runs in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
-- Use the task's spec (issue + Proposal + Design documents from Linear, or proposal.md + design.md in local mode)
+- Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; not injected inline)
 - Use the code diff from `.context/ship-run/<task-id>/diff.md`
 - Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
 - Pass results to the Correlation Engine
@@ -541,7 +535,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
 - Gate **PASS** → continue to Phase 7
 
-**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see @ship/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
+**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see @@ship/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
 
 ### 7. PHASE: User Acceptance
 
@@ -583,7 +577,7 @@ After homolog approval:
    > The `/ship:homolog` phase should have already posted the quality report comment and transitioned the issue to its completed state. This step only repairs a miss.
    > First, resolve the team's **completed**-state name following this recipe — **never pass the literal `"Done"`**:
    >
-   > @ship/patterns/linear-status.md
+   > Read `@@ship/patterns/linear-status.md` and follow that recipe.
    > In parallel: call `mcp__linear-server__get_issue` (read its `state`) AND `mcp__linear-server__list_comments` to verify both:
    >
    > 1. If `state.type != "completed"` → call `mcp__linear-server__save_issue` with `state: <completed-state>` now.

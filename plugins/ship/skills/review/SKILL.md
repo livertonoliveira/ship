@@ -63,7 +63,9 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | File | Written by | Read by | Content |
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
-| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
+| `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review, analyze | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
+| `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full task spec: issue description + ACs + `@SC-XX` scenarios + Proposal REQ-XX. Written once so phases read it instead of receiving it re-inlined per dispatch |
+| `design.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full Design document. Written once; `develop` slices it per module when fanning out workers |
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped — only for a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work); greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
@@ -166,7 +168,7 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 ## Read/write conventions
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
-  `stack.md`, `diff.md`, and `pre-quality-snapshot.sha` before launching any agent.
+  `stack.md`, `diff.md`, `spec.md`, `design.md`, and `pre-quality-snapshot.sha` before launching any agent.
   Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
   **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
   only file rewritten mid-pipeline, and only by the orchestrator itself.
@@ -196,11 +198,13 @@ parallel pipelines are running — never remove the parent, only the completed t
 
 ---
 
-## Inline context slicing (fan-out optimization)
+## Fan-out token optimization
 
-When the orchestrator dispatches N parallel sub-agents, each agent opens a fresh conversation with no shared prompt cache. Passing large shared artifacts (diff, Design, proposal) to every agent multiplies token costs: **N × file size + N × cache miss**.
+When an orchestrator dispatches N sub-agents, each opens a fresh conversation with no shared prompt cache. Avoid making the orchestrator **re-emit** a large artifact it already holds — that pays the artifact's token cost once in the orchestrator's output for every child it inlines into. Two mechanisms, chosen by whether each child needs the whole artifact or only a slice:
 
-**Pattern:** the orchestrator reads each shared artifact **once**, slices it into per-agent subsets, and passes the slice **inline** in each agent's prompt. Agents must never re-read the original file.
+**(a) Scratch-dir reference (whole artifact, unsliced).** When every child needs the full artifact (e.g. perf/security/review each analyze the full `diff.md`), the orchestrator writes it to the scratch dir **once** and passes only the **path**. Each child reads the file itself — same input cost as inline, but the orchestrator never re-emits the content. This is the default for the `diff` at the `ship:run` → phase dispatch level: the orchestrator does **not** inject `## Diff` inline; the phase agent reads `.context/ship-run/<task-id>/diff.md`.
+
+**(b) Inline slicing (disjoint subsets).** When each child needs only a disjoint subset, the orchestrator reads the artifact **once**, slices it into per-agent subsets, and passes the slice **inline**. The smaller per-child input is the win here; children must not re-read the original file. This applies to the **inner** fan-outs listed in the table below (e.g. `ship:security` slicing the diff by OWASP category to its 3 sub-agents).
 
 ### Slicing rules
 

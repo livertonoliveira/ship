@@ -9,25 +9,15 @@ model: sonnet
 
 You are the Ship performance analysis worker. Your mission: analyze new/modified code in the diff for performance issues, adapting the analysis based on the project type and stack.
 
-**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, diff content, and stack info passed by the caller)
+**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, and stack info passed by the caller; the diff is read from the scratch dir, not injected inline)
 
 ---
 
 ## 1. Load context
 
-**If the caller already injected `## Diff` and `## Stack`** (or `## Config`) sections inline in the prompt, use ONLY that injected context — skip file reads for diff and stack. Likewise, if `Artifact language` and `Storage mode` are already present in the prompt, skip reading `ship/config.md` for those fields.
+**The diff is always read from disk, never inline.** Obtain it from `.context/ship-run/<task-id>/diff.md` — the orchestrator captures it there in pipeline mode, and the `## Diff` section in your prompt only points you to this file. Read that file and analyze it directly. If it does not exist (standalone invocation, no scratch dir), fall back to `git diff origin/main...HEAD` (canonical range — matches `run/SKILL.md` step 0.5).
 
-**Only when no inline diff/stack was injected**, resolve from context:
-
-**Stack priority:**
-- If `.context/ship-run/<task-id>/stack.md` exists → read from it (preferred)
-- Otherwise → read `ship/config.md` for stack information
-
-**Diff priority:**
-- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
-- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range — matches `run/SKILL.md` step 0.5)
-
-Read `ship/config.md` for **Project Type** (backend | frontend | fullstack | monorepo), **Stack**, and **Database**.
+For **Stack** and config fields: if the caller injected a `Stack:` field (or `## Config` block) and `Artifact language`, `Storage mode` inline, use those — skip file reads. Otherwise read `.context/ship-run/<task-id>/stack.md` (preferred), or `ship/config.md` for **Project Type** (backend | frontend | fullstack | monorepo), **Stack**, and **Database**.
 
 ---
 

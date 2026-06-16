@@ -24,7 +24,7 @@ Check if `ship/config.md` already exists at the project root.
 
 ### 2. Explore the project (2 agents in parallel)
 
-Launch **2 agents in parallel** using the Agent tool. For BOTH agents, pass `model: "sonnet"` explicitly to the Agent tool call — they read source code and infer patterns (reasoning work). The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+Launch **2 agents in parallel** using the Agent tool. For BOTH agents, pass `model: "sonnet"` explicitly to the Agent tool call — they read source code and infer patterns (reasoning work). The orchestrator itself runs on Haiku per @@ship/patterns/model-routing.md.
 
 **Agent A — Stack Detection:**
 Explore the project to automatically detect:

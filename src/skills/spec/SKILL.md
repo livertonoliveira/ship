@@ -127,13 +127,7 @@ When depth is `light` or `full`, enumerate **behavioral scenarios in Gherkin** t
 - A database migration/schema: ~30-80 lines
 - Configuration and wiring: ~20-60 lines
 
-**If a task would exceed 400 lines, split it further.** For example:
-- Instead of "Create user auth module" (~800 lines), split into:
-  - "Create User schema and repository" (~120 lines)
-  - "Create auth service with JWT generation" (~150 lines)
-  - "Create login endpoint" (~130 lines)
-  - "Create register endpoint" (~140 lines)
-  - "Add auth guard middleware" (~100 lines)
+**If a task would exceed 400 lines, split it further** — e.g. a ~800-line "user auth module" becomes "User schema + repository", "auth service (JWT)", "login endpoint", "register endpoint", and "auth guard middleware" (~100–150 lines each).
 
 #### Organize into milestones
 

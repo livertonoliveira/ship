@@ -16,7 +16,7 @@ You are the Ship implementation orchestrator. You do NOT write code yourself —
 
 The heavy semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. But this orchestrator still makes non-trivial judgment calls — slicing per-module context, **de-identifying** it before injection, dependency ordering, integration checks — and must reliably act (dispatch) rather than narrate. Per the Boundary rule in `ship/patterns/model-routing.md`, that keeps it at the reasoning tier (Sonnet); the workers it fans out are Sonnet too.
 
-**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and inline spec/design passed by the caller).
+**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode passed by the caller; spec/design are read from the scratch dir, not injected inline).
 
 ---
 
@@ -26,7 +26,9 @@ Extract the task identifier from `$ARGUMENTS`. Resolve scratch dir: `.context/sh
 
 Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and `Artifact language` (unless already injected inline). Read the typecheck command from `ship/config.md`.
 
-**Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, it is your fan-out map. If it does NOT exist (the planner was skipped for a `minor`/`trivial` diff, or this is a standalone invocation with no scratch dir), treat the whole task as a **single module** — you will dispatch exactly one worker with the inline spec/design as its context.
+**Read the spec + design:** in pipeline mode, read `.context/ship-run/<task-id>/spec.md` and `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline). You slice the design per module when fanning out workers. In a standalone invocation (no scratch dir), fetch them directly instead: Linear mode via `mcp__linear-server__get_issue` + `mcp__linear-server__get_document`; Local mode via `ship/changes/<feature>/proposal.md` + `design.md`.
+
+**Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, it is your fan-out map. If it does NOT exist (the planner was skipped for a `minor`/`trivial` diff, or this is a standalone invocation with no scratch dir), treat the whole task as a **single module** — you will dispatch exactly one worker with the spec/design (from the scratch dir) as its context.
 
 ---
 
@@ -36,68 +38,7 @@ Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and
 >
 > Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
 >
-> # Linear Status — resolve, set, and verify workflow-state transitions
-
-> Canonical recipe for moving a task issue between workflow states.
-> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
-
-A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
-or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
-ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
-does not match, the transition silently no-ops and the issue is left in its previous state.
-
-Because a state **ID** never changes on rename, prefer resolving to the target state's **ID** and
-passing that to `save_issue` — it is the only match key that cannot silently no-op. Fall back to the
-state **name** only when an ID is not available. Either way, always verify (step 3) — verification is
-what turns a silent no-op into a caught, retriable failure.
-
-Likewise, `get_issue_status` does **not** read an issue's current state — it requires
-`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
-currently in, use `get_issue` and inspect its `state` field.
-
-Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
-
-| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
-|------------|---------------------|--------------------------------------|--------------|
-| Start work | `started`           | `In Progress Status`                 | `In Progress` |
-| Complete   | `completed`         | `Done Status`                        | `Done` |
-
----
-
-## 1. Resolve the target state (do this once per transition)
-
-1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
-   `ship/config.md → Linear Integration`.
-2. If the field is present and not `not configured`, use it as the target state name. To get the
-   unambiguous **ID** (preferred — see below), call `mcp__linear-server__list_issue_statuses` with
-   the `Team ID` and pick the state whose `type` matches the transition (`started`/`completed`),
-   preferring the one whose name equals the configured name; use its `id`. If you cannot list
-   statuses, fall back to passing the configured name.
-3. If the config field is **absent** (older config) or `not configured`: call
-   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
-   matches the transition (`started` or `completed`), and use its **`id`** as the target. If more
-   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
-   for started; `Done`/`Concluído` for completed); otherwise take the first.
-
-Call the resolved value `<target-state>` — an ID whenever one was obtained, otherwise a name.
-
-## 2. Set the state
-
-Call `mcp__linear-server__save_issue` with:
-- `id`: the task issue identifier (e.g., `MOB-1147`)
-- `state`: `<target-state>` — pass the resolved **ID** when available (immune to renames); a name
-  only as the fallback.
-
-## 3. Verify (never use `get_issue_status` for this)
-
-Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
-The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
-a name-agnostic check.
-
-If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
-may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
-to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
-loop indefinitely.
+> Read `${CLAUDE_SKILL_DIR}/patterns/linear-status.md` and follow that recipe.
 >
 > Then call `mcp__linear-server__save_issue` with `state: <target-state>` before dispatching any worker.
 
@@ -219,50 +160,7 @@ The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygien
 >
 > 0. **Prevention by construction (the real fix): de-identify the worker context.** The
 >    orchestrators strip spec IDs from the scenario/contract text before injecting it into a worker
->    — what the worker never receives, it cannot echo. See `# De-identify the worker context — prevention before detection
-
-> A worker emits `SC-43` in a test name mainly because it **received** `SC-43` in its prompt and
-> copied it across a boundary it should not have. The most reliable fix is not to forbid the copy
-> harder — it is to **not hand over the token in the first place**. Strip the spec IDs from the
-> behavioral context you inject; what the worker never sees, it cannot echo.
->
-> This is the **primary** defense. The worker-prompt rule ("never put spec IDs in test names") and
-> the `PostToolUse` hygiene hook remain as the net for the paths this cannot reach (standalone
-> workers that read artifacts directly, a Linear key picked up from the branch, comments — which
-> have no input to strip).
-
-## What to strip — when slicing context into a worker prompt
-
-Before you inject `## Scenarios`, `## Test Contract`, `## Module`, or `## Design` into a worker's
-prompt, remove from that **injected text only**:
-
-- Scenario / criterion / requirement tags: `@SC-XX`, `@AC-YY`, `@REQ-XX` (and the already-resolved
-  layer tag `@unit`/`@integration`/`@e2e` — you used it to route; the worker does not need it).
-- Bare spec IDs in prose: `REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`, `TEST-*`.
-- The task's Linear issue key (`<TEAM>-<n>`, e.g. `MOB-1734`).
-
-## What to KEEP — the behavioral content the worker (and analyze) needs
-
-- The `Scenario:` / `Scenario Outline:` **titles** and the `Given` / `When` / `Then` / `Examples`
-  steps. This is the behavior the worker tests, and the `When`/`Then` keywords are exactly what
-  `ship:analyze` correlates against test names — stripping the *tags* does not weaken traceability.
-- `arrange` / `act` / `assert` notes, the `Files` set, and the module `Contract`.
-
-A de-identified scenario block keeps its title and steps and drops only its tag line, e.g.:
-
-```
-# injected as (de-identified):
-Scenario: ignores a duplicate event for the same transactionId
-  When the same event is delivered twice
-  Then the second delivery is a no-op
-```
-
-## Keep the mapping — traceability lives in the artifact, not the code
-
-You (the orchestrator) still hold the `SC-XX → module/test-file` mapping from `plan.md` / the spec.
-Keep it for the **report / phase artifacts** so `ship:analyze` and humans can trace spec→test. It
-belongs in markdown artifacts and Linear — never carried into a source or test identifier. Iterate
-the worker over **scenarios** (one test per scenario block), not over "`@SC-XX`".`.
+>    — what the worker never receives, it cannot echo. See `the deidentify-context.md pattern (included above)`.
 >    This removes the dominant leak path (inline pipeline generation) at the source. The two layers
 >    below are the net for what prevention cannot reach (standalone workers, a Linear key picked up
 >    from the branch, and comments — which have no input to strip).

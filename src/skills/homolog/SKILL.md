@@ -87,7 +87,7 @@ After approval, execute ALL of the following steps without skipping any:
 > string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
 > `Concluído`):
 >
-> @ship/patterns/linear-status.md
+> Read `@@ship/patterns/linear-status.md` and follow that recipe.
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:

@@ -19,6 +19,14 @@ const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/[^\s)]+\.md(?:#[A-Za-z0-9_-]+)?/;
 const REPLACE_REF = /@ship\/([^\s)]+\.md)(?:#([A-Za-z0-9_-]+))?/g;
 
+// Lazy reference: `@@ship/<path>.md`. Unlike `@ship/...` (inlined at build time),
+// a lazy ref is NOT inlined — the referenced file is copied next to the skill and
+// the token is replaced with `${CLAUDE_SKILL_DIR}/<path>.md`, a render-time
+// substitution that resolves to an absolute path so the model can Read the file
+// on demand. This keeps heavy/conditional patterns out of the always-loaded skill
+// body. Skills only — agents have no ${CLAUDE_SKILL_DIR}. Whole-file only (no #anchor).
+const REPLACE_LAZY = /@@ship\/([^\s)]+\.md)(#[A-Za-z0-9_-]+)?/g;
+
 const readCache = new Map();
 
 function readFileCached(absPath) {
@@ -72,34 +80,81 @@ function extractSection(content, anchor, refLabel, skillRelPath) {
   return lines.slice(start, end).join('\n').trim();
 }
 
+function titleCase(slug) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+// A repeated reference to a pattern already inlined earlier in the SAME output
+// file becomes a short textual pointer instead of a second full copy. The first
+// occurrence carries the content; later ones (typically prose cross-references
+// like "see @ship/patterns/gates.md → Edge case 4") just point back to it. This
+// keeps each pattern's body in the built file exactly once.
+function pointerFor(ref, anchor) {
+  if (anchor) {
+    return `the ${titleCase(anchor)} section (included above)`;
+  }
+  return `the ${path.basename(ref)} pattern (included above)`;
+}
+
 function resolveRefs(content, skillRelPath) {
-  let result = content;
-  let depth = 0;
+  const seen = new Set();
 
-  while (true) {
-    if (!HAS_REF.test(result)) break;
-
+  function expand(text, depth) {
     if (depth >= MAX_DEPTH) {
       console.error(`Erro: possível referência circular em ${skillRelPath} (profundidade máxima ${MAX_DEPTH} atingida)`);
       process.exit(1);
     }
 
-    result = result.replace(REPLACE_REF, (match, ref, anchor) => {
+    return text.replace(REPLACE_REF, (match, ref, anchor) => {
+      const refKey = anchor ? `${ref}#${anchor}` : ref;
+
+      if (seen.has(refKey)) {
+        return pointerFor(ref, anchor);
+      }
+      seen.add(refKey);
+
       const refPath = path.join(SOURCE_ROOT, ref);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);
         process.exit(1);
       }
       const fileContent = readFileCached(refPath).trim();
-      const refLabel = anchor ? `${ref}#${anchor}` : ref;
-      console.log(`  ${skillRelPath} ← @ship/${refLabel}`);
-      return anchor ? extractSection(fileContent, anchor, refLabel, skillRelPath) : fileContent;
+      console.log(`  ${skillRelPath} ← @ship/${refKey}`);
+      const body = anchor ? extractSection(fileContent, anchor, refKey, skillRelPath) : fileContent;
+      return expand(body, depth + 1);
     });
-
-    depth++;
   }
 
-  return result;
+  return expand(content, 0);
+}
+
+// Process `@@ship/...` lazy refs in a skill: copy each referenced source file
+// next to the skill's SKILL.md (preserving its relative path) and replace the
+// token with `${CLAUDE_SKILL_DIR}/<path>`. Inline @ship refs inside the copied
+// file are resolved first so the runtime copy is self-contained. Returns the
+// rewritten content. `skillOutDir` is the skill's output directory.
+function processLazyRefs(content, skillRelPath, skillOutDir) {
+  return content.replace(REPLACE_LAZY, (match, ref, anchor) => {
+    if (anchor) {
+      console.error(`Erro: lazy ref com âncora não é suportado em ${skillRelPath}: @@ship/${ref}${anchor} (lazy é whole-file; remova a âncora ou use @ship inline)`);
+      process.exit(1);
+    }
+    const srcPath = path.join(SOURCE_ROOT, ref);
+    if (!fs.existsSync(srcPath)) {
+      console.error(`Erro: lazy ref quebrada em ${skillRelPath}: @@ship/${ref}`);
+      process.exit(1);
+    }
+    const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
+    const destPath = path.join(skillOutDir, ref);
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, resolved, 'utf8');
+    console.log(`  ${skillRelPath} ⇢ @@ship/${ref} (bundled, lazy)`);
+    return '${CLAUDE_SKILL_DIR}/' + ref;
+  });
 }
 
 function walkAgentFiles(dir, results = []) {
@@ -120,9 +175,10 @@ function buildSkills() {
   for (const skillPath of skillFiles) {
     const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
     const raw = fs.readFileSync(skillPath, 'utf8');
-    const substituted = resolveRefs(raw, skillRelPath);
     const outPath = path.join(OUTPUT_SKILLS, skillRelPath);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const lazyResolved = processLazyRefs(raw, skillRelPath, path.dirname(outPath));
+    const substituted = resolveRefs(lazyResolved, skillRelPath);
     fs.writeFileSync(outPath, substituted, 'utf8');
     console.log(`✓ skills/${skillRelPath}`);
     count++;

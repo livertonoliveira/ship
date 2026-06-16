@@ -98,48 +98,7 @@ Open the findings markdown file for this phase, then filter before embedding:
 For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see ## Lazy Mode {#lazy-mode}
 
 Canonical rendering format for per-phase findings in quality reports and PR descriptions.
-For the decision algorithm (how to determine PASS / WARN / FAIL), see ---
-# Lazy-Load Findings Algorithm
-
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
-
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
-
----
-
-## Algorithm
-
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
-For each phase (perf, security, review):
-
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
-2. **Branch on gate status:**
-
-### If gate = PASS
-
-Emit a single summary line — do **NOT** open the findings markdown:
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-Translate the user-facing text to `Artifact language` from `ship/config.md`.
-
-### If gate = WARN or FAIL
-
-Open the findings markdown file for this phase, then filter before embedding:
-- Include all findings with severity `critical`, `high`, or `medium` in full
-- For `low` severity findings: replace the full list with a single aggregated line:
-  `+ N low-severity findings — [see full report](<link or path>)`
-- Translate the aggregated line text to `Artifact language` from `ship/config.md`
-
-## Link/reference (always required)
-
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
-- **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md`.
+For the decision algorithm (how to determine PASS / WARN / FAIL), see the lazy-load-findings.md pattern (included above).
 
 ### Gate = PASS — tabela-resumo
 
@@ -209,48 +168,7 @@ Follow ## Quality Report {#quality-report}
 
 Consolidated from `homolog.md`. Used in both Linear mode (as issue comment) and Local mode (as `report-<task-id>.md`).
 
-Each findings section is rendered using the lazy-load algorithm — see ---
-# Lazy-Load Findings Algorithm
-
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
-
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
-
----
-
-## Algorithm
-
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
-For each phase (perf, security, review):
-
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
-2. **Branch on gate status:**
-
-### If gate = PASS
-
-Emit a single summary line — do **NOT** open the findings markdown:
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-Translate the user-facing text to `Artifact language` from `ship/config.md`.
-
-### If gate = WARN or FAIL
-
-Open the findings markdown file for this phase, then filter before embedding:
-- Include all findings with severity `critical`, `high`, or `medium` in full
-- For `low` severity findings: replace the full list with a single aggregated line:
-  `+ N low-severity findings — [see full report](<link or path>)`
-- Translate the aggregated line text to `Artifact language` from `ship/config.md`
-
-## Link/reference (always required)
-
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
-- **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md`.
+Each findings section is rendered using the lazy-load algorithm — see the lazy-load-findings.md pattern (included above).
 
 ```markdown for the full report structure.
 
@@ -291,68 +209,7 @@ After approval, execute ALL of the following steps without skipping any:
 > string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
 > `Concluído`):
 >
-> # Linear Status — resolve, set, and verify workflow-state transitions
-
-> Canonical recipe for moving a task issue between workflow states.
-> Used by `ship:run` / `ship:develop` (→ started) and `ship:homolog` / `ship:run` (→ completed).
-
-A workflow-state **name** is team-configurable, so passing a hardcoded literal like `"In Progress"`
-or `"Done"` to `save_issue` is unsafe: the `state` parameter is matched by state **name, type, or
-ID**, and a team may have renamed it (e.g., `Em andamento`, `Concluído`, `Shipped`). When the name
-does not match, the transition silently no-ops and the issue is left in its previous state.
-
-Because a state **ID** never changes on rename, prefer resolving to the target state's **ID** and
-passing that to `save_issue` — it is the only match key that cannot silently no-op. Fall back to the
-state **name** only when an ID is not available. Either way, always verify (step 3) — verification is
-what turns a silent no-op into a caught, retriable failure.
-
-Likewise, `get_issue_status` does **not** read an issue's current state — it requires
-`id` + `name` + `team` and returns the definition of a status entity. To read the state an issue is
-currently in, use `get_issue` and inspect its `state` field.
-
-Linear workflow states each have a stable `type`. The two the pipeline transitions to are:
-
-| Transition | Linear state `type` | Config field captured at `ship:init` | Default name |
-|------------|---------------------|--------------------------------------|--------------|
-| Start work | `started`           | `In Progress Status`                 | `In Progress` |
-| Complete   | `completed`         | `Done Status`                        | `Done` |
-
----
-
-## 1. Resolve the target state (do this once per transition)
-
-1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from
-   `ship/config.md → Linear Integration`.
-2. If the field is present and not `not configured`, use it as the target state name. To get the
-   unambiguous **ID** (preferred — see below), call `mcp__linear-server__list_issue_statuses` with
-   the `Team ID` and pick the state whose `type` matches the transition (`started`/`completed`),
-   preferring the one whose name equals the configured name; use its `id`. If you cannot list
-   statuses, fall back to passing the configured name.
-3. If the config field is **absent** (older config) or `not configured`: call
-   `mcp__linear-server__list_issue_statuses` with the `Team ID`, select the state whose `type`
-   matches the transition (`started` or `completed`), and use its **`id`** as the target. If more
-   than one state of that type exists, prefer the conventional name (`In Progress`/`Em andamento`
-   for started; `Done`/`Concluído` for completed); otherwise take the first.
-
-Call the resolved value `<target-state>` — an ID whenever one was obtained, otherwise a name.
-
-## 2. Set the state
-
-Call `mcp__linear-server__save_issue` with:
-- `id`: the task issue identifier (e.g., `MOB-1147`)
-- `state`: `<target-state>` — pass the resolved **ID** when available (immune to renames); a name
-  only as the fallback.
-
-## 3. Verify (never use `get_issue_status` for this)
-
-Call `mcp__linear-server__get_issue` for the task issue and read its `state` field.
-The transition succeeded when `state.type` matches the intended type (`started` or `completed`) —
-a name-agnostic check.
-
-If it does not match, the set failed — re-resolve `<target-state>` per step 1 (the configured name
-may be stale), call `save_issue` again, and re-verify **once**. If it still fails, surface the issue
-to the user with the resolved state name so they can fix the mapping in `ship/config.md` — do not
-loop indefinitely.
+> Read `${CLAUDE_SKILL_DIR}/patterns/linear-status.md` and follow that recipe.
 >
 > In parallel:
 > - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
@@ -419,206 +276,10 @@ All contexts also read `ship/config.md` for stack and conventions.
 
 ### 2. Consolidate report.md — lazy-load findings
 
-Apply the lazy-load algorithm from ---
-# Lazy-Load Findings Algorithm
+Apply the lazy-load algorithm from the lazy-load-findings.md pattern (included above) — `phase-status.md` is already loaded in step 1.3 and serves as the canonical gate index. Only WARN/FAIL phases have their findings files opened.
+For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see the Lazy Mode section (included above).
 
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
-
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
-
----
-
-## Algorithm
-
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
-For each phase (perf, security, review):
-
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
-2. **Branch on gate status:**
-
-### If gate = PASS
-
-Emit a single summary line — do **NOT** open the findings markdown:
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-Translate the user-facing text to `Artifact language` from `ship/config.md`.
-
-### If gate = WARN or FAIL
-
-Open the findings markdown file for this phase, then filter before embedding:
-- Include all findings with severity `critical`, `high`, or `medium` in full
-- For `low` severity findings: replace the full list with a single aggregated line:
-  `+ N low-severity findings — [see full report](<link or path>)`
-- Translate the aggregated line text to `Artifact language` from `ship/config.md`
-
-## Link/reference (always required)
-
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
-- **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md` — `phase-status.md` is already loaded in step 1.3 and serves as the canonical gate index. Only WARN/FAIL phases have their findings files opened.
-For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see ## Lazy Mode {#lazy-mode}
-
-Canonical rendering format for per-phase findings in quality reports and PR descriptions.
-For the decision algorithm (how to determine PASS / WARN / FAIL), see ---
-# Lazy-Load Findings Algorithm
-
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
-
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
-
----
-
-## Algorithm
-
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
-For each phase (perf, security, review):
-
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
-2. **Branch on gate status:**
-
-### If gate = PASS
-
-Emit a single summary line — do **NOT** open the findings markdown:
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-Translate the user-facing text to `Artifact language` from `ship/config.md`.
-
-### If gate = WARN or FAIL
-
-Open the findings markdown file for this phase, then filter before embedding:
-- Include all findings with severity `critical`, `high`, or `medium` in full
-- For `low` severity findings: replace the full list with a single aggregated line:
-  `+ N low-severity findings — [see full report](<link or path>)`
-- Translate the aggregated line text to `Artifact language` from `ship/config.md`
-
-## Link/reference (always required)
-
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
-- **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md`.
-
-### Gate = PASS — tabela-resumo
-
-When a phase gate = PASS, emit only the compact summary table row. **No findings content is embedded.**
-
-Format:
-
-| Fase | Status | Findings críticos/altos |
-|------|--------|------------------------|
-| Performance | ✅ PASS | 0 |
-| Security | ✅ PASS | 0 |
-| Code Review | ✅ PASS | 0 |
-
-Single-phase inline variant (used inside phase subsections):
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-**Example — all phases PASS:**
-
-| Fase | Status | Findings críticos/altos |
-|------|--------|------------------------|
-| Performance | ✅ PASS | 0 |
-| Security | ✅ PASS | 0 |
-| Code Review | ✅ PASS | 0 |
-
-### Gate = WARN or FAIL — bloco expandido
-
-When a phase gate = WARN or FAIL, embed findings inline. Apply the filter:
-- **Include in full**: all findings with severity `critical`, `high`, or `medium`
-- **Aggregate**: replace all `low` findings with a single count line
-
-Format:
-
-```
-### [HIGH] <Title>
-<finding in Finding Entry format — see #finding-entry>
-
-### [MEDIUM] <Title>
-<finding in Finding Entry format>
-
-+ N low-severity findings — [see full report](<link or path>)
-```
-
-**Example — Security gate = FAIL:**
-
-### [HIGH] SQL Injection in search endpoint
-- **Category:** INJ
-- **File:** src/routes/search.ts:34
-- **Description:** User input is interpolated directly into a raw SQL query without parameterization.
-- **Impact:** Full database read/write access for an attacker.
-- **Suggestion:** Use parameterized queries via the ORM or prepared statements.
-
-### [MEDIUM] Missing rate limiting on login route
-- **Category:** CFG
-- **File:** src/routes/auth.ts:12
-- **Description:** The POST /login endpoint has no rate limit, enabling brute-force attacks.
-- **Impact:** Credential enumeration and account takeover.
-- **Suggestion:** Apply a rate-limiting middleware (e.g., express-rate-limit) with a 5-attempts/minute threshold.
-
-+ 3 low-severity findings — [see full report](https://linear.app/<workspace>/issue/<TEAM>-NNN)
-
----.
-
-Follow ## Quality Report {#quality-report}
-
-Consolidated from `homolog.md`. Used in both Linear mode (as issue comment) and Local mode (as `report-<task-id>.md`).
-
-Each findings section is rendered using the lazy-load algorithm — see ---
-# Lazy-Load Findings Algorithm
-
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
-
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
-
----
-
-## Algorithm
-
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
-For each phase (perf, security, review):
-
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
-2. **Branch on gate status:**
-
-### If gate = PASS
-
-Emit a single summary line — do **NOT** open the findings markdown:
-
-```
-✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
-```
-
-Translate the user-facing text to `Artifact language` from `ship/config.md`.
-
-### If gate = WARN or FAIL
-
-Open the findings markdown file for this phase, then filter before embedding:
-- Include all findings with severity `critical`, `high`, or `medium` in full
-- For `low` severity findings: replace the full list with a single aggregated line:
-  `+ N low-severity findings — [see full report](<link or path>)`
-- Translate the aggregated line text to `Artifact language` from `ship/config.md`
-
-## Link/reference (always required)
-
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
-- **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md`.
-
-```markdown for the full report structure.
+Follow the Quality Report section (included above) for the full report structure.
 
 ### 3. Verify task completeness
 
@@ -633,11 +294,7 @@ If any critical item is not completed, flag it to the user.
 
 Present clearly and in an organized manner.
 
-Follow ## Acceptance Report {#acceptance-report}
-
-Consolidated from `homolog.md`. Presented to the user during the acceptance phase.
-
-```markdown for the report structure.
+Follow the Acceptance Report section (included above) for the report structure.
 
 After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
 

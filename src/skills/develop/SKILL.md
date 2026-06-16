@@ -16,7 +16,7 @@ You are the Ship implementation orchestrator. You do NOT write code yourself —
 
 The heavy semantic judgment (how to decompose, which scenarios map where) already happened in `ship:plan` and lives in `plan.md`. But this orchestrator still makes non-trivial judgment calls — slicing per-module context, **de-identifying** it before injection, dependency ordering, integration checks — and must reliably act (dispatch) rather than narrate. Per the Boundary rule in `ship/patterns/model-routing.md`, that keeps it at the reasoning tier (Sonnet); the workers it fans out are Sonnet too.
 
-**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and inline spec/design passed by the caller).
+**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode passed by the caller; spec/design are read from the scratch dir, not injected inline).
 
 ---
 
@@ -26,7 +26,9 @@ Extract the task identifier from `$ARGUMENTS`. Resolve scratch dir: `.context/sh
 
 Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and `Artifact language` (unless already injected inline). Read the typecheck command from `ship/config.md`.
 
-**Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, it is your fan-out map. If it does NOT exist (the planner was skipped for a `minor`/`trivial` diff, or this is a standalone invocation with no scratch dir), treat the whole task as a **single module** — you will dispatch exactly one worker with the inline spec/design as its context.
+**Read the spec + design:** in pipeline mode, read `.context/ship-run/<task-id>/spec.md` and `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline). You slice the design per module when fanning out workers. In a standalone invocation (no scratch dir), fetch them directly instead: Linear mode via `mcp__linear-server__get_issue` + `mcp__linear-server__get_document`; Local mode via `ship/changes/<feature>/proposal.md` + `design.md`.
+
+**Read the plan:** if `.context/ship-run/<task-id>/plan.md` exists, it is your fan-out map. If it does NOT exist (the planner was skipped for a `minor`/`trivial` diff, or this is a standalone invocation with no scratch dir), treat the whole task as a **single module** — you will dispatch exactly one worker with the spec/design (from the scratch dir) as its context.
 
 ---
 
@@ -36,7 +38,7 @@ Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and
 >
 > Resolve the team's **started**-state name following this recipe — **do not pass the literal `"In Progress"`**, it silently no-ops on teams whose started state has another name (e.g., `Em andamento`):
 >
-> @ship/patterns/linear-status.md
+> Read `@@ship/patterns/linear-status.md` and follow that recipe.
 >
 > Then call `mcp__linear-server__save_issue` with `state: <target-state>` before dispatching any worker.
 
