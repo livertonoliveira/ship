@@ -245,6 +245,8 @@ Additionally:
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — a single source of truth that BOTH develop and test consume, so code and tests drift less at the source.
 
+> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Resist deep-reading the codebase, reasoning about the domain semantics (data model, API contract, hook/state flow), or deciding the implementation approach before dispatching `ship:plan`. That analysis is the planner's job and duplicating it here wastes tokens and produces unverified hypotheses that the planner may contradict. Pass the **raw** spec + design inline and trust the returned `plan.md`. The only pre-plan judgment you make is the deterministic baseline classification (step 0.7) that decides *whether* to run the planner at all.
+
 Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
 ```
