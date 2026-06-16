@@ -33,9 +33,10 @@ Launch **2 agents in parallel** using the Agent tool. For BOTH agents, pass `mod
 Ship pins the model per skill instead of inheriting from the session. This decouples cost
 control from quality: users can pick Haiku as their session model to economize across the
 weekly limit, and Ship still guarantees Sonnet on the skills that actually reason (implementation,
-analysis, generation, correlation). Symmetrically, template/control-flow skills (report
-rendering, findings aggregation, PR expansion, orchestration) are pinned to Haiku because they
-gain nothing from a higher tier.
+analysis, generation, correlation). Symmetrically, pure template/control-flow skills (report
+rendering, findings aggregation, PR expansion, one-shot config setup) are pinned to Haiku because
+they gain nothing from a higher tier. Judgment-heavy orchestrators (`run`, `develop`, `test`) stay
+on the reasoning tier even though they also dispatch — see the Boundary rule.
 
 This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
 an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
@@ -78,7 +79,7 @@ an Agent tool dispatch overrides the frontmatter.
 |-----------------------|---------|-------------------------------------------------|
 | `ship:homolog`        | haiku   | Report rendering + findings consolidation. **Not forked** — interactive acceptance gate; runs inline so approval and the Done transition share one context (see `ship:init`/`ship:pr`). |
 | `ship:pr`             | haiku   | PR body template expansion (tradeoff: conflict resolution and strict-mode audit gate eval use the same tier; accepted for cost efficiency — upgrade to session if quality regressions are observed) |
-| `ship:run`            | haiku (orchestrator) | Template/control-flow: file reads, deterministic diff classification, gate eval, dispatch. Spawns Sonnet agents explicitly for reasoning phases. |
+| `ship:run`            | sonnet (orchestrator) | Judgment dispatch: although much of the body is control-flow (file reads, deterministic diff classification, gate eval, dispatch), the working-tree diff refresh, surgical re-run scoping, and gate decisions proved to need reliable multi-step instruction-following that Haiku fumbled in practice (e.g. corrupting `diff.md` / staged-vs-unstaged confusion). Pinned to the reasoning tier per the Boundary rule. Still spawns Sonnet leaves for code/test generation. |
 | `ship:init`           | haiku (orchestrator) | Config-file template writing + interactive Q&A. Spawns Sonnet agents explicitly for stack/conventions detection. |
 | `ship:audit:run` consolidation agent | haiku | Aggregates pre-structured audit reports |
 | `ship:plan`           | sonnet   | Test-aware planning — decomposition + scenario→test mapping needs full reasoning |
@@ -117,9 +118,14 @@ For these skills, apply the **Orchestrator-on-Haiku pattern**:
 If the orchestrator itself needs to make non-trivial judgment calls (e.g., dependency inference,
 ambiguous classification, context de-identification, reliable act-not-narrate dispatch), do NOT
 pin Haiku — either pin the reasoning tier (`model: "sonnet"`, as `develop`/`test` do) or rewrite
-the judgment as a deterministic rule before downgrading. `ship:run` itself stays Haiku by taking
-the latter route — see its multi-task note (dependency inference removed in favor of deterministic
-Linear milestone order).
+the judgment as a deterministic rule before downgrading. `ship:run` was originally pinned Haiku via
+the latter route, but observed runs showed its diff-refresh, surgical re-run scoping, and gate
+decisions still demanded reliable multi-step judgment Haiku did not deliver consistently — so it is
+now pinned `model: "sonnet"`. It keeps its deterministic guardrails regardless (exact diff-capture
+command + unified-diff assertion; deterministic Linear milestone ordering with no dependency
+inference). The remaining Haiku orchestrators (`homolog`, `pr`, `init`, `audit:run` consolidation)
+stay Haiku because their bodies are genuinely template/aggregation; revisit individually if a
+quality regression is observed (e.g. `pr` conflict resolution / strict-mode gate eval).
 
 ---
 

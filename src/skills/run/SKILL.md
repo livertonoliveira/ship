@@ -4,7 +4,7 @@ description: "Full development pipeline for a task: develop → test → perf �
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 ---
 
 # Ship Run — Development Pipeline
@@ -327,7 +327,7 @@ Storage mode: <linear|local>
 
 ### 2.6. Develop evidence gate (MANDATORY)
 
-> **Why this step exists**: `ship:develop` is a forked Haiku orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
+> **Why this step exists**: `ship:develop` is a forked Sonnet orchestrator with no Edit/Write tools — it produces code **only** by dispatching `ship-develop-implement` workers via the Agent tool. A known failure mode is the orchestrator *narrating* the plan and returning a success-looking status **without ever dispatching a worker**, leaving the working tree untouched. This gate does not trust develop's self-report: it independently proves, from the working tree itself, that real code was produced. Never accept a develop phase as `pass` on the orchestrator's word alone.
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
@@ -395,7 +395,7 @@ Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
 
-The orchestrator itself runs on Haiku per @ship/patterns/model-routing.md.
+The orchestrator itself runs on Sonnet per @ship/patterns/model-routing.md.
 
 **Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
@@ -611,7 +611,7 @@ After homolog approval:
 
 When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
-1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — the orchestrator runs on Haiku and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
+1. Sort tasks by **Linear milestone order** (deterministic field — never infer). Within a milestone, sort by issue creation date (also deterministic). Do NOT attempt dependency inference — task ordering stays deterministic and predictable, and that judgment call belongs to the user. If the user wants a different order, they pass explicit IDs in the desired sequence.
 2. Process one task at a time through the full pipeline
 3. After each task completion, ask the user before continuing
 4. At the end, present a summary of all completed tasks
