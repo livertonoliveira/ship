@@ -50,6 +50,8 @@ If launching parallel agents, pass each agent the full reviewing methodology fro
 
 ## 3. Analyze the code
 
+**Read diff hunks correctly first.** Lines starting with `-` are REMOVED — they are NOT present in the final file. Only `+` and context lines reflect the post-change code. Never flag duplication (DRY), dead code, or "redefinition" by counting a symbol that appears in both a `-` and a `+` line of the same hunk — that is a replacement, not a duplicate. When a finding depends on whether a symbol exists more than once in the final file, **Read the actual file to confirm before reporting it**.
+
 For each new/modified file in the diff, evaluate the following dimensions:
 
 ---
@@ -490,7 +492,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 **Behavior:**
 - Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
 - Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
-- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4.`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate.
+- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4.`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate. Compute the gate **deterministically from the severity counts**: any critical/high → `FAIL`; else any medium → `WARN`; else `PASS`. The `Gate:` value in the Summary and the gate column written to `phase-status.md` (step 6) MUST be identical and MUST match these counts — **never emit `PASS` while Medium > 0**.
 
 ---
 
