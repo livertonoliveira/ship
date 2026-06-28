@@ -105,11 +105,18 @@ On failure:
 
 ## 6. Hygiene gate — final sweep (MANDATORY)
 
-The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygiene-scan.sh`), which already blocked any comment/spec-ID at the moment each source file was written. This step is the **final sweep** behind that hook — a whole-tree re-check so nothing slips through if the hook was disabled or the plugin out of date. Do not treat it as the primary defense:
+Run the scan now — this is a mandatory Bash call, not optional:
 
-@ship/patterns/hygiene-gate.md
+```bash
+ROOT=$(git rev-parse --show-toplevel)
+bash "$ROOT/plugins/ship/hooks/hygiene-scan.sh" --all 2>&1
+```
 
-Dispatch the cleanup worker as `ship:ship-develop-implement` with `Mode: clean`. Do not proceed to step 7 while known comment/spec-ID hits remain in source files.
+If the output contains hits:
+1. Dispatch `ship:ship-develop-implement` with `Mode: clean` and the exact `file:line` hits.
+2. Re-run the scan above. If hits remain after a second cycle, record them in the phase report and surface as `warn` — never report PASS while known hits remain.
+
+If output is `Ship hygiene — clean.` → proceed to step 7.
 
 ---
 

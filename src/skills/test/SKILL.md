@@ -84,11 +84,18 @@ If some (not all) layers are disabled, after skip logs output: "Layers pulados p
 
 ## 3b. Hygiene gate — final sweep (MANDATORY)
 
-The genuinely deterministic enforcement is the `PostToolUse` hook (`hooks/hygiene-scan.sh`), which already blocked any comment/spec-ID at the moment each test file was written. This step is the **final sweep** behind that hook — a whole-tree re-check so nothing slips through if the hook was disabled or the plugin out of date. Do not treat it as the primary defense:
+Run the scan now — this is a mandatory Bash call, not optional:
 
-@ship/patterns/hygiene-gate.md
+```bash
+ROOT=$(git rev-parse --show-toplevel)
+bash "$ROOT/plugins/ship/hooks/hygiene-scan.sh" --all 2>&1
+```
 
-For each flagged test file, dispatch the cleanup via the matching worker (`ship:ship-test-unit` / `ship:ship-test-integration` / `ship:ship-test-e2e`) with `Mode: clean`. Do not proceed while known comment/spec-ID hits remain in test files.
+If the output contains hits:
+1. Dispatch a cleanup worker for each flagged file via the Agent tool with `Mode: clean`, using the matching type (`ship:ship-test-unit` / `ship:ship-test-integration` / `ship:ship-test-e2e`). Pass the exact `file:line` hits.
+2. Re-run the scan above. If hits remain after a second cycle, record them in the phase report and surface as `warn` — never report PASS while known hits remain.
+
+If output is `Ship hygiene — clean.` → proceed.
 
 ---
 
