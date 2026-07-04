@@ -86,9 +86,7 @@ Then populate the canonical files in a single batch:
 2. **`diff.md`** (provisional baseline) — Capture the branch diff **relative to the merge-base, including the working tree and untracked files**, and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
 
    ```bash
-   BASE=$(git merge-base origin/main HEAD)
-   git add -A -N   # surface new untracked files in the diff without staging content; the scratch dir is gitignored so it is never added
-   git diff "$BASE"
+   bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
    ```
 
    > This is the **pre-develop baseline** — it reflects only work that already existed before this run (re-runs, pre-committed work). It is consumed solely by the planner-gate classification in step 0.7. `ship:develop` integrates code into the working tree without committing, so the **authoritative** diff that the quality phases analyze is re-captured in step 2.5, after development.
@@ -267,27 +265,13 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
 
 > **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
 
-1. **Re-capture `diff.md`** over the post-develop working tree (same range and command as step 0.5, now including the new and modified source files develop wrote):
+1. **Re-capture `diff.md`** over the post-develop working tree (same range as step 0.5, now including the new and modified source files develop wrote):
 
    ```bash
-   BASE=$(git merge-base origin/main HEAD)
-   git add -A -N   # surface develop's new untracked files in the diff without staging content
-   git diff "$BASE" > .context/ship-run/<task-id>/diff.md
+   bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
    ```
 
-   **Use this exact command** — downstream consumers parse `diff.md` as a literal unified diff; `--stat`, three-dot ranges, or hand-written summaries silently misclassify (e.g. a `--stat` body reads as `0 logical files`).
-
-   **Assert the output is a real unified diff** before continuing — fail loud rather than letting a malformed `diff.md` poison the quality gate:
-
-   ```bash
-   if [ -s .context/ship-run/<task-id>/diff.md ] \
-      && ! grep -q '^diff --git ' .context/ship-run/<task-id>/diff.md; then
-     echo "✗ diff.md is non-empty but has no 'diff --git' header — not a valid unified diff. Re-capture before proceeding." >&2
-     exit 1
-   fi
-   ```
-
-   A non-empty `diff.md` with no `diff --git` header means the capture was corrupted — re-run the command above; do not proceed to classification or quality phases on a malformed diff. (An empty `diff.md` is legitimate only when `dev` did nothing — handle that in step 2.6, not here.)
+   `capture-diff.sh` is the canonical implementation of this capture and its unified-diff assertion — do not hand-roll `--stat`, three-dot ranges, or manual summaries. An empty `diff.md` is legitimate only when `dev` did nothing (handled in step 2.6, not here).
 
 2. **Re-run the classification** by invoking the same script directly against the refreshed `diff.md`:
 

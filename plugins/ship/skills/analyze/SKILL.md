@@ -98,6 +98,8 @@ git add -A -N   # surface untracked files; the scratch dir is gitignored and nev
 git diff "$BASE"
 ```
 
+The canonical implementation of this capture and its unified-diff assertion is `src/hooks/capture-diff.sh`.
+
 The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
