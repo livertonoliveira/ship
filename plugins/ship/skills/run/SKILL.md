@@ -90,7 +90,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review, analyze | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
-| `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full task spec: issue description + ACs + `@SC-XX` scenarios + Proposal REQ-XX. Written once so phases read it instead of receiving it re-inlined per dispatch |
+| `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full — title and covering issue when known) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
 | `design.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full Design document. Written once; `develop` slices it per module when fanning out workers |
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped — only for a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work); greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
@@ -668,7 +668,15 @@ Additionally:
 
 > **From this point, all phase checks use the effective phase set built in step 5 — never raw `Pipeline Phases` alone.**
 
-**Persist spec + design to the scratch dir (once).** Write the full task spec — issue description + ACs + `@SC-XX` scenarios + the Proposal document (REQ-XX requirements) — to `.context/ship-run/<task-id>/spec.md`, and the full Design document to `.context/ship-run/<task-id>/design.md`. The `plan`, `develop`, and `analyze` phases read these files from the scratch dir instead of having them re-inlined into every dispatch — capture them here once. In Local mode, source them from `proposal.md`/`design.md`; still write the scratch copies so every phase has a single canonical path.
+**Persist spec + design to the scratch dir (once).** Write `.context/ship-run/<task-id>/spec.md` with a sliced view of the feature spec scoped to this task, and the full Design document to `.context/ship-run/<task-id>/design.md`. The `plan`, `develop`, and `analyze` phases read these files from the scratch dir instead of having them re-inlined into every dispatch — capture them here once.
+
+Build `spec.md` as follows:
+
+1. **This task's own description, in full.** Copy the current issue's Context, What to do, `## Files` section (if present), Acceptance Criteria list, `## Scenarios`, and Notes verbatim.
+2. **Only the requirement sections that this task's own acceptance criteria belong to, in full.** Each acceptance-criteria item in this issue's own list belongs to exactly one requirement section in the Proposal document (in Local mode, `proposal.md`); look up which requirement section each of this issue's criteria comes from, and copy that entire requirement section — its full text, its own acceptance criteria, and its Scenario Index — into `spec.md`. If this issue's criteria span two or more requirement sections, include every one of them in full; do not pick just one.
+3. **A compact scope index for everything else.** For every requirement section in the feature that this issue's criteria do NOT touch, add a single line: `<requirement-id>: <title> — covered by <issue-id>` when you know which other issue owns it, or just `<requirement-id>: <title>` when the covering issue isn't known. Do not copy the full text of these requirements — title-only is enough for later phases to know they exist and are out of scope.
+
+In Local mode, apply this identical slicing rule against `proposal.md` instead of the Linear Proposal document; still write the scratch copy of `spec.md` so every phase has a single canonical path. `design.md` keeps its existing behavior — written in full, unsliced.
 
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
@@ -950,6 +958,7 @@ Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `cont
 - Pass results to the Correlation Engine
 - Generate the drift report + compute gate
 - Persist `drift-report.md` and `drift-findings.json` to scratch dir
+- Correlate requirements↔code and acceptance-criteria↔tests only over the requirements/criteria fully included in `spec.md`; requirements that appear only in the compact scope index (title-only, not fully included) belong to other tasks and must NOT enter the correlation matrix or be reported as unimplemented
 - Artifact language: `<artifact_language>`
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
