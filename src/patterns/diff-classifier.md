@@ -5,6 +5,11 @@ and adjusts which quality agents run in Phase 4 of `/ship:run`.
 
 > **No LLM calls.** All classification is computed via bash-parseable rules only.
 
+> `src/hooks/diff-classify.sh` is the canonical implementation of the metrics, sensitive-path
+> parsing, top-down rules, and output format described below. The bash snippets in this document
+> are reference/documentation only — they transcribe the same logic for readability, but
+> `ship:run` invokes the script directly rather than executing these snippets.
+
 ---
 
 ## Classification Criteria
