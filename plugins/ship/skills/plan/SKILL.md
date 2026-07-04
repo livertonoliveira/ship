@@ -32,13 +32,30 @@ Load the task's `## Scenarios` Gherkin block (`@SC-XX`). These are the behaviora
 
 ## 2. Shallow survey of the codebase
 
-Do a **shallow** survey — enough to decide module boundaries and where things live, NOT a deep read:
-- `Glob`/`Grep` the areas the feature touches to learn folder structure, where similar modules already live, and existing registration points (module files, route tables, barrel exports).
-- Do NOT read every file end-to-end. The leaf workers (`ship-develop-implement`) and test workers do the deep reading of their own files. Your job is the map, not the territory.
+First check whether the task's spec carries a `## Files` section (format: `create|modify \`<path>\` — <intent>`, plus optional `Âncora: siga o padrão de \`<path>\` — <reason>` lines, per `ship:spec`).
+
+**Map present → validate, directed survey:**
+- For each `modify <path>` entry, confirm the file still exists at that path.
+- For each `create <path>` entry, confirm the target directory matches the area's existing convention — the file itself is not expected to exist yet.
+- For each anchor, confirm the anchor file exists and is still analogous — same responsibility/shape it was cited for.
+- The survey starts from the map's paths/anchors and their immediate neighborhood only — `Glob`/`Grep` scoped to those locations, not an open-ended sweep across the feature's areas. This directs the shallow survey, it does not turn it into a deep read.
+- Reconcile what you find:
+  - Path moved/renamed → correct it to the real current path.
+  - Mapped file no longer exists and has no successor → drop it from the map (or replace it if an equivalent file is found).
+  - A file the map didn't anticipate is clearly required, per what the directed survey just uncovered → add it to the map.
+  - Every correction, drop, or addition becomes one line in `## Map Divergences` (step 6). When nothing needed adjusting, the section stays absent or empty.
+
+**Map absent (older spec, free-form prompt) → fall back to today's behavior unchanged:**
+- Do a **shallow** survey — enough to decide module boundaries and where things live, NOT a deep read:
+  - `Glob`/`Grep` the areas the feature touches to learn folder structure, where similar modules already live, and existing registration points (module files, route tables, barrel exports).
+  - Do NOT read every file end-to-end. The leaf workers (`ship-develop-implement`) and test workers do the deep reading of their own files. Your job is the map, not the territory.
+- No warning, no blocking condition — this is simply the pre-existing path.
 
 ---
 
 ## 3. Decompose into modules
+
+When a validated `## Files` map exists (step 2), start from its disjoint file sets: each map entry (post-reconciliation) is already a candidate file for a module — group them into modules along the same lines below, reusing the map's grouping instead of deriving file sets from scratch. When no map exists, derive the file sets from scratch as today.
 
 Identify **independent** units of work:
 - Files with no mutual dependency → parallel batch.
@@ -126,10 +143,15 @@ Write `plan.md` to the scratch dir (`.context/ship-run/<task-id>/plan.md`). Exac
 ## Coverage Gaps
 - AC-07 outcome "skip applies base reward" had no @SC scenario — derived test slot added; backfill a real scenario at spec time.
 
+## Map Divergences
+- src/modules/billing/billing.service.ts → src/services/billing.service.ts — file was moved after the spec was written
+
 ## Parallelism
 - Parallel batch: M1, M3
 - Sequential: M2 after M1
 ```
+
+`## Map Divergences` is emitted only when step 2 ran in map-validation mode (a `## Files` map existed) — omit it entirely in derive-from-scratch mode.
 
 In **standalone** invocation with no scratch dir, print the plan to the user instead of writing the file.
 
@@ -147,5 +169,6 @@ Summarize to the caller in the artifact language: number of modules, the paralle
 - **Disjoint file ownership** — every file belongs to exactly one module. Overlap = race condition downstream.
 - **Shallow survey only** — never deep-read files; that is the workers' job. You gain nothing from it and waste tokens.
 - **No code, no tests, no fan-out** — you produce one artifact and stop.
+- **Validate, don't re-derive, when the issue map exists; derive from scratch when it doesn't.**
 - **Stay on what/where** — never prescribe signatures or line-level detail (see step 5).
 - **Language** — user-facing output in the `Artifact language` passed by the caller. File contents and identifiers: always English.
