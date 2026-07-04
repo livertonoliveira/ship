@@ -113,7 +113,7 @@ Then populate the canonical files in a single batch:
    |-------|------|------|-------|-----------|
    ```
 
-   Write to `.context/ship-run/<task-id>/dispatch-log.md`. The orchestrator appends one row to this file every time it dispatches a phase (see step 9, "Phase dispatch logging convention"). `homolog` reads it to render the `## Execution Trace` section.
+   Write to `.context/ship-run/<task-id>/dispatch-log.md`. The orchestrator appends one row to this file every time it dispatches a phase (see step 8, "Phase dispatch logging convention"). `homolog` reads it to render the `## Execution Trace` section.
 
 4. **`pre-quality-snapshot.sha`** — Capture the current HEAD SHA and write it as a single line:
 
@@ -170,29 +170,7 @@ Run the deterministic classification exactly as specified in @ship/patterns/diff
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
-8. **Emit session banner** — do this once, immediately after reading `ship/config.md` and resolving the phase set, and before any `▶ Fase:` log:
-
-   **Determine the session tier**: inspect the system context to identify the model the current conversation is running on (e.g., `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*`). Normalize to one of `haiku`, `sonnet`, or `opus`.
-
-   **Determine the phases tier** from the Ship model-routing policy — read `@@ship/patterns/model-routing.md`. Use `sonnet/haiku` as the phases tier label whenever both models are in use within the pipeline (the standard case); if all enabled phases use only one model tier, use that single label.
-
-   **Read the Ship version**: parse the `version` field from `plugins/ship/package.json` (use the format `v<major>.<minor>`; if unavailable use `v2.x`).
-
-   **Emit one of the two formats** (use `artifact_language` for surrounding prose, but keep model tier names in English):
-
-   - **Override active** (session tier ≠ phases tier):
-     ```
-     ⬡ Ship v2.x | sessão=<session-tier> → fases=<phases-tier> | override ativo
-     ```
-
-   - **Same tier** (session tier matches the primary phases tier):
-     ```
-     ⬡ Ship v2.x | sessão=<session-tier> | fases no mesmo tier
-     ```
-
-   This banner is emitted exactly once per pipeline run. If the session model cannot be determined from context, default to displaying the banner in "same tier" format without the override suffix.
-
-9. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–5 below (Development, Testing, Quality, Analyze), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
+8. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–5 below (Development, Testing, Quality, Analyze), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
 
    Terminal format (one line, printed immediately before invoking the tool):
 

@@ -159,7 +159,7 @@ The ground truth lives in two places:
 
    If the orchestrator turns are split between session model and Haiku, the override is working. If they are 100% session model, routing failed.
 
-A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection, and is why Ship no longer emits self-attestation banners.
+A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection. Ship does not emit self-attestation banners; use dispatch-log + the session JSONL as described above to verify routing.
 
 ---
 
