@@ -92,7 +92,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review, analyze | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
 | `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full — title and covering issue when known) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
 | `design.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full Design document. Written once; `develop` slices it per module when fanning out workers |
-| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped — only for a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work); greenfield tasks always run the planner. |
+| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped, which happens in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
@@ -680,7 +680,17 @@ In Local mode, apply this identical slicing rule against `proposal.md` instead o
 
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
-> **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted. Decide from the **baseline** classification (step 0.7), which measures only work that existed *before* this run:
+> **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted.
+>
+> **First, check whether the issue already predicts a single-module shape.** Skip the planner when ALL of the following hold, evaluated against the current issue's own description (Linear issue or, in Local mode, the sliced `spec.md`):
+> - (a) the issue contains a `## Files` section;
+> - (b) that section lists ≤ 3 code files — apply the same extension filter as the logical-file-count metric in the diff-classifier.md pattern (included above) (exclude `*.md`, `*.json`, `*.lock`, `*.txt`, `*.yml`, `*.yaml`) and also exclude any `plugins/**` rebuild line;
+> - (c) the issue's Notes declare `Dependencies: None`;
+> - (d) every scenario in the issue's `## Scenarios` belongs to a single test-layer tag — all `@unit`, all `@integration`, or all `@e2e`, never mixed.
+>
+> When all four hold: **skip** the planner. Log `Planner pulado (issue prevê módulo único: N arquivo(s))` (N = the code-file count from (b)). Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`). Proceed straight to `ship:develop`, which already falls back to single-module mode without a `plan.md`.
+>
+> When any of (a)–(d) fails, fall through to the baseline classification (step 0.7), which measures only work that existed *before* this run:
 > - **Baseline diff is empty** (greenfield — no pre-existing committed/uncommitted work): the implementation does not exist yet, so its size is unknown and a fresh task almost always warrants decomposition → **run the planner**. Detect with `[ -s .context/ship-run/<task-id>/diff.md ] || echo greenfield`.
 > - **Baseline class `normal` or `large`**: → **run the planner**.
 > - **Baseline class `trivial` or `minor`** (a small change on top of work that already exists): the decomposition is obvious → **skip** the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> (baseline) — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
