@@ -147,6 +147,8 @@ When depth is `light` or `full`, enumerate **behavioral scenarios in Gherkin** t
 
 **If a task would exceed 400 lines, split it further** — e.g. a ~800-line "user auth module" becomes "User schema + repository", "auth service (JWT)", "login endpoint", "register endpoint", and "auth guard middleware" (~100–150 lines each).
 
+**The per-task file estimate materializes into `## Files`:** while decomposing tasks, you already assign each file from the Design's `Files to Create` / `Files to Modify` tables to exactly one task to compute its line estimate. That assignment is not a separate step — it is exactly what gets written into the task's `## Files` section in §6.6/§6-alt. No new estimation pass is needed.
+
 #### Organize into milestones
 
 Group tasks into milestones that represent **logical phases of delivery**:
@@ -331,6 +333,16 @@ to start without asking questions. Include:
 - Integrations with existing code
 - Design decisions already made>
 
+## Files
+<The files this task owns, sliced from the Design doc's Files to Create /
+Files to Modify tables. One line per file, no code fences, no numbered
+steps — paths + one-line intent + optional anchor only.>
+- create `<path>` — <intent in one line>
+- modify `<path>` — <intent in one line>
+<Optional, only when Agent B found an analogous existing pattern for this
+task. Omit entirely when no similar pattern exists — never invent one.>
+- Âncora: siga o padrão de `<real existing path>` — <one-line reason>
+
 ## Acceptance Criteria
 <Objective, verifiable checkboxes. Each must be testable/observable
 by whoever does the code review. Each carries an explicit AC-XX ID.>
@@ -438,6 +450,16 @@ Same content as the Linear Design document above, written to `ship/changes/<feat
 #### What to do
 <Same rich detail>
 
+#### Files
+<The files this task owns, sliced from the Design doc's Files to Create /
+Files to Modify tables. One line per file, no code fences, no numbered
+steps — paths + one-line intent + optional anchor only.>
+- create `<path>` — <intent in one line>
+- modify `<path>` — <intent in one line>
+<Optional, only when Agent B found an analogous existing pattern for this
+task. Omit entirely when no similar pattern exists — never invent one.>
+- Âncora: siga o padrão de `<real existing path>` — <one-line reason>
+
 #### Acceptance Criteria
 - [ ] **AC-01**: <criterion>
 - [ ] **AC-02**: <criterion>
@@ -500,19 +522,19 @@ After creating everything:
    - Estimated total lines across all tasks
    - Linear project URL (if created in Linear mode)
 
-2. Show the milestone/task structure as a tree:
+2. Show the milestone/task structure as a tree. The file count per task (from `## Files`) may be included alongside the line estimate:
    ```
    Project: Add User Authentication
    ├── Milestone 1: Foundation (3 tasks, ~350 lines)
-   │   ├── [backend] Create User schema and repository (~120 lines)
-   │   ├── [backend] Create auth service with JWT (~150 lines)
-   │   └── [backend] Add auth guard middleware (~80 lines)
+   │   ├── [backend] Create User schema and repository (~120 lines, 2 files)
+   │   ├── [backend] Create auth service with JWT (~150 lines, 1 file)
+   │   └── [backend] Add auth guard middleware (~80 lines, 1 file)
    ├── Milestone 2: API Layer (2 tasks, ~270 lines)
-   │   ├── [backend] Create login endpoint (~140 lines)
-   │   └── [backend] Create register endpoint (~130 lines)
+   │   ├── [backend] Create login endpoint (~140 lines, 2 files)
+   │   └── [backend] Create register endpoint (~130 lines, 2 files)
    └── Milestone 3: Frontend (2 tasks, ~350 lines)
-       ├── [frontend] Create login page (~200 lines)
-       └── [frontend] Create auth context and guards (~150 lines)
+       ├── [frontend] Create login page (~200 lines, 1 file)
+       └── [frontend] Create auth context and guards (~150 lines, 2 files)
    Total: 7 tasks, ~970 estimated lines
    ```
 
@@ -556,3 +578,5 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`..
 - **Line estimation is critical**: Be conservative. If unsure, estimate higher and split the task.
 - **Linear mode = zero local files**: When Linear is configured, do NOT create `ship/changes/` directories. Everything lives in Linear.
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
+- **`## Files` carries paths + intent + anchors only**: Code snippets and numbered implementation steps are forbidden in this section. Each entry is `create|modify <path> — <intent in one line>`, plus at most one anchor line per task.
+- **Every Design Files-table row belongs to exactly one issue**: The union of every task's `## Files` section must reproduce the Design doc's `Files to Create` / `Files to Modify` tables exactly — each row owned by exactly one issue, none omitted, none duplicated.
