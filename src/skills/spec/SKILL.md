@@ -369,7 +369,16 @@ Feature: <task capability>
 **Milestone:** Link to the appropriate milestone
 **Project:** Link to the project
 
-After all issues are created, update descriptions with cross-references to related/dependent issues. In the same pass, verify that every `SC-XX` listed in the Proposal **Scenario Index** appears in exactly one issue's `## Scenarios` Gherkin with a matching `@AC-YY`, and that no issue Gherkin references an `SC-XX`/`AC-YY` absent from the Proposal. Reconcile any mismatch before finishing.
+After all issues are created, update descriptions with cross-references to related/dependent issues.
+
+In the same pass, verify the SC↔issue cross-reference:
+1. Materialize the Proposal's **Scenario Index** into a scratch file (e.g. `/tmp/ship-spec-<feature-name>/sc-index.txt`), one line per entry in the form `SC-XX → AC-YY · layer · title`.
+2. For each created issue, fetch it with `mcp__linear-server__get_issue` and write its content — at minimum the `## Scenarios` Gherkin block — to its own markdown file in a scratch directory (e.g. `/tmp/ship-spec-<feature-name>/issues/<issue-id>.md`).
+3. Invoke the cross-reference script:
+   ```bash
+   bash "@@ship/hooks/sc-crossref.sh" --index /tmp/ship-spec-<feature-name>/sc-index.txt --issues /tmp/ship-spec-<feature-name>/issues
+   ```
+4. If it exits non-zero, reconcile each reported violation (`missing`, `duplicate`, `orphan`, `mismatch`) by editing the offending issue's Gherkin (via `mcp__linear-server__save_issue`) or the Proposal's Scenario Index, then re-run the script — repeat until it reports `SC cross-reference — clean.` before proceeding to section 7.
 
 ---
 
@@ -448,6 +457,17 @@ Feature: <task capability>
 ### TASK-003: <Task Title>
 ...
 ```
+
+### Verify SC↔task cross-reference
+
+After `tasks.md` is written, verify the same SC↔issue consistency described in Linear Mode above:
+1. Materialize the Proposal's **Scenario Index** into a scratch file (e.g. `/tmp/ship-spec-<feature-name>/sc-index.txt`), one line per entry in the form `SC-XX → AC-YY · layer · title`.
+2. For each `### TASK-XXX` block in `tasks.md`, write its `#### Scenarios` Gherkin block to its own markdown file in a scratch directory (e.g. `/tmp/ship-spec-<feature-name>/issues/<task-id>.md`).
+3. Invoke the cross-reference script:
+   ```bash
+   bash "@@ship/hooks/sc-crossref.sh" --index /tmp/ship-spec-<feature-name>/sc-index.txt --issues /tmp/ship-spec-<feature-name>/issues
+   ```
+4. If it exits non-zero, reconcile each reported violation (`missing`, `duplicate`, `orphan`, `mismatch`) by editing the offending task's `#### Scenarios` block in `tasks.md` or the Proposal's Scenario Index, then re-run the script — repeat until it reports `SC cross-reference — clean.` before proceeding to section 7.
 
 ---
 
