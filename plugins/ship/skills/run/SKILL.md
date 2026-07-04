@@ -94,6 +94,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `design.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full Design document. Written once; `develop` slices it per module when fanning out workers |
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped, which happens in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
+| `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
 | `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
 | `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
@@ -143,6 +144,21 @@ When all tests pass, the file contains only the header:
 ```
 
 Header-only (no bullet items) or absent file both indicate all tests passed.
+
+### `generated-tests.md` format
+
+Written by the test agent when it runs in `Mode: generate` — one line per test file it created, tagged with the layer that produced it:
+
+```markdown
+# Generated Tests
+
+- src/auth/auth.service.spec.ts (unit)
+- src/auth/auth.controller.spec.ts (integration)
+```
+
+Header-only (no bullet items) means no test file was created in that run. The test agent reads this file back when invoked in `Mode: execute` to know which files to run, grouped by layer — it does not regenerate anything in that mode.
+
+A test slot that collides with the denylist is never added here — the worker skips writing it and reports the conflict verbally to the caller instead, so the manifest only ever lists files that actually exist on disk.
 
 ### `phase-status.md` format
 
@@ -206,7 +222,10 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
   (develop and test read `plan.md`).
   The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
-  header-only = all tests passed.
+  header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
+  (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
+  back and writes `test-failures.md`. `generated-tests.md` follows the same "test agent writes,
+  no agent deletes another's files" convention already stated below.
 - **No agent** may delete or overwrite files written by another agent.
 
 ---
@@ -218,6 +237,8 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 | Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
 | After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | During pipeline | Agents read and append as needed |
+| `Mode: generate` run of `ship:test` | Writes `generated-tests.md` (does not write `test-failures.md`) |
+| `Mode: execute` run of `ship:test` | Reads `generated-tests.md` (does not delete it) and writes `test-failures.md` |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
 
