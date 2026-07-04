@@ -222,7 +222,17 @@ In Local mode, apply this identical slicing rule against `proposal.md` instead o
 
 ### 1.9. PHASE: Plan (Test-Aware Planning)
 
-> **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted. Decide from the **baseline** classification (step 0.7), which measures only work that existed *before* this run:
+> **Phase check**: This phase runs when `dev` is `enabled` in the **effective phase set** AND the planner is warranted.
+>
+> **First, check whether the issue already predicts a single-module shape.** Skip the planner when ALL of the following hold, evaluated against the current issue's own description (Linear issue or, in Local mode, the sliced `spec.md`):
+> - (a) the issue contains a `## Files` section;
+> - (b) that section lists ≤ 3 code files — apply the same extension filter as the logical-file-count metric in @ship/patterns/diff-classifier.md (exclude `*.md`, `*.json`, `*.lock`, `*.txt`, `*.yml`, `*.yaml`) and also exclude any `plugins/**` rebuild line;
+> - (c) the issue's Notes declare `Dependencies: None`;
+> - (d) every scenario in the issue's `## Scenarios` belongs to a single test-layer tag — all `@unit`, all `@integration`, or all `@e2e`, never mixed.
+>
+> When all four hold: **skip** the planner. Log `Planner pulado (issue prevê módulo único: N arquivo(s))` (N = the code-file count from (b)). Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`). Proceed straight to `ship:develop`, which already falls back to single-module mode without a `plan.md`.
+>
+> When any of (a)–(d) fails, fall through to the baseline classification (step 0.7), which measures only work that existed *before* this run:
 > - **Baseline diff is empty** (greenfield — no pre-existing committed/uncommitted work): the implementation does not exist yet, so its size is unknown and a fresh task almost always warrants decomposition → **run the planner**. Detect with `[ -s .context/ship-run/<task-id>/diff.md ] || echo greenfield`.
 > - **Baseline class `normal` or `large`**: → **run the planner**.
 > - **Baseline class `trivial` or `minor`** (a small change on top of work that already exists): the decomposition is obvious → **skip** the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> (baseline) — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
