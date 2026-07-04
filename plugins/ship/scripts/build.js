@@ -19,13 +19,15 @@ const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/[^\s)]+\.md(?:#[A-Za-z0-9_-]+)?/;
 const REPLACE_REF = /@ship\/([^\s)]+\.md)(?:#([A-Za-z0-9_-]+))?/g;
 
-// Lazy reference: `@@ship/<path>.md`. Unlike `@ship/...` (inlined at build time),
-// a lazy ref is NOT inlined — the referenced file is copied next to the skill and
-// the token is replaced with `${CLAUDE_SKILL_DIR}/<path>.md`, a render-time
-// substitution that resolves to an absolute path so the model can Read the file
-// on demand. This keeps heavy/conditional patterns out of the always-loaded skill
-// body. Skills only — agents have no ${CLAUDE_SKILL_DIR}. Whole-file only (no #anchor).
-const REPLACE_LAZY = /@@ship\/([^\s)]+\.md)(#[A-Za-z0-9_-]+)?/g;
+// Lazy reference: `@@ship/<path>.md` or `@@ship/<path>.sh`. Unlike `@ship/...`
+// (inlined at build time), a lazy ref is NOT inlined — the referenced file is
+// copied next to the skill and the token is replaced with
+// `${CLAUDE_SKILL_DIR}/<path>`, a render-time substitution that resolves to an
+// absolute path so the model can Read (.md) or execute (.sh) the file on demand.
+// This keeps heavy/conditional patterns out of the always-loaded skill body and
+// gives scripts a stable path independent of the user's repo layout. Skills only —
+// agents have no ${CLAUDE_SKILL_DIR}. Whole-file only (no #anchor).
+const REPLACE_LAZY = /@@ship\/([^\s)]+\.(?:md|sh))(#[A-Za-z0-9_-]+)?/g;
 
 const readCache = new Map();
 
@@ -148,10 +150,15 @@ function processLazyRefs(content, skillRelPath, skillOutDir) {
       console.error(`Erro: lazy ref quebrada em ${skillRelPath}: @@ship/${ref}`);
       process.exit(1);
     }
-    const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
     const destPath = path.join(skillOutDir, ref);
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
-    fs.writeFileSync(destPath, resolved, 'utf8');
+    if (ref.endsWith('.sh')) {
+      fs.copyFileSync(srcPath, destPath);
+      fs.chmodSync(destPath, 0o755);
+    } else {
+      const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
+      fs.writeFileSync(destPath, resolved, 'utf8');
+    }
     console.log(`  ${skillRelPath} ⇢ @@ship/${ref} (bundled, lazy)`);
     return '${CLAUDE_SKILL_DIR}/' + ref;
   });

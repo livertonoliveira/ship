@@ -108,8 +108,7 @@ On failure:
 Run the scan now — this is a mandatory Bash call, not optional:
 
 ```bash
-ROOT=$(git rev-parse --show-toplevel)
-bash "$ROOT/plugins/ship/hooks/hygiene-scan.sh" --all 2>&1
+bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
 
 If the output contains hits:
