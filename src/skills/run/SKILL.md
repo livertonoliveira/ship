@@ -140,10 +140,14 @@ Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 
 > **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
 
-Run the deterministic classification exactly as specified in @ship/patterns/diff-classifier.md (metric bash, sensitive-path parsing, top-down rules, output, and log format).
+Run the classification by invoking the script directly:
 
-- **Inputs**: `.context/ship-run/<task-id>/diff.md` (the pre-develop baseline) and `ship/config.md` (`## Sensitive Paths` overrides).
-- **Outputs**: write the class word to `.context/ship-run/<task-id>/diff-class.txt`, then log `Diff class (baseline): <class> (<reason>)` (note the `(baseline)` qualifier — the pattern's default log line omits it).
+```bash
+bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
+```
+
+- **Inputs**: `.context/ship-run/<task-id>/diff.md` (the pre-develop baseline) and `ship/config.md` (`## Sensitive Paths` overrides, read by the script from its own default path).
+- **Outputs**: the script writes the class word to `.context/ship-run/<task-id>/diff-class.txt` as a direct side effect; log `Diff class (baseline): <script stdout>` (note the `(baseline)` qualifier — the script's own stdout omits it).
 
 ### 1. Load task context
 
@@ -285,7 +289,13 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
 
    A non-empty `diff.md` with no `diff --git` header means the capture was corrupted — re-run the command above; do not proceed to classification or quality phases on a malformed diff. (An empty `diff.md` is legitimate only when `dev` did nothing — handle that in step 2.6, not here.)
 
-2. **Re-run the deterministic classification** from step 0.7 against the refreshed `diff.md`, overwriting `.context/ship-run/<task-id>/diff-class.txt` with the new class. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
+2. **Re-run the classification** by invoking the same script directly against the refreshed `diff.md`:
+
+   ```bash
+   bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
+   ```
+
+   This overwrites `.context/ship-run/<task-id>/diff-class.txt` with the new class as a direct side effect. This is the value Phase 4 reads via `cat .context/ship-run/<task-id>/diff-class.txt`.
 
 3. **Log to the user**:
 
