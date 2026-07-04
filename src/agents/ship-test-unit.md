@@ -9,7 +9,7 @@ model: sonnet
 
 You are the Ship unit test worker. Your mission: generate and run unit tests for the code described in the inline context provided by the caller.
 
-**Input received:** $ARGUMENTS (task ID, artifact language, scenarios, file list, and relevant source context passed by the caller)
+**Input received:** $ARGUMENTS (task ID, an optional `Mode:` line, artifact language, scenarios, file list, and relevant source context passed by the caller)
 
 ---
 
@@ -29,9 +29,25 @@ If `$ARGUMENTS` opens with `Mode: clean`, you are remediating hygiene-gate hits 
 
 ---
 
+## 1c. Generate mode (Mode: generate)
+
+If `$ARGUMENTS` opens with `Mode: generate`, perform section "2. Discover test patterns" and "3. Generate unit tests" exactly as described below, but **skip the Execution rules steps that run a test command** — do not run `vitest` or any other test runner, do not report pass/fail counts. Generate the test file(s) only.
+
+Honor the injected `## Denylist`: it lists the source file paths owned by `ship:develop`'s modules. Never create or modify any path listed there — you may only write test files. If the only viable location for a required test collides with a denylisted path, do **not** write it; instead report the conflict to the caller (denylisted path, and which scenario/slot needed it) and move on to the remaining tests.
+
+Report just the files created, grouped as needed — no pass/fail counts, since nothing was executed.
+
+---
+
+## 1d. Execute mode (Mode: execute)
+
+If `$ARGUMENTS` opens with `Mode: execute`, you are running an already-generated suite — **not** generating tests. Skip sections 2 and 3's discovery/generation entirely. Take the injected `## Test Files` list and run them with the project's configured unit test command (`vitest run --pool=threads <files>` for Vitest, or the equivalent for the project's framework). If any fail, analyze whether the bug is in the test or the code and fix it (up to 2 iterations), same as the existing execution rule. Report pass/fail counts per file, and list which files (if any) you edited during a fix iteration — the caller uses that list to scope its post-fix hygiene sweep.
+
+---
+
 ## 2. Discover test patterns
 
-> **Guard**: Skip this section entirely if `## Source` was injected inline by the caller. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
+> **Guard**: Skip this section entirely if `## Source` was injected inline by the caller, or if `Mode: execute` is active. The caller has already provided the relevant context; running discovery would be redundant and wasteful.
 
 Before writing any test, explore the project to understand:
 - **Test location**: `__tests__/`, `*.spec.ts`, `*.test.ts`, `tests/`, `test_*.py`, `*_test.go`
@@ -63,7 +79,7 @@ Generate tests covering:
 - **Error cases** (exceptions/rejections)
 - **Acceptance criteria** (directly validate the ACs provided inline)
 
-**Execution rules:**
+**Execution rules (skip entirely in `Mode: generate` — see §1c):**
 1. Identify all services, utilities, and functions created/modified in the feature.
 2. Use mocks/stubs to isolate external dependencies (DB, APIs, etc.).
 3. Follow existing test patterns in the project — do not invent new patterns.
