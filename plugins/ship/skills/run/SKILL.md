@@ -357,14 +357,10 @@ Probe the project root for these signal files:
 
    Write the SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`.
 
-5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove whether `ship:develop` actually mutated anything. This is the **authoritative per-file content-snapshot idiom** reused by steps 2.6 and the Surgical Re-run Procedure (each writes to its own `<name>.txt` and diffs two snapshots with `comm -13`):
+5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove whether `ship:develop` actually mutated anything. `snapshot-files.sh` (via lazy-ref `${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh`) is the canonical implementation of the content-snapshot mechanism reused by steps 2.6 and the Surgical Re-run Procedure, each writing to its own output file and comparing snapshots via the script's `diff` mode:
 
    ```bash
-   BASE=$(git merge-base origin/main HEAD)
-   git add -A -N   # surface untracked files; scratch dir is gitignored and never added
-   git diff "$BASE" --name-only | while read -r f; do
-     printf '%s %s\n' "$(git hash-object -- "$f" 2>/dev/null || echo absent)" "$f"
-   done | sort > .context/ship-run/<task-id>/pre-develop-files.txt
+   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-develop-files.txt
    ```
 
 Log to the user:
@@ -757,8 +753,9 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
 1. **Compute what develop actually changed** — run the content-snapshot idiom from step 0.5, writing to `post-develop-files.txt`, then diff it against the `pre-develop-files.txt` snapshot to list the files develop created or whose content changed this phase:
 
    ```bash
-   comm -13 .context/ship-run/<task-id>/pre-develop-files.txt \
-            .context/ship-run/<task-id>/post-develop-files.txt | awk '{print $2}' | sort -u
+   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-develop-files.txt
+   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-develop-files.txt \
+            .context/ship-run/<task-id>/post-develop-files.txt
    ```
 
 2. **Decide**:
@@ -901,17 +898,18 @@ Evaluate the gate decision manually based on the aggregated findings from all qu
 
 > **Read `${CLAUDE_SKILL_DIR}/patterns/gates.md` completely before applying this procedure.** Its rationale, edge cases, and scope mapping ("Snapshot pré-fix", "Re-run cirúrgico", "Re-run: edge cases") live there — including why working-tree snapshots are used instead of `git diff <sha> HEAD` (nothing commits mid-pipeline), the empty-fix and out-of-scope edge cases, and the `on_warn: fix` equivalence. This procedure applies to both `on_fail: fix` and `on_warn: fix`. The run-specific snapshot commands, output filenames, and iteration-counter mechanics below are authoritative.
 
-**Pre-fix snapshot** — run the content-snapshot idiom from step 0.5, writing to `.context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
+**Pre-fix snapshot** — `bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-fix-files.txt`. Capture it **immediately before launching the fix Agent** (the FAIL/WARN `fix` handler routes here first).
 
 After the fix agent completes, determine which quality phases to re-run:
 
 1. **Read `on_fail_rerun`** from `ship/config.md → Gate Behavior` (values: `surgical` | `all`, default: `surgical` if absent).
 
-2. **Compute the set of files the fix changed** (snapshot diff — no commits involved). Run the content-snapshot idiom from step 0.5, writing to `post-fix-files.txt`, then list the entries new or content-changed since the pre-fix snapshot:
+2. **Compute the set of files the fix changed** (snapshot diff — no commits involved). Compute the post-fix snapshot and diff it against the pre-fix snapshot to list the entries new or content-changed since the pre-fix snapshot:
 
    ```bash
-   comm -13 .context/ship-run/<task-id>/pre-fix-files.txt \
-            .context/ship-run/<task-id>/post-fix-files.txt | awk '{print $2}' | sort -u
+   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-fix-files.txt
+   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-fix-files.txt \
+            .context/ship-run/<task-id>/post-fix-files.txt
    ```
 
    If the resulting file list is **empty** (fix made no working-tree changes), apply ${CLAUDE_SKILL_DIR}/patterns/gates.md → "Re-run: edge cases" Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, append a `warn` row (notes=`fix sem mudanças — revisão manual necessária`) to `phase-status.md` for each phase that failed/warned, then skip all re-run logic and continue to acceptance.
