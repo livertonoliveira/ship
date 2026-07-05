@@ -88,21 +88,26 @@ Parse the section: extract non-comment lines starting with `- ` and strip the le
 
 ## Behavior per Class
 
-| Class | Quality agents | Log message |
-|-------|---------------|-------------|
-| `trivial` | Skip all (`perf`, `security`, `review`) — mark all as gate=PASS | `Diff trivial — fases de qualidade puladas` |
-| `minor` | Run 1 combined security agent only; skip `perf` and `review` | `Diff minor — security combinado, perf/review pulados` |
-| `normal` | Current behavior — up to 3 parallel agents | `Diff normal — fases de qualidade completas` |
-| `large` | Current behavior — up to 3 parallel agents | `Diff large — fases de qualidade completas` |
+`analyze` participates in the same Phase 4 fan-out as `perf`/`security`/`review` (see `run/SKILL.md` → Phase 4), so its per-class behavior is decided here alongside theirs:
+
+| Class | Quality agents | `analyze` | Log message |
+|-------|---------------|-----------|-------------|
+| `trivial` | Skip all (`perf`, `security`, `review`) — mark all as gate=PASS | Skipped — mark gate=PASS, same as the other three | `Diff trivial — fases de qualidade puladas` |
+| `minor` | Run 1 combined security agent only; skip `perf` and `review` | **Runs** — drift detection is independent of diff size | `Diff minor — security combinado, perf/review pulados, analyze mantido` |
+| `normal` | Current behavior — up to 3 parallel agents | Runs | `Diff normal — fases de qualidade completas` |
+| `large` | Current behavior — up to 3 parallel agents | Runs | `Diff large — fases de qualidade completas` |
+
+`trivial` is the only class where `analyze` is skipped: a diff that touches only doc/config files with zero sensitive-path matches has nothing for drift correlation to check either. Every other class runs `analyze` regardless of how `perf`/`security`/`review` are adjusted, because spec↔code drift can appear in a single-file, sub-100-line change just as easily as in a large one.
 
 ### `trivial` — phase-status.md entries
 
-Append one PASS row for each skipped quality phase:
+Append one PASS row for each skipped quality phase (`analyze` included):
 
 ```
 | perf     | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 | security | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 | review   | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
+| analyze  | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 ```
 
 ### `minor` — combined security agent
@@ -111,6 +116,9 @@ Launch a single security agent instructed to cover all three OWASP categories
 (Injection + Auth + Data/Config) in one pass. Write findings to the same
 `security-findings-<task-id>.md` file as normal mode. `perf` and `review` rows
 in `phase-status.md` are written as gate=PASS with notes `diff minor — pulado`.
+`analyze` dispatches normally (same as `normal`/`large`) and its row in
+`phase-status.md` carries its own gate result — it is never marked `pulado` in
+`minor` class.
 
 ---
 

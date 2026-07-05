@@ -841,6 +841,8 @@ When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all qualit
 
 ## Example: analyze phase in phase-status.md
 
+`analyze` dispatches in the same Phase 4 parallel turn as `perf`/`security`/`review` and its findings feed the same single aggregated gate in Phase 5 (see `run/SKILL.md` → Phase 4/5) — it does not run a second gate cycle of its own. Its row in `phase-status.md` follows the identical run/timestamp/gate schema as the other three:
+
 ```markdown
 | analyze | #1 | 2026-05-01T10:07:00Z | 5 | warn | 0 | 0 | 2 | 1 | 2 criterios sem testes |
 | analyze | #2 | 2026-05-01T10:12:00Z | 5 | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |

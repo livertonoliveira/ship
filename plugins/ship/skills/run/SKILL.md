@@ -1,6 +1,6 @@
 ---
 name: ship:run
-description: "Full development pipeline for a task: develop → test → perf → security → review → analyze → homolog. Works on 1 task by default, or N tasks / entire project if requested."
+description: "Full development pipeline for a task: develop → test → quality (perf + security + review + analyze in parallel, single aggregated gate) → homolog. Works on 1 task by default, or N tasks / entire project if requested."
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
@@ -66,7 +66,10 @@ For each task, execute the following phases:
 > See # Run Context — Shared Scratch Between Agents
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review).
+between phase agents (develop, test, perf, security, review, analyze). `perf`,
+`security`, `review`, and `analyze` all dispatch in the same Phase 4 parallel
+turn and feed a single aggregated gate in Phase 5 — see `run/SKILL.md` → Phase
+4/5.
 
 ---
 
@@ -219,8 +222,11 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
-  (develop and test read `plan.md`).
-  The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
+  (develop and test read `plan.md`). The only write allowed is **appending** rows to
+  `phase-status.md` upon phase completion.
+- **`analyze`**: read only from existing files, plus writes its own `drift-report.md` /
+  `drift-findings.json` outputs (persisted per storage mode as part of its own dispatch in
+  Phase 4) and appends rows to `phase-status.md`, same as the other phase agents.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
@@ -481,21 +487,26 @@ Parse the section: extract non-comment lines starting with `- ` and strip the le
 
 ## Behavior per Class
 
-| Class | Quality agents | Log message |
-|-------|---------------|-------------|
-| `trivial` | Skip all (`perf`, `security`, `review`) — mark all as gate=PASS | `Diff trivial — fases de qualidade puladas` |
-| `minor` | Run 1 combined security agent only; skip `perf` and `review` | `Diff minor — security combinado, perf/review pulados` |
-| `normal` | Current behavior — up to 3 parallel agents | `Diff normal — fases de qualidade completas` |
-| `large` | Current behavior — up to 3 parallel agents | `Diff large — fases de qualidade completas` |
+`analyze` participates in the same Phase 4 fan-out as `perf`/`security`/`review` (see `run/SKILL.md` → Phase 4), so its per-class behavior is decided here alongside theirs:
+
+| Class | Quality agents | `analyze` | Log message |
+|-------|---------------|-----------|-------------|
+| `trivial` | Skip all (`perf`, `security`, `review`) — mark all as gate=PASS | Skipped — mark gate=PASS, same as the other three | `Diff trivial — fases de qualidade puladas` |
+| `minor` | Run 1 combined security agent only; skip `perf` and `review` | **Runs** — drift detection is independent of diff size | `Diff minor — security combinado, perf/review pulados, analyze mantido` |
+| `normal` | Current behavior — up to 3 parallel agents | Runs | `Diff normal — fases de qualidade completas` |
+| `large` | Current behavior — up to 3 parallel agents | Runs | `Diff large — fases de qualidade completas` |
+
+`trivial` is the only class where `analyze` is skipped: a diff that touches only doc/config files with zero sensitive-path matches has nothing for drift correlation to check either. Every other class runs `analyze` regardless of how `perf`/`security`/`review` are adjusted, because spec↔code drift can appear in a single-file, sub-100-line change just as easily as in a large one.
 
 ### `trivial` — phase-status.md entries
 
-Append one PASS row for each skipped quality phase:
+Append one PASS row for each skipped quality phase (`analyze` included):
 
 ```
 | perf     | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 | security | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 | review   | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
+| analyze  | #1 | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |
 ```
 
 ### `minor` — combined security agent
@@ -504,6 +515,9 @@ Launch a single security agent instructed to cover all three OWASP categories
 (Injection + Auth + Data/Config) in one pass. Write findings to the same
 `security-findings-<task-id>.md` file as normal mode. `perf` and `review` rows
 in `phase-status.md` are written as gate=PASS with notes `diff minor — pulado`.
+`analyze` dispatches normally (same as `normal`/`large`) and its row in
+`phase-status.md` carries its own gate result — it is never marked `pulado` in
+`minor` class.
 
 ---
 
@@ -633,7 +647,7 @@ Otherwise, read `Artifact language` from `ship/config.md → Conventions`.`.
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
-8. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–5 below (Development, Testing, Quality, Analyze), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
+8. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–4 below (Development, Testing, Quality — the latter now includes `analyze` in its fan-out), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
 
    Terminal format (one line, printed immediately before invoking the tool):
 
@@ -832,8 +846,8 @@ If any test fails after fix attempts:
 
 ### 4. PHASES: Quality Checks (PARALLEL)
 
-> **Phase check**: Check each quality phase individually against the **effective phase set** (resolved in step 1.5):
-> - If all three (`perf`, `security`, `review`) are `disabled`: skip this step entirely and proceed to Phase 5.
+> **Phase check**: Check each quality phase individually against the **effective phase set** (resolved in step 1.5) — `perf`, `security`, `review`, AND `analyze`:
+> - If all four are `disabled`: skip this step entirely and proceed to Phase 5 (with zero reports, the gate is trivially PASS).
 > - If some are `disabled`: launch only the agents for enabled phases. Skip the disabled ones.
 
 > **Pre-quality snapshot:** The snapshot `.context/ship-run/<task-id>/pre-quality-snapshot.sha` was already captured in step 0.5. All quality agents and the PR agent can read the HEAD SHA from that file. See `ship/patterns/gates.md → Snapshot pré-fix` for format details and lifecycle rules.
@@ -846,18 +860,19 @@ DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
 
 Apply the per-class adjustments **on top of** the effective phase set exactly as specified in the diff-classifier.md pattern (included above) → "Behavior per Class" (which agents run, the log message, and the PASS rows to append to `phase-status.md`):
 
-- **`trivial`**: all quality phases skipped → proceed directly to Phase 5 (gate=PASS).
-- **`minor`**: only 1 combined security agent runs (`perf`/`review` skipped).
+- **`trivial`**: all four quality phases skipped, `analyze` included → proceed directly to Phase 5 (gate=PASS).
+- **`minor`**: only 1 combined security agent runs (`perf`/`review` skipped); `analyze` **still runs** — drift detection does not depend on diff size.
 - **`normal`** or **`large`**: no adjustment — proceed with the standard agent setup below.
 
 Invoke the quality phases in a SINGLE assistant turn so they run concurrently:
 - **`perf`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-perf` (named agent, runs with full Sonnet reasoning).
 - **`security`** (if enabled): dispatch via **Agent tool** with `subagent_type: ship:ship-security` (named agent, runs with full Sonnet reasoning).
 - **`review`** (if enabled): dispatch via **Skill tool** — declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. Do NOT wrap it in an `Agent` tool call.
+- **`analyze`** (if enabled): dispatch via **Skill tool** — `ship:analyze` declares `context: fork` + `model: "sonnet"` in its own frontmatter, so it runs in an isolated subagent automatically. **Never wrap it in an `Agent` tool call** — CI's `check-no-agent-wraps-skill.sh` rejects that pattern.
 
 The orchestrator itself runs on Sonnet per ${CLAUDE_SKILL_DIR}/patterns/model-routing.md.
 
-**Phase 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
+**Dispatch 1 — `perf`** *(only if `perf` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-perf`. Pass all context inline:
 
 ```
 Task: <task-id>
@@ -874,7 +889,7 @@ Severity Overrides: <severity-overrides or "none">
 Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
-**Phase 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-security`. Pass all context inline:
+**Dispatch 2 — `security`** *(only if `security` is `enabled`)*. Dispatch via **Agent tool** with `subagent_type: ship:ship-security`. Pass all context inline:
 
 ```
 Task: <task-id>
@@ -891,23 +906,39 @@ Severity Overrides: <severity-overrides or "none">
 Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orchestrator already captured it there and does NOT inject it inline. Do not run `git diff`; analyze that file directly.
 ```
 
-**Skill 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
+**Dispatch 3 — `ship:review`** *(only if `review` is `enabled`)*. Pass inline:
 - Analyze the diff for this task only
 - Write findings to `.context/ship-run/<task-id>/review-findings.md` (canonical scratch-dir path). In Linear mode, **do NOT** create `ship/changes/<feature>/` — the scratch dir is the only allowed write location.
 - **Scratch dir:** `.context/ship-run/<task-id>/`
 - Artifact language: `<artifact_language>`
 
+**Dispatch 4 — `ship:analyze`** *(only if `analyze` is `enabled`, per the diff-class adjustments above)*. Dispatch via the **Skill tool** per the rule above ("never wrap in `Agent`"). Pass inline:
+
+- Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; not injected inline)
+- Use the code diff from `.context/ship-run/<task-id>/diff.md`
+- Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
+- Pass results to the Correlation Engine
+- Generate the drift report + compute its own finding severities (critical/high/medium/low) — the aggregated gate decision itself is computed by the orchestrator in step 5, not by this skill
+- Correlate requirements↔code and acceptance-criteria↔tests only over the requirements/criteria fully included in `spec.md`; requirements that appear only in the compact scope index (title-only, not fully included) belong to other tasks and must NOT enter the correlation matrix or be reported as unimplemented
+- **Monorepo support:** detect which workspace is affected by inspecting diff paths; filter spec requirements and test discovery to the detected workspace. If no workspace is detected, analyze the full repository.
+- Artifact language: `<artifact_language>`
+- **Persist mode-agnostic output** as part of the Phase 5 consolidation (after the fan-out, once the aggregated gate is known): **Linear mode** — post the `drift-findings.json` summary as a comment on the task issue via `mcp__linear-server__save_comment`; **Local mode** — export `drift-report.md` to `ship/changes/<feature>/drift-report.md`.
+
+**Scratch dir:** `.context/ship-run/<task-id>/`
+
 ### 5. GATE CHECK
 
-After all 3 agents complete, apply severity overrides before gate evaluation:
+After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled), apply severity overrides before gate evaluation:
 
 **Severity Overrides:**
 Read `Severity Overrides` from `ship/config.md`. For each override rule (e.g., `high → warn`), downgrade matching findings from all phase reports before evaluating the gate. If the field is absent, no downgrade is applied.
 
-Evaluate the gate decision manually based on the aggregated findings from all quality agents:
-- **FAIL** — any critical or high finding remains after severity overrides
-- **WARN** — no critical/high findings, but at least one medium finding remains
-- **PASS** — only low/info findings, or no findings at all
+Evaluate a single gate decision manually based on the **aggregated findings from all four quality agents** (perf + security + review + analyze):
+- **FAIL** — any critical or high finding remains after severity overrides, in any of the four reports
+- **WARN** — no critical/high findings, but at least one medium finding remains in any of the four reports
+- **PASS** — only low/info findings across all four, or no findings at all
+
+`on_fail`/`on_warn` fire exactly once against this single aggregated decision — there is no second gate cycle for `analyze`. (Analyze's mode-agnostic output — Linear comment / local `drift-report.md` — is persisted as part of its own dispatch, see Dispatch 4 above; that happens once the aggregated gate here is known.)
 
 > **Compute the gate purely from the aggregated severity counts — you are NOT re-reviewing.** Do not reclassify, discount, or discard an individual finding because you personally believe it is a false positive. If you suspect a false positive, the correct path is still to honor `on_warn`/`on_fail`: the fix Agent inspects the code and, if there is nothing real to change, produces an empty fix — `${CLAUDE_SKILL_DIR}/patterns/gates.md` → "Re-run: edge cases" Edge case 1 then records it as `fix sem mudanças — revisão manual necessária` and continues. Never declare `PASS` by overriding a worker's finding inline.
 
@@ -968,48 +999,16 @@ After the fix agent completes, determine which quality phases to re-run:
 
    e. **Log the decision** before launching agents, in the format defined in ${CLAUDE_SKILL_DIR}/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
-   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` via **Skill tool** (declares `context: fork` in its own frontmatter). Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
 **If exit code 0 (PASS):**
 Continue automatically.
 
-### 6. PHASE: Analyze (Drift Detection)
+### 6. PHASE: User Acceptance
 
-> **Phase check**: If `analyze` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 7.
-
-> **Invoke pattern**: This phase runs the `/ship:analyze` command. It orchestrates 2 agents in parallel then runs the correlation engine + report generation. If using `--analyze` flag on `ship run`, this phase is triggered automatically.
-
-Invoke the `ship:analyze` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter, so drift correlation (spec↔code↔tests) runs in an isolated subagent with full reasoning — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
-
-- Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; not injected inline)
-- Use the code diff from `.context/ship-run/<task-id>/diff.md`
-- Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
-- Pass results to the Correlation Engine
-- Generate the drift report + compute gate
-- Persist `drift-report.md` and `drift-findings.json` to scratch dir
-- Correlate requirements↔code and acceptance-criteria↔tests only over the requirements/criteria fully included in `spec.md`; requirements that appear only in the compact scope index (title-only, not fully included) belong to other tasks and must NOT enter the correlation matrix or be reported as unimplemented
-- Artifact language: `<artifact_language>`
-
-**Scratch dir:** `.context/ship-run/<task-id>/`
-
-**Mode-agnostic persistence:**
-- **Linear mode:** Post `drift-findings.json` summary as a comment on the task issue via `mcp__linear-server__save_comment`
-- **Local mode:** Export `drift-report.md` to `ship/changes/<feature>/drift-report.md`
-
-**Monorepo support:** The agent detects which workspace is affected by inspecting diff paths. It filters spec requirements and test discovery to the detected workspace. If no workspace is detected, it analyzes the full repository.
-
-**Gate behavior after ANALYZE:**
-- Gate **FAIL** (critical/high findings) → act based on `on_fail` config (same flow as Phase 5)
-- Gate **WARN** (medium findings) → act based on `on_warn` config (same flow as Phase 5)
-- Gate **PASS** → continue to Phase 7
-
-**Scope mapping for Surgical Re-run (if analyze phase fails/warns and needs re-run):** see ${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping" — `analyze` has broad scope and re-runs whenever any file changed by the fix.
-
-### 7. PHASE: User Acceptance
-
-> **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 8.
+> **Phase check**: If `homolog` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 7.
 
 Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases, homolog is **not** forked — it is an interactive acceptance gate that must run in this same context so it can present the report, stop for the user's approval, and then transition the issue. Do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
@@ -1026,15 +1025,15 @@ Invoke the `ship:homolog` skill via the **Skill tool**. Unlike the other phases,
 > the user a question (e.g., "Quais ajustes precisam ser feitos?", "Algo a
 > corrigir antes do PR?"). If the homolog output contains an open question
 > directed at the user, the orchestrator MUST stop immediately and return
-> control to the user — do NOT continue to Step 8, do NOT run additional
+> control to the user — do NOT continue to Step 7, do NOT run additional
 > verification, do NOT mark the task as complete.
 >
-> Only proceed to Step 8 when the user has explicitly approved (e.g.,
+> Only proceed to Step 7 when the user has explicitly approved (e.g.,
 > "aprovado", "pode seguir", "ok PR", or equivalent in the artifact language).
 > If the user requests adjustments, treat it as a fix iteration: apply the
 > changes, then re-invoke `ship:homolog` for re-approval.
 
-### 8. MANDATORY STOP — Await user confirmation for PR
+### 7. MANDATORY STOP — Await user confirmation for PR
 
 After homolog approval:
 
