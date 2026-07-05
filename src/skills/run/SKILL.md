@@ -258,9 +258,16 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
 
 ### 2. PHASE: Development
 
-> **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3.
+> **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3 (which runs in `Mode: full`, since there is no develop phase to overlap with — see Phase 3's guard).
 
-Invoke the `ship:develop` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that slices/de-identifies per-module context, fans out Sonnet `ship-develop-implement` workers, integrates, and typechecks, so do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+**Overlap condition** — before dispatching, check whether all three hold:
+1. `dev` is `enabled` in the effective phase set;
+2. `test` is `enabled` in the effective phase set;
+3. `.context/ship-run/<task-id>/plan.md` exists (the planner ran).
+
+When all three hold, dispatch `ship:develop` **and** `ship:test` with `Mode: generate` in the **same assistant turn**, so they run concurrently — both are forked skills (each declares `context: fork` in its own frontmatter), never wrap either in an `Agent` tool call. This is safe because `plan.md`'s module map and the `## Denylist` it derives for `ship:test` guarantee disjoint file sets between the two dispatches. Log both dispatch rows (`dev` and `test`, the latter with `name=ship:test (generate)`) before invoking the tools, per the dispatch-logging convention (step 1, item 8).
+
+**Dispatch — `ship:develop`** (always, when `dev` is enabled). Pass the following context inline:
 
 ```
 Task: <task-id> — <title>
@@ -271,9 +278,23 @@ Storage mode: <linear|local>
 Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; they are NOT injected inline).
 ```
 
-**Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module.
+**Scratch dir:** `.context/ship-run/<task-id>/` — `ship:develop` reads `plan.md` from here for the module map. If the planner was skipped (no `plan.md`), it implements the task as a single module — and in that case the overlap condition above is already false, so `ship:test` does not dispatch here at all (see Phase 3).
 
-**Line count check**: After development, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
+**Dispatch — `ship:test` (`Mode: generate`)** *(only when the overlap condition above holds)*, in the same turn as `ship:develop`. Pass the following context inline:
+
+```
+Task: <task-id> — <title>
+Mode: generate
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+Use the task's acceptance criteria to guide test generation. Generate tests scoped to THIS task only — do not run them yet.
+```
+
+`ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — it never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
+
+**Line count check**: After `ship:develop` returns, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
 
@@ -331,19 +352,43 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
          O orquestrador provavelmente narrou o plano sem despachar os workers de implementação.
          Pipeline interrompido. Re-execute o develop ou implemente manualmente.
        ```
-       Do NOT proceed to testing or quality phases.
+       Do NOT proceed to testing or quality phases. Since the pipeline stops here, `ship:test Mode: execute` (Phase 3b below) is never dispatched — the STOP above short-circuits before reaching it, whether or not a `Mode: generate` pass already wrote test files earlier in this turn.
 
 ### 3. PHASE: Testing
 
 > **Phase check**: If `test` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 4.
 
-Invoke the `ship:test` skill via the **Skill tool**. The skill declares `context: fork` + `model: "sonnet"` in its frontmatter — an orchestrator that resolves/de-identifies scenarios by layer and fans out Sonnet `ship-test-*` leaf workers, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
+This phase dispatches `ship:test` at **two distinct moments**, not as a single monolithic call: generation happens alongside develop (Phase 2, above, when the overlap condition holds), and execution happens here, after the evidence gate. Invoke `ship:test` via the **Skill tool** in every case below — it declares `context: fork` + `model: "sonnet"` in its frontmatter and resolves/de-identifies scenarios by layer, fanning out Sonnet `ship-test-*` leaf workers itself, so it runs in an isolated subagent automatically — do NOT wrap it in an `Agent` tool call.
 
-- Use the task's acceptance criteria to guide test generation
-- Generate and run tests scoped to THIS task only
-- Artifact language: `<artifact_language>`
+**Which sub-mode runs here depends on what already happened in Phase 2:**
 
-**The forked skill MUST launch 3 sub-agents in parallel**: unit tests, integration tests, e2e tests.
+- **Overlap already ran** (`Mode: generate` was dispatched in Phase 2 and reported success, i.e. it returned without error and wrote `.context/ship-run/<task-id>/generated-tests.md`): dispatch `ship:test` in **Phase 3b — `Mode: execute`** below.
+- **Overlap ran but `Mode: generate` failed** (it returned an error, or `generated-tests.md` is missing after it returned): log a warning — `⚠ ship:test Mode: generate falhou ou não produziu generated-tests.md; executando fase de testes em Mode: full após o develop.` — then dispatch `ship:test` in **`Mode: full`** here (single-phase: generate + execute together), using the same context shape as `Mode: full` below.
+- **Overlap condition never held** (`dev` disabled, `test` disabled, or no `plan.md`): dispatch `ship:test` in **`Mode: full`** here, exactly as today — no prior generate pass exists to consume.
+
+#### `Mode: full` context (used only when no prior `Mode: generate` succeeded)
+
+```
+Task: <task-id> — <title>
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+
+Use the task's acceptance criteria to guide test generation
+Generate and run tests scoped to THIS task only
+```
+
+#### Phase 3b — `Mode: execute` (dispatched only after the evidence gate passes and a prior `Mode: generate` succeeded)
+
+```
+Task: <task-id> — <title>
+Mode: execute
+Artifact language: <artifact_language>
+Scratch dir: .context/ship-run/<task-id>/
+Storage mode: <linear|local>
+```
+
+`ship:test` in `Mode: execute` reads `generated-tests.md` from the scratch dir and runs exactly those files — it does not regenerate anything.
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
