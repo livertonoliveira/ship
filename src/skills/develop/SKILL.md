@@ -129,12 +129,12 @@ If output is `Ship hygiene — clean.` → proceed to step 7.
 
 ---
 
-## 8. Append phase status
+## 8. Write phase status
 
-Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
+Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-status-develop.md` (if the scratch dir exists) — never write directly to the shared `phase-status.md`, since this phase can run concurrently with `ship:test Mode: generate` in the same turn (Phase 2 overlap) and a concurrent append would race. The orchestrator consolidates this row into `phase-status.md` itself, substituting the real run number for `#<RUN>`:
 
 ```
-| develop | #1 | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
+| develop | #<RUN> | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
 ```
 
 ---

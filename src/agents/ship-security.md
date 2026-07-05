@@ -205,13 +205,15 @@ Format:
 
 ---
 
-## 7. Append phase status
+## 7. Write phase status
 
-Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
+Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-status-security.md` (if the scratch dir exists) — never write directly to the shared `phase-status.md`, since this phase runs concurrently with `perf`/`review`/`analyze` in the same turn and a concurrent append would race:
 
 ```
-| security | #1 | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
+| security | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
 ```
+
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 ---
 

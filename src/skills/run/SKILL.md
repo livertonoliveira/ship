@@ -296,6 +296,8 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 `ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — it never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
 
+**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `@ship/patterns/run-context.md` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: read `.context/ship-run/<task-id>/phase-status-develop.md` and, if the overlap ran, `.context/ship-run/<task-id>/phase-status-test-generate.md`; for each, substitute the `#<RUN>` placeholder with `#1` (or the current surgical re-run number if this is a re-run) and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
+
 **Line count check**: After `ship:develop` returns, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
@@ -482,7 +484,11 @@ Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orches
 
 ### 5. GATE CHECK
 
-After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled), apply severity overrides before gate evaluation:
+After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled):
+
+**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `@ship/patterns/run-context.md` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: for each phase that was enabled, read `.context/ship-run/<task-id>/phase-status-<phase>.md`, substitute `#<RUN>` with `#1`, and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
+
+Then apply severity overrides before gate evaluation:
 
 **Severity Overrides:**
 Read `Severity Overrides` from `ship/config.md`. For each override rule (e.g., `high → warn`), downgrade matching findings from all phase reports before evaluating the gate. If the field is absent, no downgrade is applied.
@@ -553,7 +559,7 @@ After the fix agent completes, determine which quality phases to re-run:
 
    e. **Log the decision** before launching agents, in the format defined in @@ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
-   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (@@ship/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (@@ship/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row), same as in Phase 4 — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: read each phase's `phase-status-<phase>.md`, substitute `#<RUN>` with `#<N>` (e.g., `#2` for first re-run), append to `phase-status.md`, and add `notes=re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
