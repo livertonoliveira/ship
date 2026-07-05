@@ -40,7 +40,10 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 - Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range per `# Run Context — Shared Scratch Between Agents
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review).
+between phase agents (develop, test, perf, security, review, analyze). `perf`,
+`security`, `review`, and `analyze` all dispatch in the same Phase 4 parallel
+turn and feed a single aggregated gate in Phase 5 — see `run/SKILL.md` → Phase
+4/5.
 
 ---
 
@@ -193,8 +196,11 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
-  (develop and test read `plan.md`).
-  The only write allowed is **appending** rows to `phase-status.md` upon phase completion.
+  (develop and test read `plan.md`). The only write allowed is **appending** rows to
+  `phase-status.md` upon phase completion.
+- **`analyze`**: read only from existing files, plus writes its own `drift-report.md` /
+  `drift-findings.json` outputs (persisted per storage mode as part of its own dispatch in
+  Phase 4) and appends rows to `phase-status.md`, same as the other phase agents.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
