@@ -647,6 +647,7 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
 - **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
+- **Never dispatch any phase/worker with `run_in_background: true`** (Agent tool) or as a backgrounded `Bash` call — see `@ship/patterns/parallelism.md`. Every "parallel" dispatch in this pipeline means multiple synchronous tool calls in the same assistant turn, always awaited before the orchestrator proceeds. Nothing in this pipeline can resume from an async background-completion notification — dispatching one that way silently strands the pipeline (the orchestrator would consolidate/gate on incomplete or missing data, with no logic to wait for or recover the missed result).
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
