@@ -63,6 +63,30 @@ Analyze `$ARGUMENTS` to determine what to work on:
 
 For each task, execute the following phases:
 
+### 0.4. Detect an interrupted prior run (resume check)
+
+Before touching the scratch dir, check whether one already exists for this `<task-id>` from a prior invocation that may not have finished — e.g. the previous session was closed or restarted mid-pipeline:
+
+```bash
+test -f .context/ship-run/<task-id>/dispatch-log.md && wc -l < .context/ship-run/<task-id>/dispatch-log.md
+```
+
+- **File absent, or only the header line present**: no prior run to consider — proceed to step 0.5 as a fresh start.
+- **One or more dispatch rows present**: a previous invocation for this exact `<task-id>` got at least partway through the pipeline. Read `.context/ship-run/<task-id>/dispatch-log.md` and `.context/ship-run/<task-id>/phase-status.md` and compare them: any phase with a dispatch row but **no** corresponding completed row in `phase-status.md` was likely interrupted mid-flight (dispatched, never finished). Report to the user:
+
+  ```
+  ⚠ Encontrado um contexto de execução existente para <task-id> (último dispatch: <phase> em <timestamp>).
+  Fases com status registrado: <list, from phase-status.md>
+  Fases despachadas sem conclusão registrada (possivelmente interrompidas): <list, or "nenhuma">
+  ```
+
+  Then ask: "Retomar a partir daqui (pular fases já concluídas, re-executar apenas as pendentes/interrompidas) ou reiniciar o pipeline do zero para esta task (isso apaga o contexto existente)?"
+
+  - **Resume**: proceed to step 0.5, but do **not** recreate `phase-status.md` or `dispatch-log.md` — they already have rows worth keeping. Skip re-writing any canonical file in step 0.5 that already exists and looks complete (`stack.md`, `pre-quality-snapshot.sha`, `pre-develop-files.txt`); only `diff.md` is always safe to recapture (it is idempotent and re-running it never loses data). Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or were marked interrupted above.
+  - **Restart**: proceed to step 0.5 exactly as written below (fresh init, overwriting everything).
+
+  This check exists because nothing in this pipeline persists "phase X is currently in flight" as live process state — the scratch dir on disk is the only durable record across a session restart, and blindly recreating it on every invocation would silently discard that record and either re-run already-completed phases or, worse, let `phase-status.md`'s header-only reset erase rows `homolog`/`pr` still need.
+
 ### 0.5. Initialize shared scratch dir
 
 > See # Run Context — Shared Scratch Between Agents
@@ -101,7 +125,8 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped, which happens in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
-| `phase-status.md` | orchestrator (creates); agents (append) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
+| `phase-status.md` | orchestrator only (creates header; consolidates rows) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
+| `phase-status-<phase>.md` | one phase agent each (`develop`, `test-generate`, `test`, `perf`, `security`, `review`, `analyze`) | orchestrator (consolidation only) | scratch row for that phase's most recent dispatch, using `#<RUN>` as a literal placeholder in the Run column — overwritten each dispatch, never appended to by any other agent |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
 | `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
@@ -168,7 +193,9 @@ A test slot that collides with the denylist is never added here — the worker s
 
 ### `phase-status.md` format
 
-Each phase appends one row when it completes. Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
+Rows are written **exclusively by the orchestrator** — never directly by a phase agent. This is deliberate: `develop`+`test-generate` dispatch concurrently in Phase 2, and `perf`+`security`+`review`+`analyze` dispatch concurrently in Phase 4 (and again on each surgical re-run round). If those agents each did their own read-modify-write append against the same shared file, two concurrent writers can both read the file before either writes back, and the second write silently discards the first agent's row (lost update) — `homolog` then treats the missing row as an automatic FAIL (`homolog/SKILL.md` → phase-with-no-row rule) even though that phase actually passed.
+
+To avoid this, each phase agent writes its own row to a **private per-phase scratch file** (`phase-status-<phase>.md` — see above) instead of touching the shared file. Only the orchestrator, which runs single-threaded and consolidates immediately after each concurrent-dispatch barrier returns (end of Phase 2, end of Phase 4, end of each surgical re-run round), reads those per-phase files and appends their rows into the canonical `phase-status.md`, substituting the literal `#<RUN>` placeholder with the real run number it already tracks (`#1` for the first pass, `#<N>` for surgical re-run round N via `$FIX_ITERATION`). Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
 
 ```markdown
 # Phase Status
@@ -182,6 +209,16 @@ Each phase appends one row when it completes. Re-run iterations appear as additi
 | review | #1 | 2026-05-01T10:02:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | |
 | perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
 ```
+
+### `phase-status-<phase>.md` format
+
+Written by exactly one phase agent (`<phase>` is one of `develop`, `test-generate`, `test`, `perf`, `security`, `review`, `analyze`) — a single line, no header, overwritten (not appended) on every dispatch of that phase:
+
+```markdown
+| perf | #<RUN> | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
+```
+
+The orchestrator deletes (or ignores — it gets overwritten next dispatch) this file once it has consolidated the row into `phase-status.md`.
 
 ### `pre-quality-snapshot.sha` format
 
@@ -219,17 +256,23 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 
 - **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
   `stack.md`, `diff.md`, `spec.md`, `design.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start. The orchestrator
+  Also creates `phase-status.md` with the empty header row at pipeline start, and is the **sole
+  writer of `phase-status.md`** thereafter — it consolidates every row from the per-phase
+  `phase-status-<phase>.md` scratch files (see above) immediately after each concurrent-dispatch
+  barrier (end of Phase 2, end of Phase 4, end of each surgical re-run round). The orchestrator
   **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
   only file rewritten mid-pipeline, and only by the orchestrator itself.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
 - **Phase agents** (develop, test, perf, security, review): **read only** from existing files
-  (develop and test read `plan.md`). The only write allowed is **appending** rows to
-  `phase-status.md` upon phase completion.
+  (develop and test read `plan.md`). The only write allowed is **writing (overwriting) its own
+  row** to its private `.context/ship-run/<task-id>/phase-status-<phase>.md` upon phase
+  completion — never a direct write to the shared `phase-status.md`, since multiple phase agents
+  write concurrently in the same turn (Phase 2's develop/test-generate overlap; Phase 4's
+  perf/security/review/analyze fan-out) and a shared-file append from concurrent agents loses rows.
 - **`analyze`**: read only from existing files, plus writes its own `drift-report.md` /
   `drift-findings.json` outputs (persisted per storage mode as part of its own dispatch in
-  Phase 4) and appends rows to `phase-status.md`, same as the other phase agents.
+  Phase 4) and writes its row to `phase-status-analyze.md`, same as the other phase agents.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
@@ -283,7 +326,7 @@ When an orchestrator dispatches N sub-agents, each opens a fresh conversation wi
 | `ship:test` | `plan.md` test contract (fallback: scenarios + file list) | by test layer (unit / integration / e2e) |
 | `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit | for canonical file formats and lifecycle rules.
 
-After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
+After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only. **Skip any sub-step below whose file the resume check (step 0.4) told you to preserve.**
 
 ```bash
 mkdir -p .context/ship-run/<task-id>
@@ -793,6 +836,8 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 `ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — it never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
 
+**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `the run-context.md pattern (included above)` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: read `.context/ship-run/<task-id>/phase-status-develop.md` and, if the overlap ran, `.context/ship-run/<task-id>/phase-status-test-generate.md`; for each, substitute the `#<RUN>` placeholder with `#1` (or the current surgical re-run number if this is a re-run) and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
+
 **Line count check**: After `ship:develop` returns, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
 - Do NOT block — this is a warning, not a gate.
@@ -979,7 +1024,11 @@ Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orches
 
 ### 5. GATE CHECK
 
-After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled), apply severity overrides before gate evaluation:
+After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled):
+
+**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `the run-context.md pattern (included above)` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: for each phase that was enabled, read `.context/ship-run/<task-id>/phase-status-<phase>.md`, substitute `#<RUN>` with `#1`, and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
+
+Then apply severity overrides before gate evaluation:
 
 **Severity Overrides:**
 Read `Severity Overrides` from `ship/config.md`. For each override rule (e.g., `high → warn`), downgrade matching findings from all phase reports before evaluating the gate. If the field is absent, no downgrade is applied.
@@ -1050,7 +1099,7 @@ After the fix agent completes, determine which quality phases to re-run:
 
    e. **Log the decision** before launching agents, in the format defined in ${CLAUDE_SKILL_DIR}/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
-   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase appends a new row to `phase-status.md` with run=`#<N>` (e.g., `#2` for first re-run) and notes=`re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row), same as in Phase 4 — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: read each phase's `phase-status-<phase>.md`, substitute `#<RUN>` with `#<N>` (e.g., `#2` for first re-run), append to `phase-status.md`, and add `notes=re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
@@ -1138,6 +1187,14 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
 - **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
+- **Never dispatch any phase/worker with `run_in_background: true`** (Agent tool) or as a backgrounded `Bash` call — see `# Parallelism Strategy
+
+- Use the **Agent** tool to launch N agents in parallel in a **SINGLE call**
+- Never execute sequentially what can be parallel
+- Each parallel agent writes to separate files to avoid race conditions
+- When classifying workspaces (monorepo): cross-reference the diff/source tree with workspaces in `ship/config.md`, launch one agent per affected workspace
+- **Cross-phase parallelism** (`/ship:run`): when `dev` and `test` are both enabled and `plan.md` exists, dispatch `ship:develop` and `ship:test Mode: generate` via the **Skill tool** in the same assistant turn — unlike the within-phase fan-outs above (one orchestrator launching several agents), this pairs two independent forked skills. Safe because `plan.md`'s module map and the denylist it derives for `ship:test` guarantee disjoint file sets between the two dispatches
+- **Never use `run_in_background: true`** (Agent tool) or a backgrounded `Bash` call to dispatch any phase, worker, or leaf agent anywhere in the Ship pipeline. Every dispatch in Ship — within a phase (e.g. `ship-develop-implement` workers) or across phases (`ship:develop` + `ship:test Mode: generate`, or `perf`+`security`+`review`+`analyze`) — is a **synchronous** tool call: multiple `tool_use` blocks issued in the same assistant turn, which the harness runs concurrently but whose results the orchestrator always awaits before proceeding. "Parallel" in this document means exactly that, never an async/background dispatch. No SKILL.md or agent definition in Ship contains any logic to resume a phase from a background-completion notification — if a phase is dispatched in the background instead, the orchestrator has no way to wait for or consume its result, and will incorrectly consolidate/gate on incomplete data.`. Every "parallel" dispatch in this pipeline means multiple synchronous tool calls in the same assistant turn, always awaited before the orchestrator proceeds. Nothing in this pipeline can resume from an async background-completion notification — dispatching one that way silently strands the pipeline (the orchestrator would consolidate/gate on incomplete or missing data, with no logic to wait for or recover the missed result).
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.

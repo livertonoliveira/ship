@@ -163,13 +163,15 @@ Apply severity overrides from injected context (or `ship/config.md → Severity 
 
 ---
 
-## 6. Append phase status
+## 6. Write phase status
 
-Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
+Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-status-perf.md` (if the scratch dir exists) — never write directly to the shared `phase-status.md`, since this phase runs concurrently with `security`/`review`/`analyze` in the same turn and a concurrent append would race:
 
 ```
-| perf | #1 | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
+| perf | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
 ```
+
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 ---
 

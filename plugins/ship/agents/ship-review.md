@@ -494,17 +494,19 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 **Behavior:**
 - Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
 - Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
-- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4.`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate. Compute the gate **deterministically from the severity counts**: any critical/high → `FAIL`; else any medium → `WARN`; else `PASS`. The `Gate:` value in the Summary and the gate column written to `phase-status.md` (step 6) MUST be identical and MUST match these counts — **never emit `PASS` while Medium > 0**.
+- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4.`. Apply severity overrides from injected context (or `ship/config.md → Severity Overrides`) before computing the gate. Compute the gate **deterministically from the severity counts**: any critical/high → `FAIL`; else any medium → `WARN`; else `PASS`. The `Gate:` value in the Summary and the gate column written to `phase-status-review.md` (step 6) MUST be identical and MUST match these counts — **never emit `PASS` while Medium > 0**.
 
 ---
 
-## 6. Append phase status
+## 6. Write phase status
 
-Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
+Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-status-review.md` (if the scratch dir exists) — never write directly to the shared `phase-status.md`, since this phase runs concurrently with `perf`/`security`/`analyze` in the same turn and a concurrent append would race:
 
 ```
-| review | #1 | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
+| review | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
 ```
+
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 ---
 

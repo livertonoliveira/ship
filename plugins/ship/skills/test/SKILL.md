@@ -178,14 +178,13 @@ Header-only file if no worker created any file for a layer — only list what wa
 
 Do **NOT** write `test-failures.md` in this mode.
 
-### 3.5 Append phase-status.md
+### 3.5 Write phase-status-test-generate.md
 
-Append to `.context/ship-run/<task-id>/phase-status.md` if it exists (skip in standalone mode):
+Write (overwrite, do not append) `.context/ship-run/<task-id>/phase-status-test-generate.md` if the scratch dir exists (skip in standalone mode) — never write directly to the shared `phase-status.md`, since this mode runs concurrently with `ship:develop` in the same turn (Phase 2 overlap) and a concurrent append would race:
 ```
-| test-generate | #<RUN_NUM> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
+| test-generate | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```
-Derive `RUN_NUM` dynamically: count existing `| test-generate |` rows in the file and add 1.
-Example: `RUN_NUM=$(grep -c '^| test-generate |' .context/ship-run/<task-id>/phase-status.md 2>/dev/null || echo 0); RUN_NUM=$((RUN_NUM + 1))`
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 `<gate>` reflects the §3.3 hygiene-gate outcome: `pass` if the scan was clean on the first pass or clean after remediation; `warn` if hits remained after the second cycle.
 
@@ -245,12 +244,11 @@ After agents complete, write `.context/ship-run/<task-id>/test-failures.md` (ski
 - Failures present → list them: `- <file> (<N> failures)`
 - Zero failures → header only: `# Test Failures`
 
-Append to `.context/ship-run/<task-id>/phase-status.md` if it exists:
+Write (overwrite, do not append) `.context/ship-run/<task-id>/phase-status-test.md` if the scratch dir exists — never write directly to the shared `phase-status.md`:
 ```
-| test | #<RUN_NUM> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
+| test | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```
-Derive `RUN_NUM` dynamically: count existing `| test |` rows in the file and add 1.
-Example: `RUN_NUM=$(grep -c '^| test |' .context/ship-run/<task-id>/phase-status.md 2>/dev/null || echo 0); RUN_NUM=$((RUN_NUM + 1))`
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 Report to the user: passed and failed counts per layer.
 
@@ -272,7 +270,7 @@ This reuses §3.3 verbatim — run the same scan, same remediation loop (dispatc
 
 ### 5.3 Consolidate and write test-failures.md
 
-This reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.md`, append the `phase-status.md` row (same `RUN_NUM` derivation), and report tests created, passed, and failed per layer.
+This reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.md`, write the `phase-status-test.md` row, and report tests created, passed, and failed per layer.
 
 ---
 
@@ -281,7 +279,7 @@ This reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.
 Before you end your turn, verify out loud:
 1. For every layer marked `enabled` in Test Scope (and, in `execute` mode, present in the manifest), did you actually issue a `ship-test-*` Agent tool call? If you skipped an eligible layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now.
 2. In `generate` and `full` modes: did the hygiene gate actually run, and did you remediate any hits it found? Reporting success with an unrun gate — or with known comment/spec-ID hits still in test files — is a defect.
-3. In `generate` mode: did you write `generated-tests.md`, avoid writing `test-failures.md`, and append the `test-generate` row to `phase-status.md` (§3.5) with the correct `RUN_NUM` and gate?
+3. In `generate` mode: did you write `generated-tests.md`, avoid writing `test-failures.md`, and write the `phase-status-test-generate.md` row (§3.5) with the correct gate?
 4. In `execute` mode: if any fix iteration edited a test file, did the scoped hygiene sweep (§4.3) run over those files? Did you write `test-failures.md` in the canonical format?
 
 Returning in any unfinished state is a defect.

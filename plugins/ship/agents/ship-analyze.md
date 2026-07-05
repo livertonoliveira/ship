@@ -672,13 +672,15 @@ The full `drift-report.md` is always persisted to the scratch dir. The lazy-load
 **Local mode:**
 - Also write `drift-report.md` to `ship/changes/<feature>/drift-report.md`.
 
-**Append phase status (pipeline mode):**
+**Write phase status (pipeline mode):**
 
-Append one row to `.context/ship-run/<task-id>/phase-status.md` (if the file exists):
+Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-status-analyze.md` (if the scratch dir exists) — never write directly to the shared `phase-status.md`, since this phase runs concurrently with `perf`/`security`/`review` in the same turn and a concurrent append would race:
 
 ```
-| analyze | #1 | <ISO-8601 UTC> | <total-reqs+criteria+scenarios> | <gate> | <critical> | <high> | <medium> | <low> | |
+| analyze | #<RUN> | <ISO-8601 UTC> | <total-reqs+criteria+scenarios> | <gate> | <critical> | <high> | <medium> | <low> | |
 ```
+
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
 
 ---
 
