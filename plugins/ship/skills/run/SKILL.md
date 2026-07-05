@@ -18,6 +18,8 @@ You are the main Ship development orchestrator. Your mission is to take a task (
 
 ---
 
+> **Path resolution safety.** Every `${CLAUDE_SKILL_DIR}/...` path below (hooks, patterns) must resolve to an absolute path substituted by the harness — never treat it as literal text to search for. If a `Read` or `bash` call against a `${CLAUDE_SKILL_DIR}/...` path fails (file not found / variable did not resolve), do **not** fall back to a filesystem-wide search (e.g. `find /`, `find ~`) to locate the skill directory — that scans unrelated apps' sandboxed data and triggers OS-level permission prompts unrelated to this project. Instead: treat the referenced hook/pattern as unavailable, log a one-line warning (`⚠ ${CLAUDE_SKILL_DIR} did not resolve — skipping <path>`), skip only that step, and continue the pipeline. Never widen a lookup beyond the current project's working directory.
+
 ## Prerequisites
 
 ### 1. Check initialization
