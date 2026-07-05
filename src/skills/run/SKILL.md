@@ -59,11 +59,35 @@ Analyze `$ARGUMENTS` to determine what to work on:
 
 For each task, execute the following phases:
 
+### 0.4. Detect an interrupted prior run (resume check)
+
+Before touching the scratch dir, check whether one already exists for this `<task-id>` from a prior invocation that may not have finished — e.g. the previous session was closed or restarted mid-pipeline:
+
+```bash
+test -f .context/ship-run/<task-id>/dispatch-log.md && wc -l < .context/ship-run/<task-id>/dispatch-log.md
+```
+
+- **File absent, or only the header line present**: no prior run to consider — proceed to step 0.5 as a fresh start.
+- **One or more dispatch rows present**: a previous invocation for this exact `<task-id>` got at least partway through the pipeline. Read `.context/ship-run/<task-id>/dispatch-log.md` and `.context/ship-run/<task-id>/phase-status.md` and compare them: any phase with a dispatch row but **no** corresponding completed row in `phase-status.md` was likely interrupted mid-flight (dispatched, never finished). Report to the user:
+
+  ```
+  ⚠ Encontrado um contexto de execução existente para <task-id> (último dispatch: <phase> em <timestamp>).
+  Fases com status registrado: <list, from phase-status.md>
+  Fases despachadas sem conclusão registrada (possivelmente interrompidas): <list, or "nenhuma">
+  ```
+
+  Then ask: "Retomar a partir daqui (pular fases já concluídas, re-executar apenas as pendentes/interrompidas) ou reiniciar o pipeline do zero para esta task (isso apaga o contexto existente)?"
+
+  - **Resume**: proceed to step 0.5, but do **not** recreate `phase-status.md` or `dispatch-log.md` — they already have rows worth keeping. Skip re-writing any canonical file in step 0.5 that already exists and looks complete (`stack.md`, `pre-quality-snapshot.sha`, `pre-develop-files.txt`); only `diff.md` is always safe to recapture (it is idempotent and re-running it never loses data). Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or were marked interrupted above.
+  - **Restart**: proceed to step 0.5 exactly as written below (fresh init, overwriting everything).
+
+  This check exists because nothing in this pipeline persists "phase X is currently in flight" as live process state — the scratch dir on disk is the only durable record across a session restart, and blindly recreating it on every invocation would silently discard that record and either re-run already-completed phases or, worse, let `phase-status.md`'s header-only reset erase rows `homolog`/`pr` still need.
+
 ### 0.5. Initialize shared scratch dir
 
 > See @ship/patterns/run-context.md for canonical file formats and lifecycle rules.
 
-After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
+After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only. **Skip any sub-step below whose file the resume check (step 0.4) told you to preserve.**
 
 ```bash
 mkdir -p .context/ship-run/<task-id>
