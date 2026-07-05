@@ -43,10 +43,11 @@ Diff:
 - Otherwise → run `git diff origin/main...HEAD` (canonical range per `# Run Context — Shared Scratch Between Agents
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review, analyze). `perf`,
-`security`, `review`, and `analyze` all dispatch in the same Phase 4 parallel
-turn and feed a single aggregated gate in Phase 5 — see `run/SKILL.md` → Phase
-4/5.
+between phase agents (develop, test, perf, security, review, analyze). `develop`
+and `ship:test Mode: generate` dispatch in the same Phase 2 turn when `plan.md`
+exists — see `run/SKILL.md` → Phase 2/3. `perf`, `security`, `review`, and
+`analyze` all dispatch in the same Phase 4 parallel turn and feed a single
+aggregated gate in Phase 5 — see `run/SKILL.md` → Phase 4/5.
 
 ---
 
@@ -208,7 +209,9 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
   back and writes `test-failures.md`. `generated-tests.md` follows the same "test agent writes,
-  no agent deletes another's files" convention already stated below.
+  no agent deletes another's files" convention already stated below. When `Mode: generate` runs
+  during the develop overlap (Phase 2), it writes concurrently with `ship:develop` — safe because
+  `plan.md`'s module map and the denylist derived from it keep the two writers' file sets disjoint.
 - **No agent** may delete or overwrite files written by another agent.
 
 ---
@@ -218,10 +221,11 @@ Written and read by the `analyze` agent (pipeline mode only). Invalidated whenev
 | Moment | Action |
 |--------|--------|
 | Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
-| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
+| During develop (same turn, when `dev` + `test` enabled and `plan.md` exists) | `ship:test Mode: generate` runs in parallel with `ship:develop` — writes test files and `generated-tests.md`, never `test-failures.md` |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) — the refresh naturally includes any test files `Mode: generate` wrote during the overlap, since both dispatches write to the same working tree |
+| After the evidence gate passes | `ship:test Mode: execute` reads `generated-tests.md` and writes `test-failures.md`. If the evidence gate fails, the pipeline stops before this step and `Mode: execute` never runs. If the overlapped `Mode: generate` failed or produced no manifest, `ship:test Mode: full` runs here instead (generate + execute in one pass) |
+| During pipeline (no overlap case: `dev` disabled, `test` disabled, or no `plan.md`) | `ship:test Mode: full` runs once, after develop (or in develop's place if `dev` is disabled) |
 | During pipeline | Agents read and append as needed |
-| `Mode: generate` run of `ship:test` | Writes `generated-tests.md` (does not write `test-failures.md`) |
-| `Mode: execute` run of `ship:test` | Reads `generated-tests.md` (does not delete it) and writes `test-failures.md` |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
 
