@@ -33,6 +33,9 @@ jobs:
       - name: Check no audit:* invocations in pipeline skill files
         run: ./scripts/check-no-audit-in-pipeline.sh
 
+      - name: Check run orchestrator keeps patterns lazy-loaded
+        run: ./scripts/check-run-lazy-load.sh
+
   build-drift:
     name: Build Drift — src/ ↔ plugins/ship/ em sincronia
     if: github.event_name == 'pull_request'
