@@ -29,7 +29,7 @@ Check if `ship/config.md` exists at the project root.
 
 ### 2. Determine storage mode
 
-See @ship/patterns/storage-mode.md.
+See @@ship/patterns/storage-mode.md.
 
 ### 3. Check for specification
 
@@ -85,7 +85,7 @@ test -f .context/ship-run/<task-id>/dispatch-log.md && wc -l < .context/ship-run
 
 ### 0.5. Initialize shared scratch dir
 
-> See @ship/patterns/run-context.md for canonical file formats and lifecycle rules.
+> See @@ship/patterns/run-context.md for canonical file formats and lifecycle rules.
 
 After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only. **Skip any sub-step below whose file the resume check (step 0.4) told you to preserve.**
 
@@ -95,7 +95,7 @@ mkdir -p .context/ship-run/<task-id>
 
 Then populate the canonical files in a single batch:
 
-1. **`stack.md`** — Run stack-detection (see @ship/patterns/stack-detection.md): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
+1. **`stack.md`** — Run stack-detection (see @@ship/patterns/stack-detection.md): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
 
    ```markdown
    # Stack
@@ -160,7 +160,7 @@ Run context: .context/ship-run/<task-id>/ (stack + diff cached)
 
 ### 0.7. Diff Classification
 
-> See @ship/patterns/diff-classifier.md for the full heuristic reference.
+> See @@ship/patterns/diff-classifier.md for the full heuristic reference.
 
 > **This is the baseline classification** — it runs against the pre-develop `diff.md` and feeds only the planner-gate decision in step 1.9. The **authoritative** classification that drives the Phase 4 quality gate is recomputed in step 2.5 over the post-develop diff and overwrites `diff-class.txt`.
 
@@ -179,10 +179,10 @@ bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .contex
 1. Use `mcp__linear-server__get_issue` to get task title, description, acceptance criteria, labels, milestone
 2. Use `mcp__linear-server__get_project` to get the project context
 3. Use `mcp__linear-server__list_documents` + `mcp__linear-server__get_document` to read the Proposal and Design documents linked to the project
-4. Read `ship/config.md` (see @ship/patterns/stack-detection.md for stack detection logic).
+4. Read `ship/config.md` (see @@ship/patterns/stack-detection.md for stack detection logic).
 5. Build the **effective phase set** for this run (applies to both Linear and Local mode):
    1. Read `Pipeline Profile → profile` from `ship/config.md` (default: `standard` if the field is absent or unknown)
-   2. Look up that profile's phase defaults in `@ship/patterns/profiles.md`. If the profile name is not recognized, fall back to `standard` and warn the user.
+   2. Look up that profile's phase defaults in `@@ship/patterns/profiles.md`. If the profile name is not recognized, fall back to `standard` and warn the user.
    3. For each phase (`dev`, `test`, `perf`, `security`, `review`, `analyze`, `homolog`, `pr`): if `Pipeline Phases` has an explicit `enabled`/`disabled` entry, that override wins; otherwise use the profile default
    4. **Log to the user** before starting any phase:
       - Format: `Profile: <name> → fases ativas: <list> | puladas por profile: <list>`
@@ -190,7 +190,7 @@ bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .contex
       - Example (no overrides): `Profile: lite → fases ativas: dev, pr | puladas por profile: test, perf, security, review, homolog`
       - Example (with override): `Profile: lite | override: test: enabled → fases ativas: dev, test, pr | puladas por profile: perf, security, review, homolog`
 
-6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `@ship/patterns/language.md`.
+6. Extract `Artifact language` from `ship/config.md → Conventions` (e.g., `pt-BR`). Store as `artifact_language`. This value is the **orchestrator-owned language context** — inject it explicitly into every phase agent prompt you dispatch in steps 2–8: include `Artifact language: <resolved-value>` in the agent's instructions, replacing `<artifact_language>` with the actual value you resolved (e.g., write `Artifact language: pt-BR`, not the placeholder). Phase SKILL.md files will use this injected value instead of re-loading `@@ship/patterns/language.md`.
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if the section is absent). This is visibility-only — scenarios live in the spec artifacts the phases already load; the orchestrator does not thread them. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
@@ -216,7 +216,7 @@ bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .contex
    - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
    - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
 
-   **Language convention (applies to every phase dispatch below):** include the line `Artifact language: <artifact_language>` (resolved value from step 6) in each dispatched phase's inline context. Phase SKILL.md files use this injected value for all user-facing output and do NOT re-load `@ship/patterns/language.md`. The per-phase context blocks below show this line without repeating the rationale.
+   **Language convention (applies to every phase dispatch below):** include the line `Artifact language: <artifact_language>` (resolved value from step 6) in each dispatched phase's inline context. Phase SKILL.md files use this injected value for all user-facing output and do NOT re-load `@@ship/patterns/language.md`. The per-phase context blocks below show this line without repeating the rationale.
 
 > **MANDATORY — LINEAR MODE: Move issue to its started state before doing anything else**
 >
@@ -229,7 +229,7 @@ bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .contex
 
 **Local mode:**
 
-Follow @ship/patterns/load-artifacts.md for the Local mode artifact loading steps.
+Follow @@ship/patterns/load-artifacts.md for the Local mode artifact loading steps.
 
 Additionally:
 - Apply steps 5–6 above (effective phase set resolution and artifact_language extraction) — they are not Linear-specific.
@@ -252,7 +252,7 @@ In Local mode, apply this identical slicing rule against `proposal.md` instead o
 >
 > **First, check whether the issue already predicts a single-module shape.** Skip the planner when ALL of the following hold, evaluated against the current issue's own description (Linear issue or, in Local mode, the sliced `spec.md`):
 > - (a) the issue contains a `## Files` section;
-> - (b) that section lists ≤ 3 code files — apply the same extension filter as the logical-file-count metric in @ship/patterns/diff-classifier.md (exclude `*.md`, `*.json`, `*.lock`, `*.txt`, `*.yml`, `*.yaml`) and also exclude any `plugins/**` rebuild line;
+> - (b) that section lists ≤ 3 code files — apply the same extension filter as the logical-file-count metric in @@ship/patterns/diff-classifier.md (exclude `*.md`, `*.json`, `*.lock`, `*.txt`, `*.yml`, `*.yaml`) and also exclude any `plugins/**` rebuild line;
 > - (c) the issue's Notes declare `Dependencies: None`;
 > - (d) every scenario in the issue's `## Scenarios` belongs to a single test-layer tag — all `@unit`, all `@integration`, or all `@e2e`, never mixed.
 >
@@ -320,7 +320,7 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 `ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — it never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
 
-**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `@ship/patterns/run-context.md` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: read `.context/ship-run/<task-id>/phase-status-develop.md` and, if the overlap ran, `.context/ship-run/<task-id>/phase-status-test-generate.md`; for each, substitute the `#<RUN>` placeholder with `#1` (or the current surgical re-run number if this is a re-run) and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
+**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: read `.context/ship-run/<task-id>/phase-status-develop.md` and, if the overlap ran, `.context/ship-run/<task-id>/phase-status-test-generate.md`; for each, substitute the `#<RUN>` placeholder with `#1` (or the current surgical re-run number if this is a re-run) and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
 
 **Line count check**: After `ship:develop` returns, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -438,7 +438,7 @@ If any test fails after fix attempts:
 DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
 ```
 
-Apply the per-class adjustments **on top of** the effective phase set exactly as specified in @ship/patterns/diff-classifier.md → "Behavior per Class" (which agents run, the log message, and the PASS rows to append to `phase-status.md`):
+Apply the per-class adjustments **on top of** the effective phase set exactly as specified in @@ship/patterns/diff-classifier.md → "Behavior per Class" (which agents run, the log message, and the PASS rows to append to `phase-status.md`):
 
 - **`trivial`**: all four quality phases skipped, `analyze` included → proceed directly to Phase 5 (gate=PASS).
 - **`minor`**: only 1 combined security agent runs (`perf`/`review` skipped); `analyze` **still runs** — drift detection does not depend on diff size.
@@ -510,7 +510,7 @@ Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orches
 
 After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled):
 
-**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `@ship/patterns/run-context.md` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: for each phase that was enabled, read `.context/ship-run/<task-id>/phase-status-<phase>.md`, substitute `#<RUN>` with `#1`, and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
+**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: for each phase that was enabled, read `.context/ship-run/<task-id>/phase-status-<phase>.md`, substitute `#<RUN>` with `#1`, and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
 
 Then apply severity overrides before gate evaluation:
 
@@ -671,12 +671,12 @@ When working on multiple tasks (`--project`, `--milestone`, or multiple IDs):
 
 - **1 task at a time by default**: Only work on multiple tasks if the user explicitly requests it.
 - **Parallelism within phases is mandatory**: Quality checks ALWAYS run in parallel. Tests use 3 parallel agents.
-- **Never dispatch any phase/worker with `run_in_background: true`** (Agent tool) or as a backgrounded `Bash` call — see `@ship/patterns/parallelism.md`. Every "parallel" dispatch in this pipeline means multiple synchronous tool calls in the same assistant turn, always awaited before the orchestrator proceeds. Nothing in this pipeline can resume from an async background-completion notification — dispatching one that way silently strands the pipeline (the orchestrator would consolidate/gate on incomplete or missing data, with no logic to wait for or recover the missed result).
+- **Never dispatch any phase/worker with `run_in_background: true`** (Agent tool) or as a backgrounded `Bash` call — see `@@ship/patterns/parallelism.md`. Every "parallel" dispatch in this pipeline means multiple synchronous tool calls in the same assistant turn, always awaited before the orchestrator proceeds. Nothing in this pipeline can resume from an async background-completion notification — dispatching one that way silently strands the pipeline (the orchestrator would consolidate/gate on incomplete or missing data, with no logic to wait for or recover the missed result).
 - **Quality gates are non-negotiable for FAIL**: Critical/high findings MUST be resolved.
 - **Line count awareness**: Warn (don't block) if a task exceeds 400 lines.
 - **Respect pipeline phases**: Always build the **effective phase set** (step 1.5) before executing. Phases disabled by profile or explicit override MUST be skipped — inform the user: "Skipping [phase] (disabled in config)." and move to the next enabled phase.
-- **Language**: Read `Artifact language` from `ship/config.md → Conventions` once in step 1.6 and inject the resolved value into every phase agent prompt. Phase SKILL.md files use this injected value and do not re-load `@ship/patterns/language.md` during pipeline execution.
-- **Shared scratch dir**: See @ship/patterns/run-context.md for the `.context/ship-run/<task-id>/` structure and lifecycle.
+- **Language**: Read `Artifact language` from `ship/config.md → Conventions` once in step 1.6 and inject the resolved value into every phase agent prompt. Phase SKILL.md files use this injected value and do not re-load `@@ship/patterns/language.md` during pipeline execution.
+- **Shared scratch dir**: See @@ship/patterns/run-context.md for the `.context/ship-run/<task-id>/` structure and lifecycle.
 - **Linear mode = zero local artifacts**: When Linear is configured, do NOT create `ship/changes/` directories. Task context comes from Linear, quality reports go as comments.
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
 - **Do not create the PR automatically**: The pipeline ends at acceptance. The user runs `/ship:pr` separately.
