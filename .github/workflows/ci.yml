@@ -36,6 +36,9 @@ jobs:
       - name: Check run orchestrator keeps patterns lazy-loaded
         run: ./scripts/check-run-lazy-load.sh
 
+      - name: Check plan-validate wired post-planner
+        run: ./scripts/check-plan-validate-wired.sh
+
   build-drift:
     name: Build Drift — src/ ↔ plugins/ship/ em sincronia
     if: github.event_name == 'pull_request'

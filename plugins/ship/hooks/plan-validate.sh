@@ -69,30 +69,33 @@ check_module_map_present() {
 }
 
 check_overlap() {
-  local f="$1" id path entries=()
-  local ids
+  local f="$1" id path ids entries=()
   ids="$(module_ids "$f")"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     while IFS= read -r path; do
       [ -n "$path" ] || continue
-      entries+=("$path|$id")
+      entries+=("${path}|${id}")
     done < <(module_files "$f" "$id")
   done <<< "$ids"
 
-  local i j path_i path_j id_i id_j
-  for ((i = 0; i < ${#entries[@]}; i++)); do
-    path_i="${entries[$i]%%|*}"
-    id_i="${entries[$i]#*|}"
-    for ((j = i + 1; j < ${#entries[@]}; j++)); do
-      path_j="${entries[$j]%%|*}"
-      id_j="${entries[$j]#*|}"
-      if [ "$path_i" = "$path_j" ] && [ "$id_i" != "$id_j" ]; then
-        echo "plan-validate: overlap de arquivos — $path_i em $id_i, $id_j" >&2
-        return 1
-      fi
-    done
-  done
+  [ "${#entries[@]}" -gt 0 ] || return 0
+
+  local sorted prev_path prev_id cur_path cur_id line
+  sorted="$(printf '%s\n' "${entries[@]}" | sort)"
+  prev_path=""
+  prev_id=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    cur_path="${line%%|*}"
+    cur_id="${line#*|}"
+    if [ "$cur_path" = "$prev_path" ] && [ "$cur_id" != "$prev_id" ]; then
+      echo "plan-validate: overlap de arquivos — $cur_path em $prev_id, $cur_id" >&2
+      return 1
+    fi
+    prev_path="$cur_path"
+    prev_id="$cur_id"
+  done <<< "$sorted"
   return 0
 }
 
@@ -284,6 +287,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --*)
+        echo "plan-validate: unknown flag: $1" >&2
         usage
         exit 1
         ;;
@@ -294,7 +298,11 @@ main() {
     esac
   done
 
-  [ "${#positional[@]}" -eq 1 ] || { usage; exit 1; }
+  if [ "${#positional[@]}" -ne 1 ]; then
+    echo "plan-validate: expected 1 argument, got ${#positional[@]}" >&2
+    usage
+    exit 1
+  fi
   local plan_file="${positional[0]}"
 
   if [ ! -f "$plan_file" ]; then

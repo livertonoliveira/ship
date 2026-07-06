@@ -282,6 +282,19 @@ Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.c
 
 **Scratch dir:** `.context/ship-run/<task-id>/`
 
+### 1.95. PHASE: Plan Validation (Deterministic Gate)
+
+> **Phase check**: This step runs only when `.context/ship-run/<task-id>/plan.md` exists (the planner ran in step 1.9 and wrote the artifact). If the planner was skipped, there is no `plan.md` to validate — skip this step entirely and proceed to Phase 2.
+
+This is a deterministic, zero-AI structural check — a bash hook parses `plan.md` and validates it, so the orchestrator does not need to re-interpret the planner's output before trusting it.
+
+```bash
+bash "${CLAUDE_SKILL_DIR}/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md
+```
+
+- **Exit 0** (valid): log `Plan validado ✓` and proceed to Phase 2.
+- **Exit 2** (invalid): do NOT dispatch `ship:develop` or `ship:test`. Surface the specific message the script wrote to stderr to the user, then either re-run `ship:plan` once more with that error appended as extra context, or ask the user how to proceed. Append a gate row to `phase-status.md` with gate=`fail` and notes set to the stderr message.
+
 ### 2. PHASE: Development
 
 > **Phase check**: If `dev` is `disabled` in the **effective phase set** (resolved in step 1.5), skip this phase entirely and proceed to Phase 3 (which runs in `Mode: full`, since there is no develop phase to overlap with — see Phase 3's guard).
