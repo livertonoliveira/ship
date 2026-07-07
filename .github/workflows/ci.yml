@@ -52,7 +52,7 @@ jobs:
         run: cd plugins/ship && npm run build
       - name: Verify no drift
         run: |
-          if ! git diff --exit-code plugins/ship/skills plugins/ship/agents; then
+          if ! git diff --exit-code plugins/ship/skills plugins/ship/agents plugins/ship/hooks; then
             echo "::error::plugins/ship/ está desatualizado em relação a src/. Rode 'cd plugins/ship && npm run build' localmente e commite o resultado."
             exit 1
           fi
