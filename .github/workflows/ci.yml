@@ -39,6 +39,9 @@ jobs:
       - name: Check plan-validate wired post-planner
         run: ./scripts/check-plan-validate-wired.sh
 
+      - name: Check status scripts wired post-run
+        run: ./scripts/check-status-scripts-wired.sh
+
   build-drift:
     name: Build Drift — src/ ↔ plugins/ship/ em sincronia
     if: github.event_name == 'pull_request'
