@@ -333,7 +333,7 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 `ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — it never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
 
-**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: read `.context/ship-run/<task-id>/phase-status-develop.md` and, if the overlap ran, `.context/ship-run/<task-id>/phase-status-test-generate.md`; for each, substitute the `#<RUN>` placeholder with `#1` (or the current surgical re-run number if this is a re-run) and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
+**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions". Now that both have returned, you (the orchestrator) are the sole writer of `phase-status.md`: run `bash "@@ship/hooks/status-consolidate.sh" 1 .context/ship-run/<task-id>/phase-status-develop.md` (or the current surgical re-run number instead of `1` if this is a re-run), also passing `.context/ship-run/<task-id>/phase-status-test-generate.md` as an extra argument if the overlap ran, and append its stdout to `.context/ship-run/<task-id>/phase-status.md`. This is a single-threaded step in your own turn, so no race is possible here.
 
 **Line count check**: After `ship:develop` returns, run `git diff --stat` to verify total lines changed. If it exceeds 400 lines:
 - Warn the user: "This task produced ~X lines (target: <400). Consider splitting it."
@@ -394,6 +394,18 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
          Pipeline interrompido. Re-execute o develop ou implemente manualmente.
        ```
        Do NOT proceed to testing or quality phases. Since the pipeline stops here, `ship:test Mode: execute` (Phase 3b below) is never dispatched — the STOP above short-circuits before reaching it, whether or not a `Mode: generate` pass already wrote test files earlier in this turn.
+
+3. **Report untested files (non-blocking)**: only run this step when step 2 above concluded **Non-empty** (develop mutated ≥1 file). It operates on the same touched-files list already computed in step 1 (the `snapshot-files.sh diff` output) — write that list to `.context/ship-run/<task-id>/develop-touched-files.txt` if it is not already on disk, then call:
+
+   ```bash
+   bash "@@ship/hooks/evidence-gate.sh" .context/ship-run/<task-id>/develop-touched-files.txt
+   ```
+
+   Parse the returned JSON (`{"tested":[...],"untested":[...],"total":N}`). Log to the user: `Evidence gate: <N> arquivo(s) fonte sem teste correspondente: <list>` (using the length and contents of `untested`), or `Evidence gate: nenhum arquivo fonte sem teste correspondente` when `untested` is empty.
+
+   This step is report-only and never overrides the gate value produced by step 2 (`pass`/`warn`/`fail`) — it only adds an additional signal on top of it:
+   - When `test` is `disabled` in the effective phase set: only log the message above; do not touch `phase-status.md`.
+   - When `test` is `enabled` AND `untested` is non-empty: additionally append a row (or annotate the develop row) in `phase-status.md` with gate=`warn` and notes=`evidence gate: <N> fonte(s) sem teste`. Never escalate this to `fail`.
 
 ### 3. PHASE: Testing
 
@@ -523,7 +535,7 @@ Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orches
 
 After all agents dispatched in Phase 4 complete (`perf`, `security`, `review`, `analyze` — whichever were enabled):
 
-**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: for each phase that was enabled, read `.context/ship-run/<task-id>/phase-status-<phase>.md`, substitute `#<RUN>` with `#1`, and append the resulting row to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
+**Consolidate phase-status (MANDATORY, before evaluating the gate)**: each of the four quality agents wrote its own row to its private `phase-status-<phase>.md` scratch file rather than the shared `phase-status.md` — see `@@ship/patterns/run-context.md` → "Read/write conventions" (concurrent agents appending to the same file lose rows). You are the sole writer of `phase-status.md`: run `bash "@@ship/hooks/status-consolidate.sh" 1 <scratch-file>...` (passing `.context/ship-run/<task-id>/phase-status-<phase>.md` for each phase that was enabled as the `<scratch-file>...` arguments, and the current run number instead of `1`), and append its stdout to `.context/ship-run/<task-id>/phase-status.md`. This runs single-threaded in your own turn, so no race is possible here.
 
 Then apply severity overrides before gate evaluation:
 
@@ -588,15 +600,20 @@ After the fix agent completes, determine which quality phases to re-run:
 
    a. The modified files list was already computed in step 2 above.
 
-   b. **Check for out-of-scope files**: if ANY modified file matches no phase scope rule, follow @@ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
+   b–d. **Compute the rerun scope with a single script call**: write the modified-files list from step 2 to `.context/ship-run/<task-id>/post-fix-changed-files.txt` (if not already on disk) and call:
 
-   c. **Apply the phase → scope mapping** from @@ship/patterns/gates.md ("Re-run cirúrgico → Phase → scope mapping", plus the `analyze` row in its analyze-scope section) for each phase that previously ran.
+   ```bash
+   bash "@@ship/hooks/rerun-scope.sh" .context/ship-run/<task-id>/post-fix-changed-files.txt
+   ```
 
-   d. **For each phase that previously ran**: compute the intersection of (modified files from the fix) and (phase scope). If the intersection is non-empty → re-run. If empty → skip.
+   Interpret its JSON output:
+   - `out_of_scope: true` → follow @@ship/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
+   - `empty: true` → this field is a secondary confirmation of the same "fix made no changes" condition already handled by the empty-file-list check in step 2 above; the authoritative empty-fix check remains that existing step 2 check — do not remove or change it.
+   - Otherwise, for each phase (`perf`, `security`, `review`, `analyze`) that previously ran, read `phases.<phase>.rerun` (`true`/`false`) and `phases.<phase>.reason` directly from the JSON to decide whether to re-run that phase — this replaces computing the intersection of (modified files from the fix) and (phase scope) manually.
 
-   e. **Log the decision** before launching agents, in the format defined in @@ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
+   e. **Log the decision** before launching agents, reusing each phase's `phases.<phase>.reason` from the JSON as the human-readable reason, in the format defined in @@ship/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
-   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze` uses its broad scope mapping (@@ship/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the intersection computed in step 4d for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row), same as in Phase 4 — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: read each phase's `phase-status-<phase>.md`, substitute `#<RUN>` with `#<N>` (e.g., `#2` for first re-run), append to `phase-status.md`, and add `notes=re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` in its own frontmatter — never wrap either in `Agent`). `analyze`'s `rerun` is always `true`, driven by the script's own broad-scope logic (@@ship/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the per-phase decision read from the script's output for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row), same as in Phase 4 — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: run `bash "@@ship/hooks/status-consolidate.sh" <N> <scratch-file>...` (e.g. `<N>` = `2` for the first re-run, passing each re-invoked phase's `phase-status-<phase>.md` as a scratch file), append its stdout to `.context/ship-run/<task-id>/phase-status.md`, and add `notes=re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 

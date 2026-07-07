@@ -611,6 +611,14 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 4. Log decision (see format below)
 5. Launch selected phases in parallel
 
+Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+
+```json
+{"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."},"analyze":{"rerun":true,"reason":"..."}},"out_of_scope":false,"empty":false}
+```
+
+`run/SKILL.md`'s Surgical Re-run Procedure invokes this script directly and consumes its JSON output rather than computing the intersection in prose.
+
 ### Log format
 
 ```
