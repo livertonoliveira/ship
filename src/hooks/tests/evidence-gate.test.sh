@@ -241,6 +241,46 @@ test_source_with_test_in_dunder_tests_dir_is_tested() {
   rm -rf "$repo"
 }
 
+make_repo_nested_tests_dir() {
+  local dir
+  dir="$(mktemp -d)"
+  (
+    cd "$dir"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    mkdir -p src/foo/tests/unit
+    echo "one" > src/foo/utils.ts
+    echo "one test" > src/foo/tests/unit/utils.test.ts
+    git add -A
+    git commit -q -m "initial"
+  )
+  printf '%s' "$dir"
+}
+
+test_source_with_test_two_levels_under_tests_dir_is_tested() {
+  local name="a source file with its test nested two levels under tests/ is not reported as untested"
+  local repo touched out
+  repo="$(make_repo_nested_tests_dir)"
+  touched="$repo/touched.txt"
+  printf 'src/foo/utils.ts\n' > "$touched"
+
+  out="$(cd "$repo" && bash "$EVIDENCE_SCRIPT" "$touched")"
+
+  local tested_arr untested_arr
+  tested_arr="$(extract_json_array "$out" tested)"
+  untested_arr="$(extract_json_array "$out" untested)"
+
+  if [ "$tested_arr" != '"src/foo/utils.ts"' ] || [ -n "$untested_arr" ]; then
+    log_fail "$name (tested was: $tested_arr, untested was: $untested_arr)"
+    rm -rf "$repo"
+    return
+  fi
+
+  log_pass "$name"
+  rm -rf "$repo"
+}
+
 test_reads_from_stdin_when_no_positional_arg() {
   local name="reads touched files from stdin when no positional argument is given"
   local repo out
@@ -267,6 +307,7 @@ test_repo_with_no_test_files
 test_output_is_valid_json_with_three_keys
 test_source_file_with_matching_test_appears_only_in_tested
 test_source_with_test_in_dunder_tests_dir_is_tested
+test_source_with_test_two_levels_under_tests_dir_is_tested
 test_reads_from_stdin_when_no_positional_arg
 
 echo ""
