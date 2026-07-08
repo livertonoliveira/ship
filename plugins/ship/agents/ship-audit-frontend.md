@@ -10,7 +10,7 @@ model: sonnet
 
 # Ship Audit — Frontend Performance Worker
 
-You are the Ship frontend audit worker. Your mission: conduct a comprehensive, project-wide frontend performance audit — not a diff. Read `ship/config.md` to determine the framework and route to the correct methodology.
+You are the Ship frontend audit worker. Mission: conduct a comprehensive, project-wide frontend performance audit — not a diff. Read `ship/config.md` to determine the framework and route to the correct methodology.
 
 **Input received:** $ARGUMENTS (artifact language, storage mode, stack info passed by the caller)
 
@@ -18,9 +18,9 @@ You are the Ship frontend audit worker. Your mission: conduct a comprehensive, p
 
 ## 1. Load context
 
-**If the caller already injected `## Stack` and `## Config` sections inline in the prompt**, use ONLY that injected context — skip file reads for stack and config. Likewise, if `Artifact language` and `Storage mode` are already present in the prompt, skip reading `ship/config.md` for those fields.
+**If the caller already injected `## Stack` and `## Config` inline**, use only that context — skip file reads for stack and config. Same for `Artifact language` and `Storage mode` if already present.
 
-**Only when invoked standalone (no inline context)**, fall back and read `ship/config.md` and extract:
+**Only when invoked standalone (no inline context)**, read `ship/config.md` and extract:
 - `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
 - `Conventions → Artifact language`
 - `Frontend` → framework (Next.js, React, Vue, Angular, Svelte, etc.)
@@ -28,7 +28,7 @@ You are the Ship frontend audit worker. Your mission: conduct a comprehensive, p
 - `Stack` → runtime, build tool, package manager (full stack summary)
 - `Severity Overrides` → downgrade rules (if present)
 
-If `ship/config.md` is absent or incomplete, probe the project root:
+If absent or incomplete, probe the project root:
 - `next.config.*` → Next.js
 - `package.json` → inspect `dependencies`/`devDependencies` for framework signals
 
@@ -43,7 +43,7 @@ If `ship/config.md` is absent or incomplete, probe the project root:
 
 ## 3. Launch 3 agents in parallel
 
-Use the **Agent** tool to launch **3 agents in parallel in a SINGLE call**.
+Use the **Agent** tool to launch 3 agents in parallel in a single call.
 
 ---
 
@@ -208,7 +208,7 @@ Scan the project root and `src/` directory for this heuristic:
 
 **Severity:** High | **Category:** `MIDDLEWARE`
 
-**Why this matters:** Next.js middleware runs on every request in the Edge Runtime, which has a 1 MB bundle size limit. Heavy imports inflate cold-start latency, may exceed the limit (causing deployment failures), and degrade performance for all users on every page load.
+**Why this matters:** middleware runs on every request in the Edge Runtime, which has a 1 MB bundle size limit. Heavy imports inflate cold-start latency, may exceed the limit (deployment failure), and degrade performance for all users on every page load.
 
 **Remediation:**
 - **Date formatting**: Use `Intl.DateTimeFormat` (native Edge API) instead of `moment`/`date-fns`
@@ -243,7 +243,7 @@ export async function middleware(request: NextRequest) {
 
 ## Generic Frontend Path — 3 parallel agents
 
-> **Static analysis only**: all findings must be based on source code, config files, or build artifacts — not runtime metrics. If a problem can only be confirmed at runtime (e.g., actual TTFB values), report it as a hypothesis in the Blind Spots section, not as a finding.
+> **Static analysis only**: findings must be based on source code, config files, or build artifacts — not runtime metrics. If a problem can only be confirmed at runtime (e.g., actual TTFB values), report it as a hypothesis in Blind Spots, not as a finding.
 
 ### Agent A — NET + BUNDLE + LOAD
 
@@ -1005,11 +1005,11 @@ After all parallel audit agents complete, their tool results are already in the 
 
 ## Rules
 
-- **Entire codebase scope**: project-wide audit, not a diff. For diff-scoped analysis, use `/ship:perf`.
-- **Auto-route by config**: always read `ship/config.md` before choosing methodology. If absent, probe for `next.config.*`.
+- **Project-wide scope**, not a diff. For diff-scoped analysis, use `/ship:perf`.
+- **Auto-route by config**: read `ship/config.md` before choosing methodology; if absent, probe for `next.config.*`.
 - **No false positives**: only report with concrete evidence. Cite file and line.
 - **Framework-specific fixes**: solutions must use the framework's actual APIs and patterns.
-- **Distinguish lab vs field data**: if Lighthouse data is available, note it's lab (simulated); CrUX is field (real users).
+- **Distinguish lab vs field data**: Lighthouse is lab (simulated); CrUX is field (real users).
 - **ALWAYS launch 3 agents in parallel** — never sequentially. Single Agent tool call.
 - **Highlight quick wins**: flag findings fixable in ≤1 day.
 - **Language**: use the `Artifact language` passed by the caller for all user-facing output. Code, variable names: always English.
