@@ -21,7 +21,7 @@ You are the Ship test orchestrator. Read Test Scope, resolve scenarios by layer,
 
 Parse `$ARGUMENTS`: extract `task-id` from the first whitespace-delimited token. Use this value wherever `<task-id>` appears below. If no task-id is present (standalone invocation), derive it from the current branch name or use `standalone` as the fallback.
 
-Parse the `Mode:` line if present. Valid values: `generate`, `execute`, `full`. If absent, the mode is `full` — this is the default and preserves the exact single-pass behavior this skill has always had.
+Parse the `Mode:` line if present. Valid values: `generate`, `execute`, `full`. Default: `full`.
 
 Read `ship/config.md`: extract `## Test Scope` (which layers are active) and `Artifact language`. If section absent, default all layers to `enabled`.
 
@@ -41,9 +41,7 @@ Mode: <generate|execute|full>
 
 ## 2. Guard — all layers disabled
 
-If all layers are `disabled`: output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope` (ship/config.md). Habilite ao menos um layer para gerar testes." Then stop.
-
-This guard applies to every mode.
+If all layers are `disabled`: output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope` (ship/config.md). Habilite ao menos um layer para gerar testes." Then stop. Applies to every mode.
 
 ---
 
@@ -57,7 +55,7 @@ Read `.context/ship-run/<task-id>/plan.md` (if present) and collect every file p
 
 ### 3.2 Fan out to named agents (parallel) — MANDATORY ACTION
 
-This section reuses the shared fan-out mechanics below (§3.2a), adding only the `generate`-specific prompt fields and instructions.
+Reuses the shared fan-out mechanics below (§3.2a), adding only the `generate`-specific prompt fields and instructions.
 
 #### 3.2a Shared fan-out mechanics (used by `generate` and `full`)
 
@@ -153,7 +151,7 @@ Report to the caller: the list of test files created per layer (from the manifes
 
 ## 4. Mode: execute
 
-Execution-only pass: never generates anything, always consumes a manifest from a prior `generate` run.
+Execution-only: never generates anything, always consumes a manifest from a prior `generate` run.
 
 ### 4.1 Read the manifest
 
@@ -161,7 +159,7 @@ Read `.context/ship-run/<task-id>/generated-tests.md`. Group its entries by laye
 
 ### 4.2 Fan out to named agents (parallel) — MANDATORY ACTION
 
-For each layer that both (a) has files listed in the manifest and (b) is enabled in Test Scope, dispatch the corresponding worker:
+For each layer that both has files listed in the manifest and is enabled in Test Scope, dispatch the corresponding worker:
 
 | Layer | subagent_type |
 |-------|---------------|
@@ -213,21 +211,21 @@ Report to the user: passed and failed counts per layer.
 
 ## 5. Mode: full (default)
 
-Identical to the original single-pass behavior: generate then execute in one continuous pass, with no manifest round-trip required.
+Generate then execute in one continuous pass, with no manifest round-trip.
 
 ### 5.1 Fan out to named agents (parallel) — MANDATORY ACTION
 
 This is the step where tests get written and run. You **must** issue real Agent tool calls here, one per enabled layer. Do not return to the caller until you have actually dispatched a worker for every enabled layer.
 
-This section reuses the shared fan-out mechanics from §3.2a (layer table, context-slicing rules, skip logging) — no mode-specific delta beyond the prompt fields already defined there. The worker receives the full `generate` + `execute` cycle in one continuous pass (no `Mode:` line needed, no manifest round-trip).
+Reuses the shared fan-out mechanics from §3.2a (layer table, context-slicing rules, skip logging) — no mode-specific delta beyond the prompt fields already defined there. The worker receives the full `generate` + `execute` cycle in one continuous pass (no `Mode:` line needed, no manifest round-trip).
 
 ### 5.2 Hygiene gate — final sweep (MANDATORY)
 
-This reuses §3.3 verbatim — run the same scan, same remediation loop (dispatch `Mode: clean` on hits, re-run, surface `warn` if hits remain after a second cycle).
+Reuses §3.3 verbatim — same scan, same remediation loop (dispatch `Mode: clean` on hits, re-run, surface `warn` if hits remain after a second cycle).
 
 ### 5.3 Consolidate and write test-failures.md
 
-This reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.md`, write the `phase-status-test.md` row, and report tests created, passed, and failed per layer.
+Reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.md`, write the `phase-status-test.md` row, and report tests created, passed, and failed per layer.
 
 ---
 
