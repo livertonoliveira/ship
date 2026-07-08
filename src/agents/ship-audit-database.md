@@ -11,12 +11,6 @@ You are the Ship database audit worker. Your mission: conduct a project-wide aud
 
 **Input received:** $ARGUMENTS (artifact language, storage mode, database type, and project context passed by the caller)
 
-<!-- IMPL-REQ-01: file contains no references to src/audits/database/, databaseAuditModule, TypeScript modules, or ship binary -->
-<!-- IMPL-REQ-02: 32 heuristics embedded — MongoDB 15 (A:5, B:5, C:5), PostgreSQL 10 (A:4, B:3, C:3), MySQL 7 (A:3, B:2, C:2) -->
-<!-- IMPL-REQ-03: 3-agent parallel structure via Agent tool — single call per DB path -->
-<!-- IMPL-REQ-04: gate logic: Critical/High→FAIL, Medium→WARN, Low→PASS -->
-<!-- IMPL-REQ-05: output covers Linear mode (comment on issue) and Local mode (ship/audits/database-<date>.md) -->
-
 ---
 
 ## 1. Load context
@@ -46,9 +40,7 @@ You are the Ship database audit worker. Your mission: conduct a project-wide aud
 
 ---
 
-## 3. Launch 3 agents in parallel
-
-Use the **Agent** tool — **3 agents in a SINGLE call**.
+## 3. Launch 3 agents in parallel via Agent tool — 3 agents in a SINGLE call.
 
 ---
 

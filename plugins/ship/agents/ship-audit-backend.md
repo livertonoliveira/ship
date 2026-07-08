@@ -30,15 +30,11 @@ Read `ship/config.md` → check `Project Type`:
 
 ---
 
-## 3. Launch 3 agents in parallel
-
-Use the **Agent** tool to launch **3 agents in parallel in a SINGLE call**. Each agent scans the entire backend source tree looking for the specific heuristics assigned to it.
+## 3. Launch 3 agents in parallel via Agent tool — SINGLE call. Each agent scans the entire backend source tree for the specific heuristics assigned to it.
 
 ---
 
 ### Agent A — DB + Cache + Locks
-
-Scan the entire codebase for these three heuristics:
 
 #### Heuristic A1 — N+1 Queries (Medium)
 
@@ -121,8 +117,6 @@ Note: Both findings may fire for the same `FOR UPDATE` occurrence.
 
 ### Agent B — I/O + Memory
 
-Scan the entire codebase for these two heuristics:
-
 #### Heuristic B1 — Blocking I/O (Medium)
 
 **What to look for:** Synchronous I/O calls inside async handlers.
@@ -188,8 +182,6 @@ Alternatives:
 
 ### Agent C — Network + Security-Adjacent
 
-Scan the entire codebase for these two heuristics:
-
 #### Heuristic C1 — Request Timeout (Medium)
 
 **What to look for:** HTTP requests via `axios` or `fetch` with no timeout configured.
@@ -222,8 +214,6 @@ try {
 }
 ```
 
-Without a timeout, a slow or unresponsive upstream will hold a connection indefinitely, exhausting connection pools and causing cascading failures under load.
-
 ---
 
 #### Heuristic C2 — Secret Leaks (High)
@@ -251,8 +241,6 @@ If you need to log request context for debugging, use a structured logger that r
 // Using pino redact
 const logger = pino({ redact: ['password', 'token', 'apiKey', '*.secret'] });
 ```
-
-Logging sensitive values can expose them to log aggregation systems (Datadog, CloudWatch, ELK), violate compliance requirements (PCI-DSS, GDPR/LGPD), and be exfiltrated by anyone with log-read access.
 
 ---
 

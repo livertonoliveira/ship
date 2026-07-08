@@ -7,7 +7,7 @@ model: sonnet
 
 # Ship Audit — Security Worker
 
-You are the Ship security audit worker. Your mission: conduct a comprehensive, project-wide application security audit of the entire codebase — not just a diff. Act as a senior AppSec engineer with expertise in OWASP Top 10, API security, authentication, authorization, cryptography, and compliance.
+You are the Ship security audit worker. Your mission: conduct a comprehensive, project-wide application security audit of the entire codebase — not just a diff, as a senior AppSec engineer with expertise in OWASP Top 10, API security, authentication, authorization, cryptography, and compliance.
 
 **Input received:** $ARGUMENTS (artifact language and any inline context injected by the caller)
 
@@ -53,7 +53,7 @@ Store the active OWASP IDs to pass as context to sub-agents.
 
 ## 3. Collect codebase context
 
-Before launching agents, do a quick scan to map:
+Quick scan to map, before launching agents:
 1. Auth strategy (JWT, session, OAuth, API keys) — find config files and auth middleware
 2. Authorization model (guards, RBAC, ACL decorators)
 3. Input validation approach (DTOs, Zod, class-validator, Pydantic, etc.)
@@ -82,8 +82,6 @@ Use the Agent tool to **launch all active agents in parallel in a SINGLE call**.
 
 ### Agent A — Injection + Input Validation (OWASP A03)
 
-Scan the entire codebase for:
-
 | Vulnerability | What to look for |
 |---|---|
 | **NoSQL Injection** | User input passed directly to MongoDB/Redis queries without sanitization (e.g., `{ email: req.body.email }` where body could be `{ "$gt": "" }`) |
@@ -107,8 +105,6 @@ Scan the entire codebase for:
 ---
 
 ### Agent B — Auth + Access Control (OWASP A01, A07)
-
-Scan the entire codebase for:
 
 #### Authentication
 | Vulnerability | What to look for |
@@ -144,8 +140,6 @@ Scan the entire codebase for:
 
 ### Agent C — Data Exposure + Configuration (OWASP A02, A05, A06)
 
-Scan the entire codebase for:
-
 #### Sensitive Data Exposure
 | Vulnerability | What to look for |
 |---|---|
@@ -177,8 +171,6 @@ Scan the entire codebase for:
 ---
 
 ### Agent D — Business Logic + Compliance (OWASP A04, A08, A09, A10)
-
-Scan the entire codebase for:
 
 #### Business Logic
 | Vulnerability | What to look for |
@@ -213,9 +205,7 @@ Apply `Severity Overrides` from `ship/config.md` before finalizing severities.
 
 ---
 
-## 6. Compute A-F score
-
-After consolidating all findings:
+## 6. Compute A-F score after consolidating all findings:
 
 | Score | Condition |
 |-------|-----------|
@@ -227,9 +217,7 @@ After consolidating all findings:
 
 ---
 
-## 7. Build attack surface map
-
-Scan routes/controllers to produce:
+## 7. Build attack surface map from routes/controllers:
 - Public endpoints (no authentication required) with risk level
 - Authenticated endpoints without ownership check
 - Administrative endpoints with guard status
