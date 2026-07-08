@@ -58,17 +58,14 @@ If the input is free text:
 
 **Agent B — Codebase Exploration:**
 
-1. Read `ship/config.md` to understand the stack, project type, and conventions
-2. Based on the input, identify the codebase areas likely affected:
+1. Read `ship/config.md` for stack, project type, and conventions
+2. Identify affected codebase areas:
    - Search for relevant modules, services, controllers, components
-   - Identify existing patterns in those areas (how similar features were implemented)
+   - Identify existing patterns in those areas
    - Map dependencies between modules
    - Identify reusable utilities and helpers
-3. Assess technical risks:
-   - Areas with high complexity or coupling
-   - Possible conflicts with existing code
-   - Need for migrations or schema changes
-4. Estimate the scope: how many areas of the codebase are affected? Which labels apply (backend, frontend, shared)?
+3. Assess technical risks: complexity/coupling hotspots, possible conflicts, migration/schema needs
+4. Estimate scope: affected areas, applicable labels (backend, frontend, shared)
 
 ### 4. Deep specification
 
@@ -100,11 +97,8 @@ When depth is `light` or `full`, enumerate **behavioral scenarios in Gherkin** t
 #### Technical design
 
 - Describe how the feature fits into the existing architecture
-- For each significant decision, document:
-  - The choice made
-  - Alternatives considered and why they were rejected
-  - Rationale for the decision
-- List files to create and files to modify with purpose and estimated line count
+- For each significant decision, document: choice made, alternatives considered and why rejected, rationale
+- List files to create/modify with purpose and estimated line count
 - Document data model changes, API changes, migration needs
 - Identify risks and mitigations
 
@@ -118,32 +112,17 @@ When depth is `light` or `full`, enumerate **behavioral scenarios in Gherkin** t
 - Has a **clear scope** — no ambiguity about what is and isn't included
 - Follows a **logical dependency order** — tasks in earlier milestones don't depend on later ones
 
-**How to estimate line count:**
-- A new service/module with basic CRUD: ~150-250 lines
-- A new API endpoint (controller + validation): ~80-150 lines
-- Unit tests for a service: ~100-200 lines
-- Integration tests for an endpoint: ~100-200 lines
-- A new React component with logic: ~100-250 lines
-- A database migration/schema: ~30-80 lines
-- Configuration and wiring: ~20-60 lines
-
-**If a task would exceed 400 lines, split it further** — e.g. a ~800-line "user auth module" becomes "User schema + repository", "auth service (JWT)", "login endpoint", "register endpoint", and "auth guard middleware" (~100–150 lines each).
+**Estimate conservatively** (service/CRUD ~150-250, endpoint ~80-150, unit tests ~100-200, integration tests ~100-200, React component ~100-250, migration/schema ~30-80, config/wiring ~20-60 lines) and **split any task that would exceed 400 lines** — e.g. a ~800-line "user auth module" becomes "User schema + repository", "auth service (JWT)", "login endpoint", "register endpoint", and "auth guard middleware" (~100–150 lines each).
 
 **The per-task file estimate materializes into `## Files`:** while decomposing tasks, you already assign each file from the Design's `Files to Create` / `Files to Modify` tables to exactly one task to compute its line estimate. That assignment is not a separate step — it is exactly what gets written into the task's `## Files` section in §6.6/§6-alt. No new estimation pass is needed.
 
 #### Organize into milestones
 
-Group tasks into milestones that represent **logical phases of delivery**:
-- Each milestone should deliver demonstrable value
-- Milestone order should follow dependency flow
-- Examples: "Foundation", "Core Logic", "API Layer", "Frontend", "Polish & Edge Cases"
+Group tasks into milestones representing **logical delivery phases**, each with demonstrable value, ordered by dependency flow. Examples: "Foundation", "Core Logic", "API Layer", "Frontend", "Polish & Edge Cases".
 
 #### Assign labels
 
-Each task gets labels based on:
-- **Area**: `backend`, `frontend`, `shared`, `infrastructure`, `database`
-- **Type**: `feature`, `test`, `refactor`, `config`, `migration`
-- Derive from `ship/config.md` — if monorepo, use workspace names as labels too
+Label each task by **Area** (`backend`, `frontend`, `shared`, `infrastructure`, `database`) and **Type** (`feature`, `test`, `refactor`, `config`, `migration`). Derive from `ship/config.md` — in monorepos, also use workspace names as labels.
 
 ---
 
@@ -181,8 +160,8 @@ Content:
 - Labels: <relevant labels>
 
 ## Why
-<Detailed explanation of the problem this feature solves.
-Business context. Who benefits and how. Not a one-liner.>
+<Detailed explanation of the problem this feature solves,
+business context, and who benefits and how — not a one-liner.>
 
 ## Requirements
 
@@ -229,14 +208,14 @@ Content:
 # Design — <Feature Title>
 
 ## Architecture Overview
-<How this feature fits into the existing architecture.
-Describe the flow end-to-end.>
+<How this feature fits into the existing architecture; describe the
+flow end-to-end.>
 
 ## Sequence Diagrams
-<Include when the feature involves multi-step flows, async operations,
-cross-service interactions, auth flows, webhooks, or anything where
-the order of calls matters. Skip if the feature is purely structural
-(e.g., a schema change or a config file). Use Mermaid syntax.>
+<Include for multi-step flows, async operations, cross-service
+interactions, auth flows, webhooks, or anything order-of-calls
+sensitive. Skip if purely structural (schema change, config file).
+Mermaid syntax.>
 
 <!-- Example: Happy path for a login flow -->
 ```mermaid
@@ -304,16 +283,14 @@ For each task, use `mcp__linear-server__save_issue` with:
 ```markdown
 ## Context
 <WHY this task exists, what problem it solves, and where it fits
-in the architecture. Reference real files in the project
+in the architecture. Reference real project files
 (e.g., `src/modules/auth/auth.service.ts`).>
 
 ## What to do
-<WHAT to implement with enough technical detail for a developer
-to start without asking questions. Include:
-- Classes, interfaces, and files to create (following project conventions)
-- Representative code snippets (not necessarily final)
-- Integrations with existing code
-- Design decisions already made>
+<WHAT to implement, with enough technical detail for a developer to
+start without asking questions: classes/interfaces/files to create
+(following project conventions), representative code snippets,
+integrations with existing code, design decisions already made.>
 
 ## Files
 <The files this task owns, sliced from the Design doc's Files to Create /
@@ -326,22 +303,21 @@ task. Omit entirely when no similar pattern exists — never invent one.>
 - Âncora: siga o padrão de `<real existing path>` — <one-line reason>
 
 ## Acceptance Criteria
-<Objective, verifiable checkboxes. Each must be testable/observable
-by whoever does the code review. Each carries an explicit AC-XX ID.>
+<Objective, verifiable checkboxes, testable/observable by the code
+reviewer. Each carries an explicit AC-XX ID.>
 - [ ] **AC-01**: <Specific behavior 1>
 - [ ] **AC-02**: <Specific behavior 2>
 - [ ] Typecheck passes
 - [ ] Tests pass
 
 ## Scenarios
-<Behavioral scenarios in Gherkin. One Feature per task. Each
-Scenario / Scenario Outline is tagged @SC-XX (spec-global, stable),
-@AC-YY (the criterion it proves), and exactly one owning test layer
-(@unit | @integration | @e2e). Background = shared Given. Use
-Scenario Outline + Examples to collapse combinatorial cases into a
-single SC. This block is the contract for /ship:develop and
-/ship:test — keep it concrete and testable, not a restatement of
-the ACs. Omit this entire section when Scenario Depth is `none`.>
+<Behavioral scenarios in Gherkin, one Feature per task. Tag each
+Scenario/Scenario Outline with @SC-XX (spec-global, stable), @AC-YY
+(criterion proved), and exactly one layer (@unit|@integration|@e2e).
+Background = shared Given. Scenario Outline+Examples collapses
+combinatorial cases into a single SC. Contract for /ship:develop and
+/ship:test — concrete and testable, not a restatement of the ACs.
+Omit this section when Scenario Depth is `none`.>
 
 ```gherkin
 Feature: <task capability>
