@@ -10,8 +10,6 @@ context: fork
 
 # Ship Audit Tests — Skill Wrapper
 
-Parse arguments and delegate to the `ship-audit-tests` named agent.
-
 **Input received:** $ARGUMENTS
 
 ---
@@ -20,9 +18,8 @@ Parse arguments and delegate to the `ship-audit-tests` named agent.
 
 Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty for standalone runs.
 
-## 2. Load minimal context
+## 2. Load minimal context from `ship/config.md`
 
-Read `ship/config.md`:
 - `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
 - `Conventions → Artifact language` → e.g., `pt-BR`
 - `Test Scope` section → enabled/disabled status for `unit`, `integration`, `e2e` layers

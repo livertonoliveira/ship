@@ -40,6 +40,16 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
 
+### Diff resolution (skill wrappers) {#diff-resolution}
+
+Phase skills that consume the diff (`perf`, `security`, `review`, `analyze`) resolve it in the same order:
+
+**If `$ARGUMENTS` already contains a `## Diff` section** (injected inline by the orchestrator), use it directly — skip file reads and git commands.
+
+**Otherwise:**
+- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
+- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range per this pattern)
+
 ### `stack.md` format
 
 ```markdown
