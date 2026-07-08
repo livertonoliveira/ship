@@ -72,7 +72,7 @@ Triggered **only** when the approval marker is absent. The user's explicit `/shi
 
 ### 2. Verify there are no pending changes
 
-Run `git status` to check the repository state.
+`git status`
 
 ---
 
@@ -105,11 +105,7 @@ If already on a branch other than `main`/`master`, use the current branch.
 
 ### 3. Atomic commits
 
-Analyze all changes with `git diff` and `git status`:
-
-1. **Identify logical groups** of changes that should be separate commits
-2. **Each commit must be atomic**: a single logical change that makes sense on its own
-3. **Stage by file**: `git add <files>` (never `git add .` when making multiple commits)
+Analyze all changes with `git diff` and `git status`, then group them into atomic commits — stage by file (`git add <files>`, never `git add .` when making multiple commits).
 
 **Suggested commit order:**
 1. Infrastructure (types, interfaces, schemas, migrations)
@@ -121,12 +117,7 @@ Analyze all changes with `git diff` and `git status`:
 
 ### 4. Pre-push validation
 
-Run the validations configured in `ship/config.md`:
-- Typecheck (if configured)
-- Tests (if configured)
-- Lint (if configured)
-
-If any validation fails: fix, re-commit, and re-run.
+Run typecheck, tests, and lint as configured in `ship/config.md`. If any validation fails: fix, re-commit, and re-run.
 
 ### 5. Push
 
@@ -135,7 +126,7 @@ git pull --rebase origin main
 git push -u origin <branch-name>
 ```
 
-If there are conflicts during rebase: resolve them. If ambiguous, ask the user for confirmation.
+If there are conflicts during rebase: resolve them, asking the user for confirmation if ambiguous.
 
 ### Strict-exclusive: pre-PR audit gate
 
@@ -260,11 +251,7 @@ No local files to archive. Linear artifacts remain in Linear.
 
 ### 10. Finalize
 
-Inform the user:
-- URL of the created PR
-- Number of commits made
-- Branch name
-- Remind: "Do NOT merge — review the PR and merge manually."
+Inform the user of the PR URL, number of commits, and branch name. Remind: "Do NOT merge — review the PR and merge manually."
 
 ---
 
@@ -277,7 +264,7 @@ Inform the user:
 - **Validation before push**: typecheck and tests must pass
 - **Resolve conflicts**: if there are conflicts during rebase, resolve them (ask for confirmation if ambiguous)
 - **Never force push**: unless the user explicitly requests it
-- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
+- **Language**: per @ship/patterns/language.md.
 - **Verify acceptance**: never create a PR without recorded acceptance. Acceptance is recorded either by a prior `/ship:homolog` approval or, on the direct fast path, by the explicit `/ship:pr` invocation itself (which triggers implicit homologation in Prerequisite 1) — never silently skip posting the quality report and closing the issue
 - **Linear mode**: attach PR URL and post PR link comment, and verify the issue reached its completed state (Step C) — re-driving the transition only if a prior `save_issue` no-op left it open
 - **Local mode**: archive the feature folder after PR creation

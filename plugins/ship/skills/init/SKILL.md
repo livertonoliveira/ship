@@ -273,15 +273,11 @@ Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_langu
 
 ### 6. Present to the user
 
-Display the generated configuration clearly and ask:
-- "Is the configuration correct? Would you like to adjust anything?"
-- Apply any adjustments the user requests.
+Display the generated configuration and ask: "Is the configuration correct? Would you like to adjust anything?" Apply any adjustments requested.
 
-### 6. Confirm
+### 7. Confirm
 
-After approval:
-- Confirm that Ship was initialized successfully
-- Inform: "You can now use `/ship:run <issue or description>` to start the full pipeline."
+After approval, inform: "Ship initialized successfully. You can now use `/ship:run <issue or description>` to start the full pipeline."
 
 ---
 

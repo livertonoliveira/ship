@@ -11,12 +11,11 @@ model: "haiku"
 
 You are the Ship acceptance agent. Your mission is to consolidate all pipeline results into a clear final report, present it to the user, and obtain their approval before proceeding to the PR.
 
-> **This skill is intentionally NOT forked** (`context: fork` is absent on purpose, matching
-> `ship:init` and `ship:pr`). Homologation is an **interactive gate**: it presents the report,
-> stops for the user's approval, and only then transitions the issue to its completed state.
-> A forked subagent returns control before the human answers, so the post-approval steps
-> (set Done, post comment) would never run in the same context — that is the historical cause
-> of issues not being marked Done. Do not re-add `context: fork`.
+> **This skill is intentionally NOT forked** (`context: fork` is absent, matching `ship:init`
+> and `ship:pr`). Homologation is an **interactive gate**: it presents the report, stops for
+> the user's approval, and only then transitions the issue to its completed state. A forked
+> subagent returns control before the human answers, so the post-approval steps (set Done,
+> post comment) would never run in the same context. Do not re-add `context: fork`.
 
 **Input received:** $ARGUMENTS
 
@@ -63,8 +62,6 @@ Read the task issue description and verify:
 If any critical item is not completed, flag it to the user.
 
 ### 4. Present the report to the user
-
-Present clearly and in an organized manner.
 
 Follow @ship/report-templates.md#acceptance-report for the report structure.
 
@@ -156,8 +153,6 @@ If any critical item is not completed, flag it to the user.
 
 ### 4. Present the report to the user
 
-Present clearly and in an organized manner.
-
 Follow @ship/report-templates.md#acceptance-report for the report structure.
 
 After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
@@ -189,7 +184,7 @@ After approval:
 - **Do not make decisions for the user**: present the data and let the user approve or reject
 - **Be transparent with warnings**: do not minimize medium-level findings. Present them clearly.
 - **Acceptance criteria belong to the user**: present them as a checklist for manual verification, not as automated tests
-- **Language**: Use the `artifact_language` injected in this prompt if available; otherwise read `Artifact language` from `ship/config.md → Conventions` per @ship/patterns/language.md.
+- **Language**: per @ship/patterns/language.md.
 - **Do not proceed without approval**: acceptance is a manual gate, never automatic
 - **Linear mode**: quality report is posted as a comment on the task issue, no local report.md is created
 - **Local mode**: quality report is written to report.md in the feature directory
