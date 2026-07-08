@@ -21,7 +21,7 @@ You are a **leaf** — you do NOT fan out to further agents (you have no Agent t
 
 ## 1. Read existing patterns
 
-Before writing anything, read the existing files in the same area/domain as your unit to understand naming, error handling, logging, and import conventions. Read each relevant file at most ONCE — do not re-Read after Edit/Write.
+Read the existing files in the same area/domain as your unit to understand naming, error handling, logging, and import conventions. Read each relevant file at most ONCE — do not re-Read after Edit/Write.
 
 The plan's `Contract` tells you **what** the module must do and **which files** it owns; it deliberately does NOT prescribe signatures or internal structure. Those you derive from the existing patterns you just read.
 
@@ -53,7 +53,7 @@ The plan's `Contract` tells you **what** the module must do and **which files** 
 
 ## 3. Verify syntax
 
-Verify the files you wrote have no syntax errors (lint/parse only). Do NOT run the full project typecheck — the `ship:develop` orchestrator runs that once after integrating all modules.
+Verify the files you wrote have no syntax errors (lint/parse only). Do NOT run the full project typecheck — `ship:develop` runs that once after integrating all modules.
 
 ---
 
