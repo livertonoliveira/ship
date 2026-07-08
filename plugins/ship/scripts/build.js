@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { WORD_BUDGETS, DEFAULT_BUDGET } = require('./budgets');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PLUGIN_ROOT, '..', '..');
@@ -19,14 +20,6 @@ const MAX_DEPTH = 10;
 const HAS_REF = /@ship\/[^\s)]+\.md(?:#[A-Za-z0-9_-]+)?/;
 const REPLACE_REF = /@ship\/([^\s)]+\.md)(?:#([A-Za-z0-9_-]+))?/g;
 
-// Lazy reference: `@@ship/<path>.md` or `@@ship/<path>.sh`. Unlike `@ship/...`
-// (inlined at build time), a lazy ref is NOT inlined — the referenced file is
-// copied next to the skill and the token is replaced with
-// `${CLAUDE_SKILL_DIR}/<path>`, a render-time substitution that resolves to an
-// absolute path so the model can Read (.md) or execute (.sh) the file on demand.
-// This keeps heavy/conditional patterns out of the always-loaded skill body and
-// gives scripts a stable path independent of the user's repo layout. Skills only —
-// agents have no ${CLAUDE_SKILL_DIR}. Whole-file only (no #anchor).
 const REPLACE_LAZY = /@@ship\/([^\s)]+\.(?:md|sh))(#[A-Za-z0-9_-]+)?/g;
 
 const readCache = new Map();
@@ -90,11 +83,6 @@ function titleCase(slug) {
     .join(' ');
 }
 
-// A repeated reference to a pattern already inlined earlier in the SAME output
-// file becomes a short textual pointer instead of a second full copy. The first
-// occurrence carries the content; later ones (typically prose cross-references
-// like "see @ship/patterns/gates.md → Edge case 4") just point back to it. This
-// keeps each pattern's body in the built file exactly once.
 function pointerFor(ref, anchor) {
   if (anchor) {
     return `the ${titleCase(anchor)} section (included above)`;
@@ -134,11 +122,6 @@ function resolveRefs(content, skillRelPath) {
   return expand(content, 0);
 }
 
-// Process `@@ship/...` lazy refs in a skill: copy each referenced source file
-// next to the skill's SKILL.md (preserving its relative path) and replace the
-// token with `${CLAUDE_SKILL_DIR}/<path>`. Inline @ship refs inside the copied
-// file are resolved first so the runtime copy is self-contained. Returns the
-// rewritten content. `skillOutDir` is the skill's output directory.
 function processLazyRefs(content, skillRelPath, skillOutDir) {
   return content.replace(REPLACE_LAZY, (match, ref, anchor) => {
     if (anchor) {
@@ -174,10 +157,29 @@ function walkAgentFiles(dir, results = []) {
   return results;
 }
 
+function countWords(content) {
+  return content.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function checkBudget(skillKey, wordCount, budgets) {
+  const limit = Object.prototype.hasOwnProperty.call(budgets, skillKey)
+    ? budgets[skillKey]
+    : DEFAULT_BUDGET;
+  if (wordCount > limit) {
+    return { skillKey, wordCount, limit };
+  }
+  return null;
+}
+
+function skillKeyFromRelPath(skillRelPath) {
+  return skillRelPath.split(path.sep).join('/').replace(/\/SKILL\.md$/, '');
+}
+
 function buildSkills() {
   fs.rmSync(OUTPUT_SKILLS, { recursive: true, force: true });
   const skillFiles = walkSkillFiles(SOURCE_SKILLS);
   let count = 0;
+  const entries = [];
 
   for (const skillPath of skillFiles) {
     const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
@@ -188,9 +190,10 @@ function buildSkills() {
     const substituted = resolveRefs(lazyResolved, skillRelPath);
     fs.writeFileSync(outPath, substituted, 'utf8');
     console.log(`✓ skills/${skillRelPath}`);
+    entries.push({ skillKey: skillKeyFromRelPath(skillRelPath), wordCount: countWords(substituted) });
     count++;
   }
-  return count;
+  return { count, entries };
 }
 
 function buildAgents() {
@@ -230,10 +233,23 @@ function buildHooks() {
 }
 
 function main() {
-  const skillCount = buildSkills();
+  const { count: skillCount, entries } = buildSkills();
   const agentCount = buildAgents();
   const hookCount = buildHooks();
+
+  for (const { skillKey, wordCount } of entries) {
+    const violation = checkBudget(skillKey, wordCount, WORD_BUDGETS);
+    if (violation) {
+      console.error(`Erro: ${violation.skillKey} tem ${violation.wordCount} palavras, excede o teto de ${violation.limit}`);
+      process.exit(1);
+    }
+  }
+
   console.log(`\nBuild concluído. ${skillCount} SKILL.md + ${agentCount} agents + ${hookCount} hooks gerados em ${path.relative(REPO_ROOT, PLUGIN_ROOT)}/.`);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { countWords, checkBudget, skillKeyFromRelPath, WORD_BUDGETS, DEFAULT_BUDGET };
