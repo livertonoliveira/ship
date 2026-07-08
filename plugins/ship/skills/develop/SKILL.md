@@ -46,7 +46,7 @@ Read `ship/config.md` for storage mode (`Linear Integration → Configured`) and
 
 ## 3. Fan out implementation workers (parallel) — MANDATORY ACTION
 
-This is the step where code gets written. You **must** issue real Agent tool calls here. Do not proceed past this section, and do not return to the caller, until you have actually dispatched a worker for every module.
+This is the step where code gets written. You **must** issue real Agent tool calls here. Do not proceed past this section until you have dispatched a worker for every module.
 
 Launch one `ship-develop-implement` worker per module via the Agent tool with `subagent_type: ship:ship-develop-implement`. Respect the plan's dependency order:
 
@@ -137,7 +137,7 @@ You may read files to verify integration, but you must NOT edit them. If integra
 
 ## 5. Typecheck
 
-Run the typecheck command from `ship/config.md` (e.g., `pnpm typecheck`, `mypy`, `go vet`). If not configured, skip.
+Run the typecheck command from `ship/config.md` (e.g. `pnpm typecheck`, `mypy`, `go vet`). Skip if not configured.
 
 On failure:
 1. Dispatch a `ship-develop-implement` worker with `Mode: fix`, passing the error output and the offending files inline.
@@ -186,7 +186,7 @@ Write (overwrite, do not append) your row to `.context/ship-run/<task-id>/phase-
 
 Before you end your turn, verify out loud:
 
-1. **Did I dispatch a worker for every module?** Count the modules in `plan.md` (or 1, for the single-module fallback). Count the `ship-develop-implement` Agent tool calls you actually issued. If the counts do not match, you are not done — dispatch the missing workers now.
+1. **Did I dispatch a worker for every module?** Count the modules in `plan.md` (or 1, for the single-module fallback). Count the `ship-develop-implement` Agent tool calls you actually issued. If the counts do not match, dispatch the missing workers now.
 2. **Did any source file actually change?** Run `git diff --stat` (the scratch dir is gitignored, so it won't show up). If the output is empty AND this was not a legitimate "already implemented" re-run, your workers did not run or did nothing — **do not report success**. Investigate, re-dispatch, or report the failure honestly to the caller.
 3. **Did the hygiene gate (step 6) run and pass?** You must have actually executed the grep scan, not assumed it. If it found hits, you must have dispatched a `Mode: clean` worker and re-scanned. Reporting success with an unrun gate — or with known hits still present — is a defect.
 

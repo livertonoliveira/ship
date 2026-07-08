@@ -32,7 +32,7 @@ Load the task's `## Scenarios` Gherkin block (`@SC-XX`). These are the behaviora
 
 ## 2. Shallow survey of the codebase
 
-First check whether the task's spec carries a `## Files` section (format: `create|modify \`<path>\` — <intent>`, plus optional `Âncora: siga o padrão de \`<path>\` — <reason>` lines, per `ship:spec`).
+Check whether the task's spec carries a `## Files` section (format: `create|modify \`<path>\` — <intent>`, plus optional `Âncora: siga o padrão de \`<path>\` — <reason>` lines, per `ship:spec`).
 
 **Map present → validate, directed survey:**
 - For each `modify <path>` entry, confirm the file still exists at that path.
@@ -49,7 +49,7 @@ First check whether the task's spec carries a `## Files` section (format: `creat
 - Do a **shallow** survey — enough to decide module boundaries and where things live, NOT a deep read:
   - `Glob`/`Grep` the areas the feature touches to learn folder structure, where similar modules already live, and existing registration points (module files, route tables, barrel exports).
   - Do NOT read every file end-to-end. The leaf workers (`ship-develop-implement`) and test workers do the deep reading of their own files. Your job is the map, not the territory.
-- No warning, no blocking condition — this is simply the pre-existing path.
+- No warning, no blocking condition.
 
 ---
 
@@ -77,7 +77,7 @@ For each `@SC-XX`, derive the concrete test slot **without recreating the scenar
 
 ## 4.5. AC outcome completeness (close sub-AC coverage gaps)
 
-The `@SC-XX` scenarios are the test source of truth, but an AC can require **more outcomes than the scenarios enumerate**. A single AC like *"watching applies ×N; **skipping or unavailable** applies base"* has **three** distinct outcomes, yet the spec may ship only two scenarios — leaving a conditional branch with no test. `ship:analyze` matches at AC granularity (Jaccard over the whole AC text), so it scores such an AC as "covered" and **cannot** see the missing branch. You are the only phase that holds both the ACs and the scenarios, so you must close this gap here.
+The `@SC-XX` scenarios are the test source of truth, but an AC can require **more outcomes than the scenarios enumerate**. A single AC like *"watching applies ×N; **skipping or unavailable** applies base"* has **three** distinct outcomes, yet the spec may ship only two scenarios — leaving a conditional branch with no test. `ship:analyze` matches at AC granularity (Jaccard over the whole AC text), so it scores such an AC as "covered" and **cannot** see the missing branch. You are the only phase holding both ACs and scenarios, so you must close this gap here.
 
 For **each AC**, enumerate its distinct **outcomes** — the mutually-exclusive result branches its wording implies. Signals of a branch: `ou` / `or`, `senão` / `otherwise`, `se … / caso …` / `if … / when …`, `indisponível` / `unavailable`, `falha` / `failure`, negations, and any "X does A, Y does B" contrast. A flat AC with one result is one outcome.
 
@@ -98,7 +98,7 @@ Stay strictly on the **what / where**, never the **how**:
 | `@SC-XX` → module and `@SC-XX` → test slot | Error/log/import idioms |
 | Integration/registration points | Line-level implementation |
 
-Prescribing signatures here — without the deep per-file read the workers do — fights the project's existing conventions. Hold the line at behavior, files, and boundaries.
+Prescribing signatures here — without the deep per-file read the workers do — fights the project's existing conventions.
 
 ---
 
