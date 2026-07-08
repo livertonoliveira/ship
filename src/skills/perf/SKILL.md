@@ -9,7 +9,7 @@ context: fork
 
 # Ship Perf — Skill Wrapper
 
-Parse arguments and delegate to the `ship-perf` named agent.
+Delegates to the `ship-perf` named agent.
 
 **Input received:** $ARGUMENTS
 
@@ -17,7 +17,7 @@ Parse arguments and delegate to the `ship-perf` named agent.
 
 ## 1. Parse arguments
 
-Extract the task identifier or feature name from `$ARGUMENTS`.
+Extract the task identifier or feature name.
 
 ## 2. Load minimal context
 
@@ -32,12 +32,7 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 ## 3. Resolve diff
 
-**If `$ARGUMENTS` already contains a `## Diff` section** (injected inline by the orchestrator), use it directly — skip file reads and git commands.
-
-**Otherwise:**
-
-- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
-- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range per `@ship/patterns/run-context.md`)
+See @ship/patterns/run-context.md#diff-resolution.
 
 ## 4. Invoke ship-perf agent
 

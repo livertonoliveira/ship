@@ -10,7 +10,7 @@ context: fork
 
 # Ship Analyze — Skill Wrapper
 
-Parse arguments and delegate to the `ship-analyze` named agent.
+Delegates to the `ship-analyze` named agent.
 
 **Input received:** $ARGUMENTS
 
@@ -18,7 +18,7 @@ Parse arguments and delegate to the `ship-analyze` named agent.
 
 ## 1. Parse arguments
 
-Extract the feature name or Linear issue ID from `$ARGUMENTS`:
+Extract the feature name or Linear issue ID:
 - A Linear issue ID (e.g., `MOB-123`) → spec is loaded from Linear.
 - A feature name → spec is loaded from `ship/changes/<feature>/`.
 
@@ -38,9 +38,7 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 **Otherwise:**
 
-Diff:
-- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred).
-- Otherwise → run `git diff origin/main...HEAD` (canonical range per `@ship/patterns/run-context.md`).
+Diff: see @ship/patterns/run-context.md#diff-resolution.
 
 Spec:
 - Linear mode → loaded by the agent from the Linear issue + Proposal/Design documents (issue body carries the full Gherkin `## Scenarios`).

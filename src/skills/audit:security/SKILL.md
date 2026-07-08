@@ -10,8 +10,6 @@ context: fork
 
 # Ship Audit Security — Skill Wrapper
 
-Parse arguments and delegate to the `ship-audit-security` named agent.
-
 **Input received:** $ARGUMENTS
 
 ---
@@ -21,9 +19,8 @@ Parse arguments and delegate to the `ship-audit-security` named agent.
 Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty for standalone runs.
 Extract any `Security focus override` (e.g., `web-api`, `mobile`, `infrastructure`); default to `none` (no override) if absent.
 
-## 2. Load minimal context
+## 2. Load minimal context from `ship/config.md`
 
-Read `ship/config.md`:
 - `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
 - `Conventions → Artifact language` → e.g., `pt-BR`
 - `Stack` → for additional context
