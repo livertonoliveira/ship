@@ -5,7 +5,7 @@
   "description": "Build pipeline para o plugin Ship (inliner de patterns).",
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node --test scripts/*.test.js",
+    "test": "node --test scripts/*.test.js scripts/pressure/*.test.js",
     "prepublishOnly": "npm run build"
   }
 }
