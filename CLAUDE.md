@@ -91,6 +91,10 @@ ship/
 - All analysis commands adapt their checks based on `ship/config.md`.
 - Never hardcode stack-specific assumptions — always read from config.
 
+### Word-Budget Gate
+- Each compiled `SKILL.md` must stay under a per-tier word ceiling enforced by `plugins/ship/scripts/build.js`.
+- See `plugins/ship/scripts/BUDGETS.md` for the tiers, ceilings, rationale, and the procedure to follow when a skill legitimately grows.
+
 ### Audit vs Pipeline Phases
 - **Pipeline phases** (`/ship:perf`, `/ship:security`) are diff-scoped: they analyze only changed code during the development pipeline.
 - **Audit commands** (`/ship:audit:*`) are project-wide: they scan the entire codebase for systemic issues. Run them periodically or before releases.
