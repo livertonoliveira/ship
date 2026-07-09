@@ -53,6 +53,8 @@ jobs:
           node-version: '20'
       - name: Rebuild plugin from src/
         run: cd plugins/ship && npm run build
+      - name: Run plugin test suite
+        run: cd plugins/ship && npm test
       - name: Verify no drift
         run: |
           if ! git diff --exit-code plugins/ship/skills plugins/ship/agents plugins/ship/hooks; then
