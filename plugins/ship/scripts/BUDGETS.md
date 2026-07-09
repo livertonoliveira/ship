@@ -1,31 +1,31 @@
-# Budget de palavras dos SKILL.md
+# Word budget for SKILL.md files
 
-O build (`plugins/ship/scripts/build.js`) percorre `src/skills/**/SKILL.md` e `src/agents/*.md`, resolve as refs (`@ship/...`) e escreve o compilado em `plugins/ship/`. Após `buildSkills()` gravar cada SKILL.md compilado, um gate de verificação conta as palavras do conteúdo já com as refs substituídas (`countWords`) e compara com um teto por tier (`checkBudget`), lendo os valores de `plugins/ship/scripts/budgets.js`. Qualquer skill que exceda o teto do seu tier interrompe o build com `process.exit(1)`.
+The build (`plugins/ship/scripts/build.js`) walks `src/skills/**/SKILL.md` and `src/agents/*.md`, resolves refs (`@ship/...`), and writes the compiled output to `plugins/ship/`. After `buildSkills()` writes each compiled SKILL.md, a verification gate counts the words of the already-substituted content (`countWords`) and compares it against a per-tier ceiling (`checkBudget`), reading the values from `plugins/ship/scripts/budgets.js`. Any skill that exceeds its tier's ceiling stops the build with `process.exit(1)`.
 
-## Tiers e tetos
+## Tiers and ceilings
 
-Os tetos são definidos em `plugins/ship/scripts/budgets.js` (fonte da verdade).
+Ceilings are defined in `plugins/ship/scripts/budgets.js` (source of truth).
 
-| Tier | Teto (palavras) | Skills |
+| Tier | Ceiling (words) | Skills |
 |------|------------------|--------|
 | orchestrator | 8000 | `run` |
 | heavy | 4000 | `spec`, `pr` |
 | phase | 3000 | `test`, `develop`, `plan`, `homolog`, `init`, `audit:run`, `perf`, `security`, `review`, `analyze` |
 | small | 900 | `audit:backend`, `audit:database`, `audit:frontend`, `audit:security`, `audit:tests` |
 
-## Racional
+## Rationale
 
-O que o modelo paga em custo de contexto é o SKILL.md **compilado** — com as refs já resolvidas inline — não o arquivo fonte em `src/skills/`. Por isso o gate mede a saída de `buildSkills()`, e não o conteúdo de `src/**`.
+What the model pays for in context cost is the **compiled** SKILL.md — with refs already inlined — not the source file in `src/skills/`. That's why the gate measures the output of `buildSkills()`, not the content of `src/**`.
 
-Os tetos por tier foram fixados como o tamanho atingido pelo skill após uma rodada de poda de no-ops e boilerplate, mais um headroom de aproximadamente 10–15%. Isso permite crescimento orgânico moderado sem exigir ajuste de teto a cada pequena mudança, ao mesmo tempo em que impede que um skill infle indefinidamente sem revisão.
+Per-tier ceilings were fixed at the size each skill reached after a round of no-op/boilerplate pruning, plus roughly 10–15% headroom. This allows moderate organic growth without requiring a ceiling adjustment for every small change, while still preventing a skill from inflating indefinitely without review.
 
-## Quando o build falha por budget
+## When the build fails on budget
 
-Se `build.js` reportar que um skill excedeu seu teto, siga esta ordem:
+If `build.js` reports that a skill exceeded its ceiling, follow this order:
 
-1. **Tentar podar primeiro.** Remover no-ops, comprimir parágrafos em leading-words, consolidar boilerplate duplicado extraindo-o para `src/patterns/*.md` e referenciando via `@ship/...`. O objetivo é reduzir o word count sem alterar o comportamento observável do skill.
-2. **Só depois de esgotar a poda razoável, ajustar o teto.** Alterar o valor do tier correspondente em `plugins/ship/scripts/budgets.js`, ou adicionar uma entrada explícita ao skill em `WORD_BUDGETS` se ele merecer um teto próprio fora do tier padrão. Justifique o motivo do aumento na descrição do PR.
+1. **Try pruning first.** Remove no-ops, compress verbose paragraphs into leading-words, consolidate duplicated boilerplate by extracting it into `src/patterns/*.md` and referencing it via `@ship/...`. The goal is to reduce the word count without changing the skill's observable behavior.
+2. **Only after reasonable pruning is exhausted, adjust the ceiling.** Change the corresponding tier's value in `plugins/ship/scripts/budgets.js`, or add an explicit entry for the skill in `WORD_BUDGETS` if it warrants its own ceiling outside the standard tier. Justify the increase in the PR description.
 
-## Skills sem entrada explícita
+## Skills without an explicit entry
 
-Qualquer `skillKey` que não tenha uma entrada explícita em `WORD_BUDGETS` cai no fallback `DEFAULT_BUDGET` (1000 palavras). Isso cobre skills novos criados sem uma decisão deliberada de tier — o objetivo é forçar uma escolha consciente de tier assim que o skill crescer além desse teto padrão.
+Any `skillKey` without an explicit entry in `WORD_BUDGETS` falls back to `DEFAULT_BUDGET` (1000 words). This covers new skills created without a deliberate tier decision — the goal is to force a conscious tier choice once the skill grows past this default ceiling.
