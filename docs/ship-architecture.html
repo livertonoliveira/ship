@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ship — Arquitetura</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#12151c; --panel2:#171b24; --border:#232837;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#6ea8fe; --accent2:#7ee2b8;
+    --warn:#f5c26b; --crit:#f57171; --purple:#b892ff; --pink:#ff8fc7;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); min-height:100vh;
+  }
+  header{
+    padding:20px 28px 14px; border-bottom:1px solid var(--border);
+    position:sticky; top:0; background:rgba(11,13,18,0.92); backdrop-filter:blur(8px); z-index:50;
+  }
+  header h1{margin:0 0 4px; font-size:20px; letter-spacing:.3px;}
+  header p{margin:0; color:var(--muted); font-size:13px;}
+  nav{display:flex; gap:6px; margin-top:14px; flex-wrap:wrap;}
+  nav button{
+    background:var(--panel2); border:1px solid var(--border); color:var(--muted);
+    padding:8px 14px; border-radius:999px; cursor:pointer; font-size:12.5px; font-weight:600;
+    transition:.15s;
+  }
+  nav button:hover{color:var(--text); border-color:var(--accent);}
+  nav button.active{background:var(--accent); color:#0b0d12; border-color:var(--accent);}
+  main{padding:24px 28px 80px; max-width:1400px; margin:0 auto;}
+  section.view{display:none;}
+  section.view.active{display:block; animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+
+  .legend{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; font-size:11.5px; color:var(--muted);}
+  .legend span{display:inline-flex; align-items:center; gap:5px;}
+  .dot{width:9px; height:9px; border-radius:50%; display:inline-block;}
+
+  .flow{display:flex; flex-direction:column; gap:10px;}
+  .row{display:flex; gap:12px; align-items:stretch; flex-wrap:wrap;}
+  .arrow-down{ text-align:center; color:var(--muted); font-size:18px; margin:2px 0; }
+
+  .node{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:12px 14px; cursor:pointer; transition:.15s; flex:1; min-width:180px;
+    position:relative;
+  }
+  .node:hover{border-color:var(--accent); transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.35);}
+  .node.selected{border-color:var(--accent2); box-shadow:0 0 0 1px var(--accent2);}
+  .node h3{margin:0 0 4px; font-size:13.5px; display:flex; align-items:center; gap:6px;}
+  .node p.sub{margin:0; font-size:11px; color:var(--muted); line-height:1.4;}
+  .badge{
+    display:inline-block; font-size:9.5px; font-weight:700; text-transform:uppercase;
+    padding:2px 6px; border-radius:5px; letter-spacing:.4px; margin-right:4px;
+  }
+  .b-model{background:rgba(110,168,254,.15); color:var(--accent);}
+  .b-fork{background:rgba(126,226,184,.15); color:var(--accent2);}
+  .b-nofork{background:rgba(245,194,107,.15); color:var(--warn);}
+  .b-parallel{background:rgba(184,146,255,.15); color:var(--purple);}
+
+  .quality-cluster{
+    border:1px dashed var(--border); border-radius:var(--radius); padding:12px; flex:1;
+    min-width:280px;
+  }
+  .quality-cluster .cluster-title{font-size:11px; color:var(--muted); margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;}
+  .quality-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+
+  .detail-panel{
+    position:fixed; right:0; top:0; height:100%; width:380px; max-width:92vw;
+    background:var(--panel2); border-left:1px solid var(--border); z-index:100;
+    transform:translateX(100%); transition:transform .25s ease; padding:20px; overflow-y:auto;
+  }
+  .detail-panel.open{transform:translateX(0);}
+  .detail-panel h2{margin:0 0 4px; font-size:16px;}
+  .detail-panel .path{font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--accent); word-break:break-all; margin-bottom:14px;}
+  .detail-panel .field{margin-bottom:12px;}
+  .detail-panel .field label{display:block; font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:3px;}
+  .detail-panel .field div{font-size:13px; line-height:1.5;}
+  .detail-panel ul{margin:4px 0 0; padding-left:18px; font-size:13px; line-height:1.6;}
+  .close-btn{
+    position:absolute; top:14px; right:14px; background:none; border:none; color:var(--muted);
+    font-size:18px; cursor:pointer;
+  }
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:90; display:none;}
+  .overlay.open{display:block;}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px;}
+  th,td{text-align:left; padding:8px 10px; border-bottom:1px solid var(--border);}
+  th{color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.4px;}
+  tr:hover td{background:rgba(255,255,255,.02);}
+  code{background:rgba(255,255,255,.06); padding:1px 5px; border-radius:4px; font-size:11.5px;}
+
+  .card-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px;}
+  .info-box{background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px;}
+  .info-box h3{margin:0 0 8px; font-size:13.5px;}
+  .info-box p{margin:0; font-size:12px; color:var(--muted); line-height:1.5;}
+
+  .two-col{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
+  @media (max-width:900px){.two-col{grid-template-columns:1fr;}}
+
+  .config-block{
+    background:#0d1017; border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px; font-family:ui-monospace,Menlo,monospace; font-size:12px; line-height:1.7;
+    white-space:pre-wrap; overflow-x:auto; color:#c7cede;
+  }
+  .config-block .k{color:var(--accent2);}
+  .config-block .c{color:var(--muted); font-style:italic;}
+
+  .center-arrow{display:flex; justify-content:center; color:var(--muted); font-size:20px; margin:4px 0;}
+  h2.section-title{font-size:16px; margin:0 0 4px;}
+  p.section-sub{color:var(--muted); font-size:12.5px; margin:0 0 18px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚢 Ship — Arquitetura do Pipeline</h1>
+  <p>Mapa dinâmico dos comandos, agentes, build system e modos de armazenamento. Clique em qualquer nó para detalhes.</p>
+  <nav id="tabs"></nav>
+</header>
+
+<main>
+
+  <!-- PIPELINE VIEW -->
+  <section class="view active" id="view-pipeline">
+    <h2 class="section-title">Pipeline de Desenvolvimento (/ship:run)</h2>
+    <p class="section-sub">Orquestrador top-level: plan → develop → test → quality (paralelo) → homolog → pr</p>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--accent)"></i>modelo</span>
+      <span><i class="dot" style="background:var(--accent2)"></i>fork (sub-sessão)</span>
+      <span><i class="dot" style="background:var(--warn)"></i>sem fork (interativo)</span>
+      <span><i class="dot" style="background:var(--purple)"></i>execução paralela</span>
+    </div>
+    <div class="flow" id="pipeline-flow"></div>
+  </section>
+
+  <!-- AUDIT VIEW -->
+  <section class="view" id="view-audit">
+    <h2 class="section-title">Suite de Auditoria (/ship:audit:*)</h2>
+    <p class="section-sub">Comandos project-wide, disparados manualmente pelo usuário — NUNCA a partir de /ship:run</p>
+    <div class="flow" id="audit-flow"></div>
+  </section>
+
+  <!-- BUILD VIEW -->
+  <section class="view" id="view-build">
+    <h2 class="section-title">Build System</h2>
+    <p class="section-sub">src/ (fonte) → plugins/ship/ (distribuível compilado)</p>
+    <div class="flow" id="build-flow"></div>
+    <div class="card-grid" style="margin-top:20px;">
+      <div class="info-box">
+        <h3>Includes estáticos <code>@ship/...</code></h3>
+        <p>Inline recursivo de <code>src/patterns/*.md</code> no SKILL.md final, profundidade máx. 10, com detecção de referência circular.</p>
+      </div>
+      <div class="info-box">
+        <h3>Includes lazy <code>@@ship/...</code></h3>
+        <p>Copiados como arquivo separado no diretório do skill, referenciados via <code>${CLAUDE_SKILL_DIR}/...</code> em runtime (hooks .sh).</p>
+      </div>
+      <div class="info-box">
+        <h3>Gate de orçamento de palavras</h3>
+        <p><code>checkBudget()</code> falha o build (exit 1) se um SKILL.md compilado ultrapassar o teto do seu tier. Ver <code>BUDGETS.md</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- AGENTS VIEW -->
+  <section class="view" id="view-agents">
+    <h2 class="section-title">Agentes (src/agents/*.md)</h2>
+    <p class="section-sub">Workers invocados via tool <code>Agent</code> pelos skills orquestradores</p>
+    <table id="agents-table">
+      <thead><tr><th>Agente</th><th>Tools</th><th>Model</th><th>Invocado por</th><th>Propósito</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- STORAGE VIEW -->
+  <section class="view" id="view-storage">
+    <h2 class="section-title">Modos de Armazenamento</h2>
+    <p class="section-sub">Determinado por <code>ship/config.md → Linear Integration → Configured</code></p>
+    <div class="two-col">
+      <div class="info-box">
+        <h3>🔗 Linear Mode</h3>
+        <p>Specs viram Documents; tasks viram Issues com milestones/labels; quality reports viram Comments; drift viram sub-issues. Zero arquivos locais além de <code>ship/config.md</code>.</p>
+      </div>
+      <div class="info-box">
+        <h3>💾 Local Mode</h3>
+        <p><code>ship/changes/&lt;feature&gt;/</code> guarda proposal.md, design.md, tasks.md, plan.md, report-&lt;task&gt;.md, tracking.md, drift-report.md.</p>
+      </div>
+    </div>
+    <h2 class="section-title" style="margin-top:26px;">Compartilhado (independe do modo)</h2>
+    <div class="card-grid">
+      <div class="info-box"><h3>ship/config.md</h3><p>Sempre local — config do projeto, gates, test scope, convenções.</p></div>
+      <div class="info-box"><h3>.context/ship-run/&lt;task-id&gt;/</h3><p>Scratch dir efêmero por execução: stack.md, diff.md, phase-status.md, dispatch-log.md, drift-findings.json.</p></div>
+      <div class="info-box"><h3>ship/audits/&lt;tipo&gt;-&lt;data&gt;.md</h3><p>Relatórios de auditoria project-wide (persistem sempre em disco).</p></div>
+    </div>
+  </section>
+
+  <!-- CONFIG VIEW -->
+  <section class="view" id="view-config">
+    <h2 class="section-title">ship/config.md</h2>
+    <p class="section-sub">Único artefato sempre local — controla comportamento de todo o pipeline</p>
+    <div class="config-block" id="config-render"></div>
+  </section>
+
+</main>
+
+<div class="overlay" id="overlay"></div>
+<div class="detail-panel" id="detail">
+  <button class="close-btn" id="closeDetail">✕</button>
+  <h2 id="d-title"></h2>
+  <div class="path" id="d-path"></div>
+  <div id="d-body"></div>
+</div>
+
+<script>
+const DATA = {
+  pipeline: [
+    {id:'init', title:'/ship:init', model:'haiku', fork:false, path:'src/skills/init/SKILL.md',
+      sub:'Detecta stack/convenções, escreve ship/config.md', calls:['ship/config.md'],
+      desc:'Pré-requisito para todo o resto. Roda uma única vez por projeto.'},
+    {id:'spec', title:'/ship:spec', model:'sonnet', fork:false, path:'src/skills/spec/SKILL.md',
+      sub:'Input bruto → spec + tasks granulares (<400 linhas)', calls:['Linear Docs/Issues','ship/changes/<feature>/'],
+      desc:'Decompõe a especificação em tasks. Modo Linear cria projeto/documents/milestones/labels/issues; modo local escreve em ship/changes/<feature>/.'},
+    {id:'plan', title:'/ship:plan', model:'sonnet', fork:true, path:'src/skills/plan/SKILL.md',
+      sub:'Fase 1.8 — lê cenários @SC-XX, gera plan.md único', calls:['develop','test'],
+      desc:'Fonte única de verdade consumida tanto por develop quanto por test, reduzindo drift entre implementação e testes.'},
+    {id:'develop', title:'/ship:develop', model:'sonnet', fork:true, path:'src/skills/develop/SKILL.md',
+      sub:'Fase 2 — orquestrador SEM Edit/Write, dispara 1 agente por módulo', calls:['ship-develop-implement'],
+      desc:'Orquestrador puro (sem ferramentas de escrita). Faz fan-out de uma chamada Agent por módulo planejado para o worker leaf ship-develop-implement (que tem Edit/Write).'},
+    {id:'test', title:'/ship:test', model:'sonnet', fork:true, path:'src/skills/test/SKILL.md',
+      sub:'Fase 3 — lê Test Scope do config, despacha por camada habilitada', calls:['ship-test-unit','ship-test-integration','ship-test-e2e'],
+      desc:'Também sem Edit/Write direto. Só dispara os workers das camadas habilitadas em "Test Scope" do config.md.'},
+    {id:'quality', title:'Quality Gate (paralelo)', model:null, fork:true, parallel:true, path:'-',
+      sub:'Fase 4-6.5 — perf + security + review + analyze em um único turno', calls:['perf','security','review','analyze'],
+      desc:'As 4 fases de qualidade rodam em paralelo via Agent tool no mesmo turno. Cada uma é um wrapper haiku fino delegando para um agente sonnet especializado. Resultado: gate único agregado (FAIL se houver critical/high, senão WARN/PASS).'},
+    {id:'homolog', title:'/ship:homolog', model:'haiku', fork:false, path:'src/skills/homolog/SKILL.md',
+      sub:'Fase 7 — consolida relatórios, aguarda aprovação do usuário', calls:['pr'],
+      desc:'NÃO roda em fork — precisa persistir a sessão para aguardar a aprovação interativa do usuário e marcar a issue como Done.'},
+    {id:'pr', title:'/ship:pr', model:'haiku', fork:false, path:'src/skills/pr/SKILL.md',
+      sub:'Cria branch, commits atômicos, PR com relatório agregado', calls:['GitHub PR'],
+      desc:'Também sem fork. Pode rodar após homolog ou de forma standalone (homologate-and-PR em um passo).'},
+  ],
+  qualityPhases: [
+    {id:'perf', title:'/ship:perf', model:'haiku→sonnet', path:'src/skills/perf/SKILL.md', agent:'ship-perf', desc:'Wrapper fino que delega via Agent tool para ship-perf (sonnet). Analisa performance do diff, adapta por tipo de projeto.'},
+    {id:'security', title:'/ship:security', model:'haiku→sonnet', path:'src/skills/security/SKILL.md', agent:'ship-security', desc:'Wrapper delegando para ship-security (sonnet). Scan OWASP do diff com 3 sub-agentes internos por categoria de ataque.'},
+    {id:'review', title:'/ship:review', model:'haiku→sonnet', path:'src/skills/review/SKILL.md', agent:'ship-review', desc:'Wrapper delegando para ship-review (sonnet). Revisão SOLID/DRY/KISS/Clean Code + consistência do projeto.'},
+    {id:'analyze', title:'/ship:analyze', model:'haiku→sonnet', path:'src/skills/analyze/SKILL.md', agent:'ship-analyze', desc:'Wrapper delegando para ship-analyze (sonnet). Fase 6.5 — mapeia drift spec↔código↔testes via matriz de correlação Jaccard, gate PASS/WARN/FAIL.'},
+  ],
+  audit: [
+    {id:'audit-run', title:'/ship:audit:run', model:'haiku', fork:false, path:'src/skills/audit:run/SKILL.md',
+      sub:'Meta-orquestrador — roteia por ship/config.md (Project Type/Database/Workspaces)', calls:['audit:backend','audit:database','audit:frontend','audit:security','audit:tests'],
+      desc:'Lança as auditorias aplicáveis via Skill tool (cada uma forkada) em um único turno, depois consolida os JSON summaries em um relatório único com gate pessimista (qualquer FAIL→FAIL, qualquer WARN→WARN, senão PASS).'},
+    {id:'audit-backend', title:'/ship:audit:backend', model:'haiku→sonnet', path:'src/skills/audit:backend/SKILL.md', agent:'ship-audit-backend',
+      desc:'3 sub-agentes paralelos: DB+Cache+Locks / I/O+Memory / Network+Security-Adjacent.'},
+    {id:'audit-database', title:'/ship:audit:database', model:'haiku→sonnet', path:'src/skills/audit:database/SKILL.md', agent:'ship-audit-database',
+      desc:'Roteia metodologia por engine: MongoDB / PostgreSQL / MySQL, conforme ship/config.md.'},
+    {id:'audit-frontend', title:'/ship:audit:frontend', model:'haiku→sonnet', path:'src/skills/audit:frontend/SKILL.md', agent:'ship-audit-frontend',
+      desc:'Auto-roteia para metodologia Next.js (5 camadas) ou genérica (11 categorias) conforme ship/config.md.'},
+    {id:'audit-security', title:'/ship:audit:security', model:'haiku→sonnet', path:'src/skills/audit:security/SKILL.md', agent:'ship-audit-security',
+      desc:'Até 4 sub-agentes paralelos. OWASP Top 10 + mapeamento CWE, nota A-F, PoC para critical/high.'},
+    {id:'audit-tests', title:'/ship:audit:tests', model:'haiku→sonnet', path:'src/skills/audit:tests/SKILL.md', agent:'ship-audit-tests',
+      desc:'Correlação Jaccard entre AC/REQ da spec e testes existentes, cobrindo TODAS as camadas (diferente de /ship:analyze, que só cobre as camadas habilitadas no Test Scope).'},
+  ],
+  build: [
+    {id:'src', title:'src/', path:'src/', sub:'Fonte de verdade: skills/, agents/, patterns/, hooks/',
+      desc:'src/skills/**/SKILL.md, src/agents/*.md e src/hooks/* são a fonte editável. src/patterns/*.md guarda fragmentos reutilizáveis (storage-mode, gates, model-routing, run-context, diff-classifier, language, parallelism, stack-detection).'},
+    {id:'buildjs', title:'build.js', path:'plugins/ship/scripts/build.js', sub:'Script Node que compila src/ → plugins/ship/',
+      desc:'Percorre SKILL.md e agents/*.md, inlina referências @ship/path.md[#anchor] recursivamente (profundidade máx. 10, detecta ciclo), empacota lazy-refs @@ship/path.md|.sh como arquivos separados, e roda checkBudget() por skill.'},
+    {id:'budgets', title:'BUDGETS.md / budgets.js', path:'plugins/ship/scripts/BUDGETS.md', sub:'Tetos de palavras por tier',
+      desc:'orchestrator=8000 (run) · heavy=4000 (spec, pr) · phase=3000 (test, develop, plan, homolog, init, audit:run, perf, security, review, analyze) · small=900 (audit:backend/database/frontend/security/tests) · default=1000. Build falha (exit 1) em ref quebrada, ciclo, ou estouro de budget.'},
+    {id:'plugins', title:'plugins/ship/', path:'plugins/ship/', sub:'Distribuível compilado — o que o Claude Code realmente carrega',
+      desc:'Contém skills/, agents/, hooks/, scripts/, .claude-plugin/. É gerado — nunca editar diretamente, sempre editar src/ e rodar npm run build.'},
+  ],
+  agents: [
+    {name:'ship-develop-implement', tools:'Read,Glob,Grep,Bash,Edit,Write', model:'sonnet', by:'develop', desc:'Implementa um único módulo planejado (leaf worker).'},
+    {name:'ship-test-unit', tools:'Read,Glob,Grep,Bash,Edit,Write', model:'sonnet', by:'test', desc:'Gera+roda testes unitários (leaf worker).'},
+    {name:'ship-test-integration', tools:'Read,Glob,Grep,Bash,Edit,Write', model:'sonnet', by:'test', desc:'Gera+roda testes de integração (leaf worker).'},
+    {name:'ship-test-e2e', tools:'Read,Glob,Grep,Bash,Edit,Write', model:'sonnet', by:'test', desc:'Gera+roda testes e2e (leaf worker).'},
+    {name:'ship-perf', tools:'Read,Glob,Grep,Bash,Agent', model:'sonnet', by:'perf', desc:'Análise de performance do diff, adapta por tipo de projeto.'},
+    {name:'ship-security', tools:'Read,Glob,Grep,Bash,Agent', model:'sonnet', by:'security', desc:'Scan OWASP do diff, 3 sub-agentes internos.'},
+    {name:'ship-review', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'review', desc:'Revisão SOLID/DRY/KISS/Clean Code e consistência do projeto.'},
+    {name:'ship-analyze', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'analyze', desc:'Drift spec↔código↔teste, matriz de correlação Jaccard.'},
+    {name:'ship-audit-backend', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'audit:backend', desc:'Auditoria project-wide de backend, 3 sub-agentes.'},
+    {name:'ship-audit-database', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'audit:database', desc:'Auditoria de banco, roteada por engine.'},
+    {name:'ship-audit-frontend', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'audit:frontend', desc:'Auditoria de frontend, Next.js ou genérica.'},
+    {name:'ship-audit-security', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'audit:security', desc:'AppSec project-wide, OWASP/CWE, nota A-F.'},
+    {name:'ship-audit-tests', tools:'Read,Glob,Grep,Bash,Agent,mcp linear', model:'sonnet', by:'audit:tests', desc:'Cobertura de testes project-wide via Jaccard.'},
+  ],
+  config: `# Ship Config
+
+## Project
+- Name: <string>
+- Type: backend | frontend | fullstack | monorepo | mobile | prompt-toolkit
+
+## Linear Integration
+- Configured: yes | no
+- Team: <string>
+- Team ID: <uuid>
+
+## Gate Behavior
+- on_fail: fix
+- on_warn: fix
+- on_fail_rerun: surgical   # surgical (default) | all
+
+## Severity Overrides
+# <phase>: <from-severity>→<to-severity>
+
+## Security Focus
+- categories: all | web-api | mobile | infrastructure | none
+
+## Pipeline Profile
+- profile: lite | standard | strict
+
+## Pipeline Phases
+- dev / test / perf / security / review / homolog / pr: enabled | disabled
+
+## Test Scope
+- unit / integration / e2e: enabled | disabled
+  # camadas desabilitadas: não geradas no pipeline,
+  # mas podem ser preenchidas via /ship:audit:tests
+
+## Sensitive Paths
+# default: auth/, payment/, query, migrations/
+
+## Conventions
+- Artifact language / Prompt language / Code language
+- Commit style: Conventional Commits
+- Branch naming: <type>/<issue-id>-<short-description>
+- Atomic commits: one logical change per commit
+- Co-author: <model> <noreply@anthropic.com>`
+};
+
+// ---------- render tabs ----------
+const TABS = [
+  {id:'pipeline', label:'Pipeline (ship:run)'},
+  {id:'audit', label:'Audit Suite'},
+  {id:'build', label:'Build System'},
+  {id:'agents', label:'Agentes'},
+  {id:'storage', label:'Storage Modes'},
+  {id:'config', label:'config.md'},
+];
+const tabsEl = document.getElementById('tabs');
+TABS.forEach((t,i)=>{
+  const b = document.createElement('button');
+  b.textContent = t.label;
+  b.dataset.target = t.id;
+  if(i===0) b.classList.add('active');
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.querySelectorAll('section.view').forEach(x=>x.classList.remove('active'));
+    document.getElementById('view-'+t.id).classList.add('active');
+  });
+  tabsEl.appendChild(b);
+});
+
+// ---------- helpers ----------
+function nodeHTML(item, opts={}){
+  const badges = [];
+  if(item.model) badges.push(`<span class="badge b-model">${item.model}</span>`);
+  if(item.fork===true) badges.push(`<span class="badge b-fork">fork</span>`);
+  if(item.fork===false) badges.push(`<span class="badge b-nofork">no-fork</span>`);
+  if(item.parallel) badges.push(`<span class="badge b-parallel">parallel</span>`);
+  return `<div class="node" data-id="${item.id||item.title}">
+    <h3>${item.title}</h3>
+    <div>${badges.join('')}</div>
+    <p class="sub">${item.sub||item.desc||''}</p>
+  </div>`;
+}
+
+function openDetail(item){
+  document.getElementById('d-title').textContent = item.title || item.name;
+  document.getElementById('d-path').textContent = item.path || '';
+  let body = `<div class="field"><label>Descrição</label><div>${item.desc||''}</div></div>`;
+  if(item.calls && item.calls.length){
+    body += `<div class="field"><label>Chama / depende de</label><ul>${item.calls.map(c=>`<li><code>${c}</code></li>`).join('')}</ul></div>`;
+  }
+  if(item.agent){
+    body += `<div class="field"><label>Delega para agente</label><div><code>${item.agent}</code></div></div>`;
+  }
+  document.getElementById('d-body').innerHTML = body;
+  document.getElementById('detail').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+}
+document.getElementById('closeDetail').addEventListener('click', closeDetail);
+document.getElementById('overlay').addEventListener('click', closeDetail);
+function closeDetail(){
+  document.getElementById('detail').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+
+// ---------- PIPELINE FLOW ----------
+const pf = document.getElementById('pipeline-flow');
+const order = ['init','spec','plan','develop','test'];
+order.forEach((id,i)=>{
+  const item = DATA.pipeline.find(x=>x.id===id);
+  pf.insertAdjacentHTML('beforeend', `<div class="row">${nodeHTML(item)}</div>`);
+  pf.insertAdjacentHTML('beforeend', `<div class="arrow-down">↓</div>`);
+});
+// quality cluster
+const qCluster = document.createElement('div');
+qCluster.className = 'quality-cluster';
+qCluster.innerHTML = `<div class="cluster-title">⚡ Quality Gate — executa em paralelo, mesmo turno</div>
+  <div class="quality-grid">${DATA.qualityPhases.map(q=>nodeHTML(q)).join('')}</div>`;
+pf.appendChild(qCluster);
+pf.insertAdjacentHTML('beforeend', `<div class="arrow-down">↓</div>`);
+['homolog','pr'].forEach((id,i)=>{
+  const item = DATA.pipeline.find(x=>x.id===id);
+  pf.insertAdjacentHTML('beforeend', `<div class="row">${nodeHTML(item)}</div>`);
+  if(id!=='pr') pf.insertAdjacentHTML('beforeend', `<div class="arrow-down">↓</div>`);
+});
+
+// ---------- AUDIT FLOW ----------
+const af = document.getElementById('audit-flow');
+const runItem = DATA.audit.find(x=>x.id==='audit-run');
+af.insertAdjacentHTML('beforeend', `<div class="row">${nodeHTML(runItem)}</div>`);
+af.insertAdjacentHTML('beforeend', `<div class="arrow-down">↓ (paralelo, roteado por config)</div>`);
+const auditChildren = DATA.audit.filter(x=>x.id!=='audit-run');
+af.insertAdjacentHTML('beforeend', `<div class="row">${auditChildren.map(a=>nodeHTML(a)).join('')}</div>`);
+
+// ---------- BUILD FLOW ----------
+const bf = document.getElementById('build-flow');
+['src','buildjs','budgets','plugins'].forEach((id,i,arr)=>{
+  const item = DATA.build.find(x=>x.id===id);
+  bf.insertAdjacentHTML('beforeend', `<div class="row">${nodeHTML(item)}</div>`);
+  if(i<arr.length-1) bf.insertAdjacentHTML('beforeend', `<div class="arrow-down">↓</div>`);
+});
+
+// ---------- AGENTS TABLE ----------
+const tbody = document.querySelector('#agents-table tbody');
+DATA.agents.forEach(a=>{
+  const tr = document.createElement('tr');
+  tr.style.cursor = 'pointer';
+  tr.innerHTML = `<td><code>${a.name}</code></td><td>${a.tools}</td><td><span class="badge b-model">${a.model}</span></td><td>/ship:${a.by}</td><td style="color:var(--muted)">${a.desc}</td>`;
+  tr.addEventListener('click', ()=> openDetail({title:a.name, path:'src/agents/'+a.name+'.md', desc:a.desc}));
+  tbody.appendChild(tr);
+});
+
+// ---------- CONFIG RENDER ----------
+document.getElementById('config-render').textContent = DATA.config;
+
+// ---------- click delegation for nodes ----------
+document.addEventListener('click', (e)=>{
+  const node = e.target.closest('.node');
+  if(!node) return;
+  const id = node.dataset.id;
+  const item = DATA.pipeline.find(x=>x.id===id) || DATA.qualityPhases.find(x=>x.id===id) ||
+               DATA.audit.find(x=>x.id===id) || DATA.build.find(x=>x.id===id);
+  if(item){
+    document.querySelectorAll('.node.selected').forEach(n=>n.classList.remove('selected'));
+    node.classList.add('selected');
+    openDetail(item);
+  }
+});
+</script>
+</body>
+</html>
