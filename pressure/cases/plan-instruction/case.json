@@ -1,0 +1,12 @@
+{
+  "skill": "plan",
+  "input": "input/spec.md",
+  "arms": {
+    "treatment": {},
+    "control": {
+      "anchor": "4.5. AC outcome completeness (close sub-AC coverage gaps)"
+    }
+  },
+  "assertions": ["planSchema"],
+  "reps": 3
+}
