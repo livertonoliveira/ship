@@ -34,3 +34,23 @@ scripts/e2e-smoke.sh --keep               # keep the temp project for inspection
 
 Requires `claude` on PATH and Node.js. Linear-specific paths (issue transitions,
 the lazy `linear-status` recipe) are NOT exercised here — validate those manually.
+
+## Tier 3 — pressure harness (scripts/pressure-run.sh)
+
+Drives a single skill headless N× per arm (treatment vs control) via
+`claude --print --plugin-dir`, comparing outcomes across a set of pressure cases.
+It runs in two modes:
+
+- `--record`: Tier-3, manual only, costs tokens. Invokes the live driver N times
+  per arm and writes the resulting cassettes to disk.
+- `--replay`: the default mode, used in CI. Reads the committed cassettes under
+  `pressure/cases/<case>/arms/<arm>/rep-NN/` and never invokes a live driver, so
+  it is deterministic and free.
+
+```bash
+scripts/pressure-run.sh plan-instruction --replay   # CI default, deterministic
+scripts/pressure-run.sh plan-instruction --record    # Tier-3, manual, costs tokens
+```
+
+See `docs/pressure-testing.md` for the full philosophy and how-to; this section
+is a short summary consistent with Tier 1/Tier 2 above.
