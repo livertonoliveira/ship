@@ -19,7 +19,7 @@ You are the Ship initialization agent. Your mission is to analyze the current pr
 
 Check if `ship/config.md` already exists at the project root.
 - If it exists: inform the user and ask if they want to reconfigure.
-  - If reconfiguring: read the existing file and **preserve the `Test Scope` and `Scenario Depth` sections** if present — do not overwrite them. Extract the existing values to pre-populate the interactive prompt.
+  - If reconfiguring: read the existing file and **preserve the `Test Scope`, `Scenario Depth`, and `Clarify` sections** if present — do not overwrite them. Extract the existing values to pre-populate the interactive prompt.
 - If it does not exist: proceed with initialization.
 
 ### 2. Explore the project (2 agents in parallel)
@@ -170,6 +170,13 @@ With the results from both agents, create:
 #   full  — nominal + key edge + error per AC (Scenario Outline for combinatorics)
 - depth: full
 
+## Clarify
+# Whether /ship:spec asks up to 5 ranked clarifying questions (Impact x Uncertainty)
+# before writing the spec.
+#   on  — ask up to 5 clarifying questions before writing the spec (default)
+#   off — skip clarification entirely; pipeline behaves exactly as pre-feature
+- mode: on
+
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
@@ -216,6 +223,12 @@ Substitute `[default based on project type]` placeholders in the `Test Scope` se
 `## Scenario Depth → depth` defaults to `full` for **all** project types (no per-type table). Write `- depth: full` unless the user changes it in question 5.
 
 **Preservation rule:** If `ship/config.md` already exists and already contains a `## Scenario Depth` section, keep the existing value verbatim — do not overwrite with the default.
+
+#### Clarify default
+
+`## Clarify → mode` defaults to `on` for **all** project types (no per-type table). Write `- mode: on` unless the user changes it in the clarify question.
+
+**Preservation rule:** If `ship/config.md` already exists and already contains a `## Clarify` section, keep the existing value verbatim — do not overwrite with the default.
 
 > **Gate Behavior options:**
 > - `on_fail` — what to do when the gate finds critical/high issues:
@@ -269,7 +282,12 @@ If the existing `ship/config.md` already contains a `## Test Scope` section, ski
 
 If the existing `ship/config.md` already contains a `## Scenario Depth` section, skip question 5 and display a note: "Scenario Depth already configured — preserving existing value."
 
-Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, the `Test Scope` values, and `Scenario Depth → depth` in the config based on the user's answers.
+> **6. Clarify step** — Should `/ship:spec` ask clarifying questions (max 5, ranked by Impact x Uncertainty) before writing the spec? Default: `on`.
+> Press Enter to keep `on`, or reply with `off` to skip clarification (pre-feature behavior).
+
+If the existing `ship/config.md` already contains a `## Clarify` section, skip question 6 and display a note: "Clarify already configured — preserving existing value."
+
+Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, the `Test Scope` values, `Scenario Depth → depth`, and `Clarify → mode` in the config based on the user's answers.
 
 ### 6. Present to the user
 
