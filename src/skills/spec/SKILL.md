@@ -67,6 +67,35 @@ If the input is free text:
 3. Assess technical risks: complexity/coupling hotspots, possible conflicts, migration/schema needs
 4. Estimate scope: affected areas, applicable labels (backend, frontend, shared)
 
+### 3.5 Clarify
+
+Resolve the clarify mode first: read `ship/config.md` → `## Clarify` → `mode`. If the section is absent, treat it as `on`. When `mode` is `off`, skip this entire step — no questions, no markers, no gate — and proceed straight to §4 (pre-feature behavior).
+
+When `mode` is `on`:
+
+1. **Classify ambiguities.** Every ambiguity Agent A surfaced in §3 belongs to exactly one of 9 categories:
+   - `functional-scope` — what the feature does or doesn't cover
+   - `data-model` — entities, fields, relationships, persistence shape
+   - `ux-flow` — user-facing steps, states, navigation
+   - `non-functional` — performance, security, reliability, scalability targets
+   - `integrations` — external services, APIs, third-party contracts
+   - `edge-cases` — boundary conditions, error handling, unusual inputs
+   - `tradeoffs` — competing approaches with no obviously superior choice
+   - `terminology` — inconsistent or undefined naming for the same concept
+   - `completion-signals` — what "done" means for this feature
+
+2. **Rank by Impact × Uncertainty.** Score each candidate question on two axes, High/Med/Low each: Impact (how much the answer changes the spec) and Uncertainty (how unclear the current signal is). Rank descending by the combined score. Break ties by category priority, `functional-scope` and `data-model` first, then the remaining categories in the order listed above.
+
+3. **Cap at 5 questions, ask one at a time.** Take the top-ranked candidates up to a budget of 5. Ask them one at a time in prose — never with a UI tool. For each: state the stem, list 2-5 labeled options with exactly one marked `(recommended)`, and accept a one-word/letter answer, a free-text override, or "unsure". Questions are shown to the user in the `Artifact language`; the literal string `[NEEDS CLARIFICATION` and all ranking/classification logic stay in English.
+
+4. **Write back immediately.** As soon as an answer arrives, fold it into the relevant Proposal/Design section being drafted before asking the next question. Re-rank the remaining candidates if the answer changes their priority.
+
+5. **Zero ambiguity.** If nothing crosses the ambiguity threshold, ask zero questions, print a one-line skip note, and continue to §4.
+
+6. **Leftover markers.** Any ambiguity that never gets asked (over the 5-question budget) or gets answered "unsure" becomes an inline marker `[NEEDS CLARIFICATION: <category>: <topic>]` placed directly in the relevant Proposal/Design section. Never place a marker inside a created issue/task or inside code.
+
+7. **Headless mode.** In non-interactive/headless execution, auto-apply each question's `(recommended)` option instead of asking, emit markers for anything left over, and never block waiting for input.
+
 ### 4. Deep specification
 
 With the results from both agents, build the specification:
@@ -125,6 +154,21 @@ Group tasks into milestones representing **logical delivery phases**, each with 
 Label each task by **Area** (`backend`, `frontend`, `shared`, `infrastructure`, `database`) and **Type** (`feature`, `test`, `refactor`, `config`, `migration`). Derive from `ship/config.md` — in monorepos, also use workspace names as labels.
 
 ---
+
+### Clarify marker gate
+
+Before creating any Linear artifacts, scan the drafted Proposal/Design content for leftover `[NEEDS CLARIFICATION]` markers (skip entirely when `## Clarify → mode` is `off`):
+
+1. Materialize the drafted Proposal and Design content into a scratch directory (e.g. `/tmp/ship-spec-<feature-name>/drafts/`).
+2. Invoke the gate script:
+   ```bash
+   bash "@@ship/hooks/needs-clarification-scan.sh" /tmp/ship-spec-<feature-name>/drafts
+   ```
+3. Interpret the exit code:
+   - `2` (fail, high-impact markers): in interactive mode, halt before creating any project/documents/issues and resolve the markers with the user first.
+   - `1` (warn, low-impact markers): pause and ask the user to confirm before proceeding.
+   - `0` (clean): proceed without interruption.
+4. In non-interactive/headless mode, downgrade a fail result to warn and proceed with the markers left in place — never hard-block a headless run.
 
 ## 6. Create artifacts — Linear Mode
 
@@ -370,6 +414,21 @@ In the same pass, verify the SC↔issue cross-reference:
 
 ---
 
+### Clarify marker gate
+
+Before writing any local artifacts, scan the drafted Proposal/Design content for leftover `[NEEDS CLARIFICATION]` markers (skip entirely when `## Clarify → mode` is `off`):
+
+1. Materialize the drafted Proposal and Design content into a scratch directory (e.g. `/tmp/ship-spec-<feature-name>/drafts/`).
+2. Invoke the gate script:
+   ```bash
+   bash "@@ship/hooks/needs-clarification-scan.sh" /tmp/ship-spec-<feature-name>/drafts
+   ```
+3. Interpret the exit code:
+   - `2` (fail, high-impact markers): in interactive mode, halt before creating `ship/changes/<feature-name>/` and resolve the markers with the user first.
+   - `1` (warn, low-impact markers): pause and ask the user to confirm before proceeding.
+   - `0` (clean): proceed without interruption.
+4. In non-interactive/headless mode, downgrade a fail result to warn and proceed with the markers left in place — never hard-block a headless run.
+
 ## 6 (alt). Create artifacts — Local Mode
 
 When Linear is NOT configured, all artifacts live in `ship/changes/<feature-name>/`.
@@ -527,3 +586,4 @@ After creating everything:
 - **Local mode = full workspace**: When Linear is not configured, create all markdown artifacts locally.
 - **`## Files` carries paths + intent + anchors only**: Code snippets and numbered implementation steps are forbidden in this section. Each entry is `create|modify <path> — <intent in one line>`, plus at most one anchor line per task.
 - **Every Design Files-table row belongs to exactly one issue**: The union of every task's `## Files` section must reproduce the Design doc's `Files to Create` / `Files to Modify` tables exactly — each row owned by exactly one issue, none omitted, none duplicated.
+- **No leaked markers or spec IDs in generated code**: Residual `[NEEDS CLARIFICATION]` markers and `REQ-`/`AC-`/`SC-` IDs must never leak into generated code or tests.
