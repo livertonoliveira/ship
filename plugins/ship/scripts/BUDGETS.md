@@ -9,9 +9,12 @@ Ceilings are defined in `plugins/ship/scripts/budgets.js` (source of truth).
 | Tier | Ceiling (words) | Skills |
 |------|------------------|--------|
 | orchestrator | 8000 | `run` |
-| heavy | 4000 | `spec`, `pr` |
+| heavy | 4000 | `pr` |
 | phase | 3000 | `test`, `develop`, `plan`, `homolog`, `init`, `audit:run`, `perf`, `security`, `review`, `analyze` |
 | small | 900 | `audit:backend`, `audit:database`, `audit:frontend`, `audit:security`, `audit:tests` |
+| explicit override | 4400 | `spec` |
+
+`spec` carries its own explicit ceiling instead of sharing the heavy tier with `pr`: its clarify step adds taxonomy, ranking, and gate prose that push it past the shared heavy-tier ceiling, so it needs headroom the other heavy-tier skill doesn't.
 
 ## Rationale
 
