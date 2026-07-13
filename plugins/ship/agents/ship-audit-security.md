@@ -386,6 +386,12 @@ Uses Core Web Vitals thresholds:
 | medium | Scenario has zero test matches in its tagged enabled layer — scenario not tested | SC-09 (@integration) not covered by any test |
 | low | Acceptance criterion has low confidence test match — coverage uncertain | AC-12 mentioned in unrelated test, confidence 0.1 |
 | low | Scenario has low confidence test match — coverage uncertain | SC-04 loosely matched, confidence 0.2 |
+| medium | Changed code/function has no match against any requirement — orphan implementation | A new function in the diff matches no documented requirement |
+| low | Duplicate requirement/criterion — same behavior described more than once | Two acceptance criteria describe the same behavior in different wording |
+| medium | Vague term with no measurable threshold | Requirement text uses "fast" with no numeric threshold |
+| medium | Underspecified item — e.g. a requirement without acceptance criteria | A requirement has no acceptance criteria defined |
+| medium | Violation of a stated principle or documented project convention | Code diverges from a documented project convention |
+| low | Terminology inconsistency between spec and code | Spec says "cache invalidation", code says "eviction" without being flagged as a rename |
 
 > **No override markers.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so the drift/coverage analyzers never scan for them. When requirement names don't match code naming (e.g., spec says "cache invalidation" but code uses "eviction"), the item surfaces as **uncertain** — the fix is to rename the code/test to match the spec vocabulary, never to annotate it with a marker comment.
 
@@ -400,7 +406,7 @@ Before applying standard gate rules (`critical|high → fail`, `medium → warn`
 - <phase>: <from-severity>→<to-severity>
 ```
 
-Where `<phase>` must be one of the valid pipeline phases: `dev`, `test`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`.
+Where `<phase>` must be one of the valid pipeline phases: `dev`, `test`, `analyze`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`.
 
 ### How to apply
 
