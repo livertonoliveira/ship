@@ -168,6 +168,23 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 - 0 < confidence < 0.5 → uncertain match (low confidence).
 - Confidence ≥ 0.5 → implemented / tested.
 
+### 6.7 Reverse orphan detection
+
+**Goal:** detect changed files/functions that have no matching requirement — the reverse direction of §6.2 (which maps REQ-XX → code; this pass maps code → REQ-XX).
+
+1. Reuse the Step 2 (§4) changed file/function keyword sets as-is. Run one reverse pass per changed file/function — do not extract any new keyword sets for this pass.
+2. Before evaluating an item, exclude it if it matches this ignore-list:
+   - Lockfiles: `*.lock`, `package-lock.json`, `pnpm-lock.yaml`
+   - Config: `*.config.*`, `tsconfig*.json`, `.eslintrc*`
+   - Generated code: `*.generated.*`, `dist/`, `build/`
+
+   Excluded items are never evaluated by the reverse pass and never appear in `## Orphans` or `## Gaps`.
+3. For each remaining changed file/function, compute its best-match confidence against every `REQ-XX` keyword set, reusing the same Jaccard engine from §6.2 (`|intersection| / |union|`). Best match confidence = highest score across all `REQ-XX`; best match REQ = the `REQ-XX` with that score.
+4. If the best-match confidence is 0 against every `REQ-XX`, the file/function is an **orphan**.
+5. **Edge case — empty diff:** if the diff has zero changed files, skip the reverse pass entirely. Do not run it and do not emit any orphan findings; the `## Orphans` section must not render (see §7.1).
+6. **Backward compatibility:** this pass only operates over Step 2's file/function keyword sets — never over `@SC-XX` scenarios. No scenario-based orphan may ever be fabricated.
+7. Each orphan produces exactly one finding: severity `medium`, category `ORPHAN` (see @ship/patterns/severity.md and @ship/report-templates.md#drift-findings — do not redefine either here), named explicitly by `file:line` or `file#functionName`/class identifier (same identifier granularity as the Step 2 extraction that yielded it).
+
 ---
 
 ## 7. Step 4 — Generate report
@@ -182,6 +199,7 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 | medium | SC-XX has confidence = 0 in its tagged enabled layer | SCENARIO |
 | low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 | low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
+| medium | Changed file/function has confidence = 0 against every REQ-XX (after ignore-list exclusion) | ORPHAN |
 
 See @ship/patterns/severity.md (## Drift) for full severity definitions.
 See @ship/report-templates.md#drift-findings for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
@@ -276,6 +294,14 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 - **Sugestão:** Crie um teste para o cenário SC-03 na camada `integration`.
 - **Scenario ID:** SC-03
 - **Criterion ID:** AC-02
+
+## Orphans
+
+| File/Identifier | Line | Best REQ match | Confidence % | Category |
+|------------------|------|-----------------|---------------|----------|
+| src/cache/evict.ts#evictExpired | 42 | REQ-05 (baixa confiança) | 22% | ORPHAN |
+
+> `## Orphans` is rendered only when at least one ORPHAN finding exists. Omit the section entirely (no empty heading, no empty table) when there are zero orphans — including the zero-changed-files edge case from §6.7. Orphan findings never appear under `## Gaps`; they exclusively populate `## Orphans`.
 
 ## Disabled Layers — Informational (does not affect gate)
 
