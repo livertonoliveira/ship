@@ -320,7 +320,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Field | Type | Description |
 |-------|------|-------------|
 | Severity | critical \| high \| medium \| low | See severity.md — Drift domain |
-| Category | IMPL \| TEST \| SCENARIO \| DRIFT | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match |
+| Category | IMPL \| TEST \| SCENARIO \| DRIFT \| ORPHAN \| DUP \| AMBIG \| SUBSPEC \| PRINCIPLE \| TERM | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match, ORPHAN = changed code/test with no matching requirement, DUP = duplicate requirement/criterion, AMBIG = vague/unmeasurable term, SUBSPEC = underspecified item, PRINCIPLE = violation of a stated principle/convention, TERM = terminology inconsistency between spec and code |
 | File | path or — | Source file where the issue was detected |
 | Description | string | What is missing or mismatched |
 | Suggestion | string | How to fix: implement the requirement or add the missing test |
@@ -328,6 +328,7 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
 | Scenario ID | SC-XX or — | Linked scenario, if applicable |
 | Layer | unit \| integration \| e2e or — | Scenario's tagged test layer (SCENARIO findings only) |
+| Confidence % | integer 0-100 | Match confidence rendered as an integer percentage |
 
 ### Severity Mapping
 
@@ -338,6 +339,12 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 | medium | Acceptance criterion with 0 test matches | WARN |
 | medium | Scenario with 0 test matches in its tagged enabled layer | WARN |
 | low | Criterion or scenario confidence < 0.5 | PASS |
+| medium | Changed code/function has no match against any requirement (ORPHAN) | WARN |
+| low | Duplicate requirement/criterion (DUP) | PASS |
+| medium | Vague term with no measurable threshold (AMBIG) | WARN |
+| medium | Underspecified item, e.g. a requirement without acceptance criteria (SUBSPEC) | WARN |
+| medium | Violation of a stated principle or documented project convention (PRINCIPLE) | WARN |
+| low | Terminology inconsistency between spec and code (TERM) | PASS |
 
 ### Example Reports
 
@@ -360,12 +367,22 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 - **Sugestão:** Implemente o requisito REQ-05 no arquivo.
 ```
 
+### Orphans
+
+Rendered only when ORPHAN-category findings exist. Lists changed code/test artifacts that have no matching requirement. The rendered report starts this block with a `## Orphans` heading (analogous to `## Gaps`), followed by a table:
+
+```markdown
+| File/Identifier | Line | Best REQ match | Confidence % | Category |
+|------------------|------|-----------------|---------------|----------|
+| src/cache/evict.ts#evictExpired | 42 | REQ-05 (baixa confiança) | 22% | ORPHAN |
+```
+
 ### JSON Schema
 
 ```json
 {
   "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | SCENARIO | DRIFT",
+  "category": "IMPL | TEST | SCENARIO | DRIFT | ORPHAN | DUP | AMBIG | SUBSPEC | PRINCIPLE | TERM",
   "title": "string",
   "description": "string",
   "suggestion": "string",
@@ -374,7 +391,8 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
   "scenarioId": "SC-XX | null",
   "layer": "unit | integration | e2e | null",
   "filePath": "string | null",
-  "line": "number | null"
+  "line": "number | null",
+  "confidence": "number 0-100 | null"
 }
 ```
 
