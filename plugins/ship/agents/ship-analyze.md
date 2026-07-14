@@ -548,32 +548,35 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 | Requirements implemented (≥ 0.5) | N |
 | Requirements uncertain (< 0.5) | N |
 | Requirements unimplemented (= 0) | N |
+| Requirements coverage | 7/10 = 70% |
 | Criteria analyzed | N |
 | Criteria covered (≥ 0.5) | N |
 | Criteria uncertain (< 0.5) | N |
 | Criteria uncovered (= 0) | N |
+| Criteria coverage | 9/9 = 100% |
 | Scenarios analyzed | N |
 | Scenarios covered (≥ 0.5) | N |
 | Scenarios uncovered (= 0) | N |
+| Scenarios coverage | 5/6 = 83% |
 | **Gate** | PASS / WARN / FAIL |
 
-> The three `Scenarios …` rows appear only when the spec contains `@SC-XX` scenarios. Omit them entirely for legacy scenario-free specs.
+> The three `Scenarios …` rows (including `Scenarios coverage`) appear only when the spec contains `@SC-XX` scenarios. Omit them entirely for legacy scenario-free specs. `<Tier> coverage` is `covered/total = round(covered/total * 100)%`, where `covered` counts items with confidence ≥ 0.5 and `total` is the tier's item count.
 
 ## Requirements Status
 
 | ID | Description | Confidence | File | Status |
 |----|-------------|------------|------|--------|
-| REQ-01 | <description> | 0.85 | src/auth/login.ts | ✓ Implemented |
-| REQ-02 | <description> | 0.30 | src/utils/helpers.ts | ⚠ Uncertain |
-| REQ-03 | <description> | 0.00 | — | ✗ Unimplemented |
+| REQ-01 | <description> | 85% | src/auth/login.ts | ✓ Implemented |
+| REQ-02 | <description> | 30% | src/utils/helpers.ts | ⚠ Uncertain |
+| REQ-03 | <description> | 0% | — | ✗ Unimplemented |
 
 ## Criteria Status
 
 | ID | Description | Test Confidence | Test File | Status |
 |----|-------------|-----------------|-----------|--------|
-| AC-01 | <description> | 0.90 | src/auth/login.test.ts | ✓ Covered |
-| AC-02 | <description> | 0.40 | src/utils/helpers.test.ts | ⚠ Uncertain |
-| AC-03 | <description> | 0.00 | — | ✗ Uncovered |
+| AC-01 | <description> | 90% | src/auth/login.test.ts | ✓ Covered |
+| AC-02 | <description> | 40% | src/utils/helpers.test.ts | ⚠ Uncertain |
+| AC-03 | <description> | 0% | — | ✗ Uncovered |
 
 ## Scenarios Status
 
@@ -581,9 +584,9 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 | ID | AC | Layer | Description | Test Confidence | Test File | Status |
 |----|----|-------|-------------|-----------------|-----------|--------|
-| SC-01 | AC-01 | unit | <scenario name> | 1.00 | src/auth/login.test.ts | ✓ Covered |
-| SC-02 | AC-01 | unit | <scenario name> | 0.40 | src/auth/login.test.ts | ⚠ Uncertain |
-| SC-03 | AC-02 | integration | <scenario name> | 0.00 | — | ✗ Uncovered |
+| SC-01 | AC-01 | unit | <scenario name> | 100% | src/auth/login.test.ts | ✓ Covered |
+| SC-02 | AC-01 | unit | <scenario name> | 40% | src/auth/login.test.ts | ⚠ Uncertain |
+| SC-03 | AC-02 | integration | <scenario name> | 0% | — | ✗ Uncovered |
 
 ## Gaps
 
