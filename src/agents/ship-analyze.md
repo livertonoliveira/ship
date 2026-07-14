@@ -185,6 +185,32 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 6. **Backward compatibility:** this pass only operates over Step 2's file/function keyword sets — never over `@SC-XX` scenarios. No scenario-based orphan may ever be fabricated.
 7. Each orphan produces exactly one finding: severity `medium`, category `ORPHAN` (see @ship/patterns/severity.md and @ship/report-templates.md#drift-findings — do not redefine either here), named explicitly by `file:line` or `file#functionName`/class identifier (same identifier granularity as the Step 2 extraction that yielded it).
 
+### 6.8 Duplication pass (DUP)
+
+**Goal:** detect same-tier spec items (REQ×REQ or AC×AC) that describe the same behavior in different wording.
+
+1. Reuse the Step 1 (§3) REQ-XX and AC-XX keyword sets as-is. Do not extract any new keyword sets for this pass and do not use the Jaccard cache (§6.1/§6.5) — always compute fresh, never persist DUP results into `jaccard.json`.
+2. Build the pair set: every unordered pair of items within the same tier — `{REQ-XX, REQ-YY}` pairs among all REQs, and `{AC-XX, AC-YY}` pairs among all ACs. Never pair a REQ with an AC.
+3. For each pair, compute similarity with the same Jaccard engine from §6.2 (`|intersection| / |union|` over each item's own description keyword set).
+4. **Threshold: 0.8.** A pair with similarity ≥ 0.8 triggers a finding.
+5. A single item may appear in more than one reported pair. Dedupe only by unordered pair — never dedupe by item.
+6. Each triggered pair produces exactly one finding: severity `low`, category `DUP` (see @ship/patterns/severity.md and @ship/report-templates.md#drift-findings — do not redefine either here), naming both IDs.
+7. **Edge case — fewer than two items in a tier:** if a tier (REQ or AC) has zero or one item, skip pair generation for that tier entirely.
+8. No pair reaches the threshold → no `DUP` findings; the `## Gaps` entries for `DUP` are simply absent (mirrors §6.7's empty-result rule).
+
+### 6.9 Terminology pass (TERM)
+
+**Goal:** detect divergent terms across the spec's REQ/AC/SC descriptions that plausibly denote the same concept.
+
+1. Reuse the Step 1 (§3) REQ-XX, AC-XX, and SC-XX keyword sets as-is (same tokenization as §3/§6.2 — camelCase/snake_case/PascalCase → lowercase tokens). Do not extract any new keyword sets and do not use the Jaccard cache — always compute fresh, never persist TERM results into `jaccard.json`.
+2. Build a frequency table of every token/token-group across all spec descriptions in scope.
+3. Flag a pair of distinct terms as a divergence candidate when either signal holds:
+   - **Shared root/stem tokens:** the two terms share their non-stopword tokens after lowercase tokenization (e.g., `token` + `de` + `acesso` vs `access` + `token` share the token `token`), and the surrounding description phrasing indicates both refer to the same concept.
+   - **Explicit juxtaposition:** the spec text itself places both terms side by side or in apposition referring to one concept (e.g., "token de acesso (access token)").
+4. Do not introduce a semantic model, stemming, or NLP machinery beyond the lightweight signals above — if neither signal holds, do not flag the pair.
+5. Each triggered pair produces exactly one finding: severity `low`, category `TERM` (see @ship/patterns/severity.md and @ship/report-templates.md#drift-findings — do not redefine either here), naming both divergent terms.
+6. No divergent pair found → no `TERM` findings; the `## Gaps` entries for `TERM` are simply absent (mirrors §6.7's empty-result rule).
+
 ---
 
 ## 7. Step 4 — Generate report
@@ -200,6 +226,8 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 | low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 | low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
 | medium | Changed file/function has confidence = 0 against every REQ-XX (after ignore-list exclusion) | ORPHAN |
+| low | REQ×REQ or AC×AC pair with similarity ≥ threshold | DUP |
+| low | Two distinct terms denote the same concept | TERM |
 
 See @ship/patterns/severity.md (## Drift) for full severity definitions.
 See @ship/report-templates.md#drift-findings for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
@@ -294,6 +322,17 @@ See @ship/patterns/gates.md for gate rules and severity override handling.
 - **Sugestão:** Crie um teste para o cenário SC-03 na camada `integration`.
 - **Scenario ID:** SC-03
 - **Criterion ID:** AC-02
+
+### [LOW] Duplicação detectada: REQ-01 ~ REQ-05
+- **Categoria:** DUP
+- **Descrição:** "REQ-01: <description>" e "REQ-05: <description>" possuem similaridade de texto ≥ 0.8 e podem descrever o mesmo comportamento.
+- **Sugestão:** Revise REQ-01 e REQ-05 e consolide-os em um único requisito, se de fato descrevem o mesmo comportamento.
+- **Requirement ID:** REQ-01, REQ-05
+
+### [LOW] Terminologia inconsistente: "token de acesso" vs "access token"
+- **Categoria:** TERM
+- **Descrição:** A spec usa "token de acesso" e "access token" para o mesmo conceito em pontos diferentes.
+- **Sugestão:** Padronize o termo usado em toda a spec para evitar ambiguidade.
 
 ## Orphans
 
