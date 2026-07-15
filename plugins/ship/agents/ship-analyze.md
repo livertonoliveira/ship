@@ -168,6 +168,20 @@ After all Jaccard computations complete (skipped if the cache was reused), write
 - 0 < confidence < 0.5 → uncertain match (low confidence).
 - Confidence ≥ 0.5 → implemented / tested.
 
+### Trigger conditions — quick reference (all seven passes)
+
+Quick reference for every pass that can produce a finding, kept close to the passes themselves so it stays easy to audit against each pass's own section below.
+
+| # | Pass | Category | Trigger condition |
+|---|------|----------|--------------------|
+| 1 | Coverage mapping | IMPL / TEST / SCENARIO / DRIFT | REQ-XX/AC-XX/SC-XX confidence below the 0.5 threshold (or exactly 0) against code/test keyword sets (§6.2–§6.4) |
+| 2 | Reverse orphan detection | ORPHAN | A changed file/function (after ignore-list exclusion) has confidence = 0 against every REQ-XX (§6.7) |
+| 3 | Duplication (DUP) | DUP | A REQ×REQ or AC×AC pair reaches Jaccard similarity ≥ 0.8 (§6.8) |
+| 4 | Terminology (TERM) | TERM | Two distinct terms in the spec plausibly denote the same concept (shared root/stem or explicit juxtaposition) (§6.9) |
+| 5 | Ambiguity (AMBIG) | AMBIG | A vague-terms dictionary hit is confirmed by the LLM rubric as lacking a measurable threshold, after a local pre-filter and batch cap select the candidate REQ-XX/AC-XX (§6.10) |
+| 6 | Underspecification (SUBSPEC) | SUBSPEC | LLM rubric confirms a requirement/criterion has no verifiable AC/condition, after a local pre-filter and batch cap select the candidate REQ-XX (§6.11) |
+| 7 | Principle violation (PRINCIPLE) | PRINCIPLE | LLM rubric confirms a stated project/spec convention is violated (§6.12) |
+
 ### 6.7 Reverse orphan detection
 
 **Goal:** detect changed files/functions that have no matching requirement — the reverse direction of §6.2 (which maps REQ-XX → code; this pass maps code → REQ-XX).
@@ -423,6 +437,104 @@ Rendered only when ORPHAN-category findings exist. Lists changed code/test artif
 5. Each triggered pair produces exactly one finding: severity `low`, category `TERM` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming both divergent terms.
 6. No divergent pair found → no `TERM` findings; the `## Gaps` entries for `TERM` are simply absent (mirrors §6.7's empty-result rule).
 
+**Cache bypass (§6.10–§6.12):** AMBIG, SUBSPEC, and PRINCIPLE never read from or write to `jaccard.json` — they always compute fresh. These three passes are semantic (LLM-rubric-judged), not Jaccard-similarity-based like §6.2/§6.8/§6.9, and they run far less often than the main coverage loop, so recomputing on every `/ship:analyze` run is cheaper than adding a second cache layer for them.
+
+### 6.10 Ambiguity pass (AMBIG)
+
+**Goal:** detect REQ-XX/AC-XX items that carry a qualitative attribute with no measurable threshold.
+
+1. Reuse the Step 1 (§3) REQ-XX and AC-XX descriptions as-is (cache bypass — see above).
+2. Pre-filter: for each REQ-XX/AC-XX description, check it against the `# Vague Terms Dictionary
+
+Lookup of vague/qualitative terms commonly found in requirement/AC prose that lack a
+measurable threshold. Keyed by artifact language (see `ship/config.md → Artifact language`).
+
+This dictionary is a **pre-filter**: a hit here means "candidate for LLM confirmation", not
+an automatic finding. A term accompanied by an explicit measurable threshold in the same
+clause (e.g. "rápido (< 200ms)", "fast (p95 < 200ms)") must not be flagged by the consumer.
+Severity, schema, and reporting format are defined elsewhere (`src/patterns/severity.md`,
+`src/report-templates.md`), not here.
+
+## pt-BR
+
+- rápido / rapidamente
+- lento / lentamente
+- escalável / escalabilidade
+- seguro / segurança (sem controle nomeado)
+- eficiente / eficiência
+- robusto / robustez
+- confiável / confiabilidade
+- performático
+- responsivo
+- intuitivo
+- amigável
+- flexível
+- simples (sem critério objetivo)
+- adequado
+- suficiente
+- otimizado
+
+## en
+
+- fast / quickly
+- slow / slowly
+- scalable / scalability
+- secure / security (no named control)
+- efficient / efficiency
+- robust / robustness
+- reliable / reliability
+- performant
+- responsive
+- intuitive
+- friendly / user-friendly
+- flexible
+- simple (no objective criterion)
+- adequate
+- sufficient
+- optimized
+
+## Consumption
+
+Consumed via `the vague-terms.md pattern (included above)` (Mechanism A — build-time inline; agents only
+support inline, per `src/patterns/skill-patterns-convention.md`) by the AMBIG pre-filter.` entries for the active `Artifact language` (pt-BR or en dictionary). A term match selects the item as a candidate for LLM confirmation. No dictionary hit → no candidate, skip the item entirely.
+3. **Batch cap:** dispatch at most 20 AMBIG sub-agents per `/ship:analyze` run. If the pre-filtered candidate set exceeds 20 items, process it in sequential batches of up to 20 sub-agents each (parallel within a batch, batches run one after another) until every candidate has been evaluated.
+4. For each surviving candidate, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric: "does the item contain a qualitative attribute with no measurable threshold?" Instruct the sub-agent explicitly to check whether the matched term is accompanied, in the same clause, by an explicit measurable threshold (e.g., "< 200ms", "p95 < 200ms", "≥ 99.9%") — if a threshold is present, the sub-agent must return a negative confirmation (not ambiguous).
+5. Each sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose.
+6. A positive LLM confirmation produces exactly one finding: severity `medium`, category `AMBIG` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the item (REQ-XX or AC-XX).
+7. A negative confirmation (measurable threshold present, or the rubric otherwise finds no ambiguity) produces no finding for that item.
+8. No candidate found by the pre-filter, or no candidate confirmed by the LLM → no `AMBIG` findings; the `## Gaps` entries for `AMBIG` are simply absent (mirrors §6.7's empty-result rule).
+
+### 6.11 Underspecification pass (SUBSPEC)
+
+**Goal:** detect REQ-XX items that lack a testable acceptance criterion, or AC-XX items whose condition is not verifiable.
+
+1. Reuse the Step 1 (§3) REQ-XX and AC-XX keyword sets and their AC-to-REQ linkage as-is (cache bypass — see §6.10 preamble).
+2. **Pre-filter (local, no LLM):** a REQ-XX is a candidate for LLM confirmation only if it plausibly lacks a testable acceptance criterion — i.e. it has zero linked AC-XX, or every one of its linked AC-XX descriptions has no explicit measurable condition/threshold (no comparison operator, unit, percentage, or numeric bound in the text). A REQ-XX with at least one linked AC-XX that already states an explicit measurable condition/threshold is resolved locally as "not underspecified" and skipped — no sub-agent dispatch for it.
+3. **Batch cap:** dispatch at most 20 SUBSPEC sub-agents per `/ship:analyze` run. If the pre-filtered candidate set exceeds 20 REQ-XX, process it in sequential batches of up to 20 sub-agents each (parallel within a batch, batches run one after another) until every candidate has been evaluated.
+4. For each surviving candidate REQ-XX, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric: "does this requirement have a testable acceptance criterion? does each of its acceptance criteria have a verifiable pass/fail condition?"
+5. Each sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose.
+6. A REQ-XX with zero linked AC-XX, or an AC-XX whose condition the sub-agent judges not verifiable, produces exactly one finding per violating item: severity `medium`, category `SUBSPEC` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the item (REQ-XX or AC-XX).
+7. No candidate found by the pre-filter, or no violation confirmed by the LLM → no `SUBSPEC` findings; the `## Gaps` entries for `SUBSPEC` are simply absent (mirrors §6.7's empty-result rule).
+
+### 6.12 Principle-violation pass (PRINCIPLE)
+
+**Goal:** detect items that violate a convention the project or spec explicitly declares.
+
+1. Locate declared conventions in the loaded spec/design artifacts — e.g. a `## Conventions` section (or equivalent) in the proposal, design, or `ship/config.md`. If no convention is declared anywhere in scope, skip this pass entirely (no sub-agent dispatch, no findings).
+2. If at least one convention is declared, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric checking adherence of each REQ-XX/AC-XX to the declared conventions, passing the convention text and the spec items as input.
+3. The sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose (cache bypass — see §6.10 preamble).
+4. Each confirmed violation produces exactly one finding: severity `medium`, category `PRINCIPLE` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the violating item.
+5. No convention declared, or no violation confirmed → no `PRINCIPLE` findings; the `## Gaps` entries for `PRINCIPLE` are simply absent (mirrors §6.7's empty-result rule).
+
+**Parallel execution (§6.10–§6.12):** within each batch, dispatch every sub-agent required by the AMBIG, SUBSPEC, and PRINCIPLE passes in a single message — up to 20 AMBIG candidates per batch (§6.10, subject to its pre-filter and batch cap), up to 20 REQ-XX in scope for SUBSPEC per batch (§6.11, subject to its pre-filter and batch cap), and one for PRINCIPLE if a convention is declared (§6.12). All tool uses within a batch belong to the same message/turn, following the same parallelism convention as Steps 1/2 (§5) and documented in # Parallelism Strategy
+
+- Use the **Agent** tool to launch N agents in parallel in a **SINGLE call**
+- Never execute sequentially what can be parallel
+- Each parallel agent writes to separate files to avoid race conditions
+- When classifying workspaces (monorepo): cross-reference the diff/source tree with workspaces in `ship/config.md`, launch one agent per affected workspace
+- **Cross-phase parallelism** (`/ship:run`): when `dev` and `test` are both enabled and `plan.md` exists, dispatch `ship:develop` and `ship:test Mode: generate` via the **Skill tool** in the same assistant turn — unlike the within-phase fan-outs above (one orchestrator launching several agents), this pairs two independent forked skills. Safe because `plan.md`'s module map and the denylist it derives for `ship:test` guarantee disjoint file sets between the two dispatches
+- **Never use `run_in_background: true`** (Agent tool) or a backgrounded `Bash` call to dispatch any phase, worker, or leaf agent anywhere in the Ship pipeline. Every dispatch in Ship — within a phase (e.g. `ship-develop-implement` workers) or across phases (`ship:develop` + `ship:test Mode: generate`, or `perf`+`security`+`review`+`analyze`) — is a **synchronous** tool call: multiple `tool_use` blocks issued in the same assistant turn, which the harness runs concurrently but whose results the orchestrator always awaits before proceeding. "Parallel" in this document means exactly that, never an async/background dispatch. No SKILL.md or agent definition in Ship contains any logic to resume a phase from a background-completion notification — if a phase is dispatched in the background instead, the orchestrator has no way to wait for or consume its result, and will incorrectly consolidate/gate on incomplete data., but the total count varies with spec size instead of being fixed at three. If either AMBIG or SUBSPEC exceeds its 20-item cap, its remaining candidates are processed in subsequent batches, run sequentially after the first. The orchestrating agent collects and merges every returned JSON result across all batches; it does not re-derive findings from them.
+
 ---
 
 ## 7. Step 4 — Generate report
@@ -440,6 +552,9 @@ Rendered only when ORPHAN-category findings exist. Lists changed code/test artif
 | medium | Changed file/function has confidence = 0 against every REQ-XX (after ignore-list exclusion) | ORPHAN |
 | low | REQ×REQ or AC×AC pair with similarity ≥ threshold | DUP |
 | low | Two distinct terms denote the same concept | TERM |
+| medium | Vague-terms dictionary hit confirmed by LLM rubric as lacking a measurable threshold | AMBIG |
+| medium | LLM rubric confirms a requirement with no AC or an AC with no verifiable condition | SUBSPEC |
+| medium | LLM rubric confirms violation of a declared project/spec convention | PRINCIPLE |
 
 See the severity.md pattern (included above) (## Drift) for full severity definitions.
 See the Drift Findings section (included above) for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
@@ -797,3 +912,4 @@ Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the rea
 9. **Scenario backward compatibility**: presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before. Never infer or fabricate scenarios.
 10. **Language**: use the `Artifact language` passed by the caller for all user-facing output (reports, summaries, gate results). Code, identifiers, file paths, and Gherkin keywords/tags are always English.
 11. **Read efficiency**: do NOT re-read files after Edit/Write. Re-read only if explicitly requested or compaction is suspected.
+12. **LLM passes always use a fixed rubric + strict JSON**: AMBIG, SUBSPEC, and PRINCIPLE never rely on free-form sub-agent judgment — each dispatch carries a fixed rubric question and requires output conforming to `#drift-findings`; never accept prose-only responses from these sub-agents.
