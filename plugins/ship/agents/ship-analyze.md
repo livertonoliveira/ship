@@ -559,7 +559,9 @@ support inline, per `src/patterns/skill-patterns-convention.md`) by the AMBIG pr
 See the severity.md pattern (included above) (## Drift) for full severity definitions.
 See the Drift Findings section (included above) for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
 
-**Gate decision (considers only findings from enabled layers):**
+**Gate decision (derived purely from the severity table above, considering only findings from enabled layers):**
+
+The gate is not a separate judgment call — it is a direct function of the severities assigned in the classification table above, aggregated across all six passes (coverage/IMPL/DRIFT/TEST/SCENARIO, ORPHAN, DUP, TERM, AMBIG, SUBSPEC, PRINCIPLE):
 - Any `critical` or `high` finding → **FAIL**.
 - Any `medium` finding (no critical/high) → **WARN**.
 - Only `low` or no findings → **PASS**.
@@ -866,7 +868,7 @@ Open the findings markdown file for this phase, then filter before embedding:
   ```
   ✓ Drift Analysis: PASS (0 gaps) — [ver relatório completo](<link or scratch dir path>)
   ```
-- **Gate = WARN or FAIL**: embed all `critical`, `high`, and `medium` findings in full (using the `## Gaps` format above). Replace ALL `low` findings with a single aggregated line:
+- **Gate = WARN or FAIL**: embed all `critical`, `high`, and `medium` findings in full — this applies to both the `## Gaps` section (using the format above) and the `## Orphans` section (medium-severity ORPHAN rows), neither is ever collapsed. Replace ALL `low` findings, in either section, with a single aggregated line:
   ```
   + N achados de severidade baixa — [ver relatório completo](<link or scratch dir path>)
   ```
