@@ -49,5 +49,6 @@ Severity, schema, and reporting format are defined elsewhere (`src/patterns/seve
 
 ## Consumption
 
-Consumed via `@ship/patterns/vague-terms.md` (Mechanism A — build-time inline; agents only
-support inline, per `src/patterns/skill-patterns-convention.md`) by the AMBIG pre-filter.
+Consumed via `@ship/patterns/vague-terms.md` (build-time inline) by the AMBIG pre-filter in
+`src/patterns/spec-quality.md`, which `spec/SKILL.md` lazy-loads at spec time. Not consumed
+by any pipeline phase.

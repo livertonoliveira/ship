@@ -188,6 +188,10 @@ Before creating any Linear artifacts, scan the drafted Proposal/Design content f
    - `0` (clean): proceed without interruption.
 4. In non-interactive/headless mode, downgrade a fail result to warn and proceed with the markers left in place — never hard-block a headless run.
 
+### Spec quality gate
+
+After the clarify gate, audit the drafted REQ-XX/AC-XX text for ambiguity (AMBIG), underspecification (SUBSPEC), and convention violations (PRINCIPLE): read ${CLAUDE_SKILL_DIR}/patterns/spec-quality.md and follow it — local pre-filters select candidates, then **one** batched sub-agent confirms them with fixed rubrics and strict JSON. Apply accepted rewrites to the drafts before creating any artifact. These passes run only here, at spec time — never inside the pipeline.
+
 ## 6. Create artifacts — Linear Mode
 
 When Linear is configured, ALL artifacts live in Linear. No local files are created (except `ship/config.md`).
