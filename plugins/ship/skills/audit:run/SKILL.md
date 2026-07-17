@@ -4,7 +4,7 @@ description: "Ship Audit: meta-command that runs all applicable audits based on 
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 ---
 
 # Ship Audit — Run All
@@ -73,7 +73,7 @@ Launching <N> audits in parallel...
 
 ### 4. Launch all applicable audits in parallel
 
-Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "haiku"` in its frontmatter and delegates to its named `ship-audit-*` agent (which runs the heavy analysis on `sonnet`), so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
+Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter and delegates to its named `ship-audit-*` agent (which runs the heavy analysis on `sonnet`), so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
 
 - **`ship:audit:backend`**: returns the findings report from the full backend audit
 - **`ship:audit:database`**: returns the findings report from the full database audit
@@ -284,7 +284,7 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.). Extract those summaries directly from the tool results — **do NOT re-read the markdown report files**.
 
-Use the **Agent** tool to consolidate results. Pass `model: "haiku"` — this is template/report aggregation, not reasoning.
+Use the **Agent** tool to consolidate results. Pass `model: "sonnet"` — Ship pins every unit to the reasoning tier.
 
 Pass the extracted JSON summaries **inline** in the consolidation agent's prompt. Instruct the agent to:
 1. Use the provided JSON summaries (already included in the prompt — no file reads needed)

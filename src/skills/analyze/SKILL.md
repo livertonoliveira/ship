@@ -4,7 +4,7 @@ description: "Ship Phase 6.5: drift detection — maps spec→code→tests, dete
 argument-hint: "<feature-name | linear-issue-id>"
 allowed-tools: Read, Bash, Agent
 user-invocable: true
-model: haiku
+model: sonnet
 context: fork
 ---
 

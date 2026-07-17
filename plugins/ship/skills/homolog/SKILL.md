@@ -4,7 +4,7 @@ description: "Ship Phase 7: presents a consolidated quality report and awaits us
 argument-hint: "<feature-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
-model: "haiku"
+model: "sonnet"
 ---
 
 # Ship Homolog — User Acceptance

@@ -199,13 +199,13 @@ bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .contex
    Terminal format (one line, printed immediately before invoking the tool):
 
    ```
-   ▶ Fase: <phase> | tool=<Skill|Agent> | name=<name> | model=<haiku|sonnet>
+   ▶ Fase: <phase> | tool=<Skill|Agent> | name=<name> | model=<sonnet>
    ```
 
    `dispatch-log.md` row format:
 
    ```
-   | <phase> | <Skill|Agent> | <name> | <haiku|sonnet> | <ISO-8601 UTC> |
+   | <phase> | <Skill|Agent> | <name> | <sonnet> | <ISO-8601 UTC> |
    ```
 
    Field rules:
