@@ -66,7 +66,10 @@ Unit: <module name | fix | clean>
 - Files: <created/modified files>
 - Scenarios satisfied: <scenario titles>   (omit in fix/clean mode; the orchestrator re-maps titles to SC-XX for the report)
 - Syntax: ok | errors: <details>
+- Status: <ENUM>
 ```
+
+The `Status` enum and its semantics are defined in `@@ship/patterns/worker-status.md`. For this worker: report `DONE` when the unit completed with no unresolved syntax errors and the plan was workable; report `NEEDS_CONTEXT` when `Syntax: errors:` remains unresolved after exhausting the fix cycle's retry ceiling (§3, up to 2 iterations); report `BLOCKED` when the plan is determined genuinely unworkable per the "Rules" section below. Exactly one `Status:` line per report, no exceptions.
 
 ---
 

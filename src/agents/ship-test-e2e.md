@@ -106,7 +106,10 @@ E2E Tests:
 - Passed: <N>
 - Failed: <N>
 - Failures: [<file> (<N> failures), ...]
+- Status: <ENUM>
 ```
+
+The `Status` enum and its semantics are defined in `@@ship/patterns/worker-status.md`. For this worker: report `DONE` when tests were generated and/or executed successfully with no unresolved failures; report `DONE_WITH_CONCERNS` when a denylisted-path collision occurred (§1c) — the conflict is still reported per the existing prose, `Status` is an additional signal, not a replacement; report `NEEDS_CONTEXT` when generation/execution could not proceed because the required input was missing (no e2e framework detected per §2, or no scenarios/source injected and the standalone fallback also found nothing to work from). Exactly one `Status:` line per report.
 
 ---
 
