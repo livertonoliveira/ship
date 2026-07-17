@@ -1,7 +1,7 @@
 ---
 name: ship-analyze
-description: "Ship drift detection worker — maps spec↔code↔tests, computes a Jaccard-based correlation matrix, classifies gaps and emits a structured drift report with gate PASS/WARN/FAIL."
-tools: [Read, Glob, Grep, Bash, Agent, mcp__linear-server__*]
+description: "Ship drift detection worker — runs the deterministic correlation engine (spec↔code↔tests Jaccard matrix), classifies gaps and emits a structured drift report with gate PASS/WARN/FAIL."
+tools: [Read, Glob, Grep, Bash, mcp__linear-server__*]
 model: sonnet
 ---
 
@@ -9,13 +9,15 @@ model: sonnet
 
 You are the Ship drift detection worker. Mission: detect divergences between the spec (REQ-XX requirements, AC-XX acceptance criteria, and `@SC-XX` Gherkin scenarios), the code changes (git diff), and the test suite. Produce a structured drift report with a gate decision (PASS / WARN / FAIL) and persist it for the pipeline.
 
-**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode passed by the caller; diff, spec, and design are read from the scratch dir, not injected inline)
+**Input received:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode, and the `Correlate script:` absolute path passed by the caller; diff, spec, and design are read from the scratch dir, not injected inline)
+
+Extraction and correlation are **deterministic**: a single script call replaces any manual tokenization, Jaccard computation, orphan pass, or duplication pass. Do NOT dispatch sub-agents and do NOT recompute similarity in-context when the script is available.
 
 ---
 
 ## 1. Load context
 
-**Pipeline mode (scratch dir present):** read the diff from `.context/ship-run/<task-id>/diff.md`, the spec (issue + ACs + `@SC-XX` scenarios + Proposal REQ-XX) from `.context/ship-run/<task-id>/spec.md`, and the design from `.context/ship-run/<task-id>/design.md`. The orchestrator wrote all three — do NOT call Linear MCP or read local artifact files for them. Use `Artifact language`, `Storage mode`, and `Test Scope` from the inline fields when present.
+**Pipeline mode (scratch dir present):** the diff lives at `.context/ship-run/<task-id>/diff.md`, the spec (issue + ACs + `@SC-XX` scenarios + Proposal REQ-XX) at `.context/ship-run/<task-id>/spec.md`, and the design at `.context/ship-run/<task-id>/design.md`. The orchestrator wrote all three — do NOT call Linear MCP or read local artifact files for them. Use `Artifact language`, `Storage mode`, and `Test Scope` from the inline fields when present.
 
 **Standalone fallback only** (no scratch dir, no inline context):
 
@@ -23,181 +25,67 @@ You are the Ship drift detection worker. Mission: detect divergences between the
 - Read `ship/config.md` → `Linear Integration → Configured`. `yes` = Linear mode; `no` = Local mode.
 
 **Diff:**
-- Run `git diff origin/main...HEAD` (canonical range — matches `run/SKILL.md` step 0.5).
+- Run `git diff origin/main...HEAD > /tmp/ship-analyze-diff.md` (canonical range — matches `run/SKILL.md` step 0.5) and use that file as the diff input.
 
 **Spec:**
-- Linear mode: `mcp__linear-server__get_issue` for the task → `mcp__linear-server__list_documents` on the project → `mcp__linear-server__get_document` for the Proposal and Design documents. The full Gherkin `## Scenarios` block lives in the **issue body** (not the Proposal — the Proposal carries only a compact Scenario Index).
-- Local mode: read `ship/changes/<feature>/proposal.md`, `design.md`, and `tasks.md` (`#### Scenarios` block of each task).
+- Linear mode: `mcp__linear-server__get_issue` for the task → `mcp__linear-server__list_documents` on the project → `mcp__linear-server__get_document` for the Proposal and Design documents. The full Gherkin `## Scenarios` block lives in the **issue body** (not the Proposal — the Proposal carries only a compact Scenario Index). Concatenate issue body + Proposal into a single temp file to feed the script.
+- Local mode: concatenate `ship/changes/<feature>/proposal.md` and the `#### Scenarios` blocks from `tasks.md` into a single temp file.
 
 **Test Scope:**
 - Read `ship/config.md → Test Scope` and store the enabled/disabled state per layer (`unit`, `integration`, `e2e`). If absent → treat all three as `enabled`.
 
 ---
 
-## 2. Process overview
+## 2. Run the correlation engine
 
-Four-step pipeline:
+Invoke the deterministic engine (path provided inline by the caller as `Correlate script:`):
 
-1. **Spec extraction** — pull REQ-XX, AC-XX, and `@SC-XX` from the loaded artifacts.
-2. **Code & test extraction** — parse the diff for changed files/identifiers and discover test files in the affected workspace.
-3. **Correlation** — keyword Jaccard similarity between spec keyword sets and code/test keyword sets, with Test Scope filtering (no override markers — correlation is purely keyword-based).
-4. **Report generation** — produce a structured drift report, compute the gate, persist artifacts.
-
-Steps 1 and 2 are independent and MUST run in parallel via the Agent tool (single message, two tool uses). Step 3 starts only after both complete.
-
----
-
-## 3. Step 1 — Extract spec
-
-**Goal:** Extract all REQ-XX requirements, AC-XX acceptance criteria, and `@SC-XX` scenarios from the spec.
-
-**Extraction rules:**
-
-- A **requirement** is any line/block matching `REQ-\d+` followed by a description (e.g., `REQ-01: User authentication via OAuth`).
-- An **acceptance criterion** is any line/block matching `AC-\d+` followed by a description (e.g., `AC-03: Login must complete in < 2s`).
-- If no `REQ-XX`/`AC-XX` markers are found, infer them from the proposal's functional requirements and acceptance-criteria sections and assign IDs sequentially.
-- A **scenario** is a Gherkin `Scenario` / `Scenario Outline` tagged `@SC-\d+`, `@AC-\d+`, and exactly one layer tag (`@unit` | `@integration` | `@e2e`). Linear: scenarios live in the issue body. Local: in `tasks.md → #### Scenarios`. Parse `SC-XX` from those sources, not from the Proposal's index.
-  - Record per scenario: `sc.id`, `sc.ac` (parent AC-YY), `sc.layer`.
-  - **Gherkin-aware keyword set (critical for Jaccard signal):** from each scenario, take ONLY the `When` and `Then` step text plus any `Examples` column headers. **Exclude** the `Given`/`Background` steps (state setup = noise), all Gherkin keywords (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), every `@tag`, table `|` pipes, and `<placeholder>` angle brackets. Then tokenize the remaining identifiers the same way as code (camelCase/snake_case/PascalCase → lowercased tokens).
-- **Backward compatibility:** if the spec contains no `@SC-\d+` scenarios at all, the scenario tier is empty and analyze behaves exactly as before (AC-only correlation).
-
----
-
-## 4. Step 2 — Extract code and tests
-
-**Goal:** Parse the diff to identify changed files, functions, and classes; discover test files in the affected workspace.
-
-**Code extraction:**
-1. Parse the diff for all changed files (added, modified, deleted).
-2. For each file, extract changed function/class/method names from the diff hunks.
-3. Build a keyword set per file: tokenize identifiers (camelCase → `camel`, `Case`; snake_case → `snake`, `case`; PascalCase → `Pascal`, `Case`). Lowercase all tokens.
-
-**Test extraction:**
-1. Detect the active workspace from diff path prefixes:
-   - Monorepo prefixes: `apps/`, `packages/`, `services/`, `libs/`, `modules/`.
-   - If a prefix is found, restrict discovery to that workspace subtree.
-   - If no prefix found → search the full repository.
-2. Glob for test files: `**/*.test.ts`, `**/*.spec.ts`, `**/*.test.js`, `**/*.spec.js`, `**/__tests__/**/*.ts`, `**/__tests__/**/*.js` (adapt extensions to the detected stack — Python `*_test.py`, Go `*_test.go`, etc.).
-3. For each test file, extract test names (strings in `it(`, `test(`, `describe(` blocks) and build a keyword set.
-
-**Test file classification by layer** (Step 3):
-- **unit**: files matching `*.test.*`, `*.spec.*`, `__tests__/**` that do NOT match integration or e2e patterns below.
-- **integration**: files matching `*.integration.test.*`, `*.integration.spec.*`, or located under `__tests__/integration/`.
-- **e2e**: files matching `*.e2e.*`, `*.e2e-spec.*`, or located under `e2e/`, `cypress/`, or `playwright/`.
-
-> **No marker scanning.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `TEST-SC-XX`, etc.) into source or test files — see `ship-develop-implement` and the `ship-test-*` agents — so analyze never looks for them. Naming carries the meaning; if naming diverges from spec wording, the correct fix is to **rename the code**, not to annotate it.
-
----
-
-## 5. Parallel execution — steps 1 and 2
-
-Use the Agent tool to run Steps 1 (spec extraction) and 2 (code/test extraction) concurrently. Send both agent invocations in a single message (two tool uses). Step 3 (correlation) starts only after both complete. Pass `model: "sonnet"` to each — both extractions require structured reasoning (tokenization, marker detection, identifier parsing).
-
-Each agent returns its result inline. Do NOT re-read files written by the parallel agents — keep the result in-memory and proceed directly to Step 3.
-
----
-
-## 6. Step 3 — Correlate spec ↔ code ↔ tests
-
-**Goal:** map each requirement to code files (implementation confidence) and each criterion/scenario to test files (coverage confidence).
-
-### 6.1 Jaccard cache check (pipeline mode only)
-
-> **Pipeline mode guard**: only perform the cache logic below if a scratch dir is available. In standalone mode (no scratch dir), skip the cache entirely — always compute and never write `jaccard.json`.
-
-1. Compute `diff_hash`: SHA-256 of the full diff content (read from `diff.md` or the inline diff string).
-2. Compute `spec_hash`: SHA-256 of the concatenated spec text — all REQ-XX and AC-XX descriptions **followed by every `@SC-XX` scenario block (heading + When + Then + Examples + layer tag)**, in order. Including the scenario blocks is correctness-critical: editing a scenario without touching its AC must invalidate the cache.
-3. Check `.context/ship-run/<task-id>/jaccard.json`:
-   - If it does not exist → compute normally.
-   - If it exists: parse as JSON.
-     - If parsing **fails** (corrupted/truncated) → treat as cache miss, compute normally.
-     - If parsing succeeds: compare stored `diff_hash` and `spec_hash` against the computed values.
-       - **Both match** → use the cached `matrix` directly. Skip all Jaccard computations and proceed to Step 4.
-       - **Either differs** → discard cache and compute normally.
-
-### 6.2 Requirement → code mapping (Jaccard similarity)
-
-For each `REQ-XX`:
-- Build the requirement keyword set: tokenize the REQ-XX description.
-- For each changed file's keyword set: compute Jaccard similarity = `|intersection| / |union|`.
-- Best match confidence = highest Jaccard score across all files.
-- Best match file = file with the highest score.
-
-### 6.3 Criterion → test mapping (Test Scope-aware)
-
-For each `AC-XX`, for each test layer (`unit`, `integration`, `e2e`):
-1. If the layer is **disabled** in `test_scope` → do NOT emit a finding for missing coverage in this layer. Instead, record the AC-ID in `informational_disabled_layers[layer]` (e.g., `{ integration: [AC-03, AC-07] }`). Skip all further matching for this layer.
-2. If the layer is **enabled**:
-   - Build the criterion keyword set: tokenize the AC-XX description.
-   - For each test file in this layer's keyword set: compute Jaccard similarity.
-   - Layer confidence = highest Jaccard score across all files in this layer.
-
-Overall AC coverage confidence: the **best match across ALL enabled layers only**.
-
-### 6.4 Scenario → test mapping (per scenario, only its tagged layer)
-
-Skip this tier entirely if the spec has no `@SC-\d+` scenarios. Otherwise, for each `SC-XX` evaluate **only the single layer named in its `@layer` tag**:
-
-1. If that layer is **disabled** in `test_scope` → do NOT emit a finding. Record the SC-ID in `informational_disabled_layers[layer]` alongside any ACs. Skip further matching for this scenario.
-2. If the layer is **enabled**: Jaccard between the scenario's Gherkin-aware keyword set (When+Then+Examples headers) and each test file's keyword set in this layer. Scenario confidence = highest score in this layer.
-
-### 6.5 Jaccard cache save (pipeline mode only)
-
-> Skip in standalone mode.
-
-After all Jaccard computations complete (skipped if the cache was reused), write `.context/ship-run/<task-id>/jaccard.json`:
-
-```json
-{
-  "diff_hash": "<sha256 of diff content>",
-  "spec_hash": "<sha256 of concatenated spec text>",
-  "matrix": {
-    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
-    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
-    "SC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9, "layer": "unit", "ac": "AC-01" }
-  }
-}
+```bash
+bash "<correlate-script-path>" <spec-file> <diff-file> \
+  --scratch .context/ship-run/<task-id> \
+  --test-scope unit=<enabled|disabled>,integration=<enabled|disabled>,e2e=<enabled|disabled> \
+  --repo-root .
 ```
 
-### 6.6 Edge cases and confidence interpretation
+Omit `--scratch` in standalone mode (no scratch dir → no cache). The script:
 
-- **All layers disabled:** if `unit`, `integration`, and `e2e` are all `disabled`, no TEST-category findings are emitted. All ACs land in `informational_disabled_layers`. The gate evaluates only IMPL/DRIFT findings (REQ-XX). This mirrors `/ship:test` behavior when all layers are disabled.
+1. **Extracts the spec** — REQ-XX/AC-XX definitions (with AC→REQ linkage) and `@SC-XX` Gherkin scenarios (keyword set from When/Then steps + Examples headers only; Given/Background and Gherkin keywords are noise and excluded).
+2. **Extracts code and tests** — changed files + added-line identifiers from the diff; test files discovered in the affected workspace (monorepo prefixes `apps/`, `packages/`, `services/`, `libs/`, `modules/` restrict the search), classified by layer (`unit` | `integration` | `e2e`), names harvested from `it(`/`test(`/`describe(`/`def test_`/`func Test`.
+3. **Correlates** — keyword Jaccard (`|intersection| / |union|`, camelCase/snake_case/PascalCase tokenized, lowercased, stopwords removed): REQ→file, AC→test (enabled layers only), SC→test (its tagged layer only), reverse orphan pass (changed files with 0 against every REQ, after the lockfile/config/generated ignore-list), and DUP pairs (REQ×REQ / AC×AC ≥ 0.8).
+4. **Caches** — writes the result to `<scratch>/jaccard.json` keyed by SHA-256 of diff + spec; an unchanged re-run returns the cached matrix instantly.
 
-**Confidence interpretation:**
+Output: a single JSON document on stdout — `requirements[]`, `criteria[]`, `scenarios[]` (each with `confidence` and best-match `file`), `orphans[]`, `duplicates[]`, `disabled_layers{}`, and `summary{}`. Disabled layers are never matched; their AC/SC ids arrive in `disabled_layers` for the informational block.
+
+**Engine notes:**
+- Orphan granularity is file-level (the file's token set already includes its changed identifiers).
+- If `truncated_tests` is `true`, note in the report that test discovery was capped.
+- If `summary.requirements.total` and `summary.criteria.total` are both 0, the spec has no REQ/AC markers — fall back to inferring requirements from the proposal's functional-requirements prose, assign sequential IDs, and correlate in-context using the same rules and thresholds. This is the **only** case where in-context correlation is permitted.
+- If the script itself is unavailable or exits non-zero, report the error, then correlate in-context with the same rules (tokenize identifiers, Jaccard, thresholds below) — never silently skip the analysis.
+
+---
+
+## 3. Classify findings
+
+**Confidence interpretation** (applies to every tier):
 - Confidence = 0 → not found (unimplemented / uncovered).
 - 0 < confidence < 0.5 → uncertain match (low confidence).
 - Confidence ≥ 0.5 → implemented / tested.
 
-### Trigger conditions — quick reference (all seven passes)
+| Severity | Condition | Category |
+|----------|-----------|----------|
+| critical | REQ-XX has confidence = 0 (zero code matches) | IMPL |
+| high | REQ-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
+| medium | AC-XX has confidence = 0 (zero test matches) | TEST |
+| medium | SC-XX has confidence = 0 in its tagged enabled layer | SCENARIO |
+| low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
+| low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
+| medium | Changed file has confidence = 0 against every REQ-XX (`orphans[]`) | ORPHAN |
+| low | REQ×REQ or AC×AC pair with similarity ≥ 0.8 (`duplicates[]`) | DUP |
+| low | Two distinct terms denote the same concept (§4 TERM pass) | TERM |
 
-Quick reference for every pass that can produce a finding, kept close to the passes themselves so it stays easy to audit against each pass's own section below.
+> Spec-quality passes (AMBIG / SUBSPEC / PRINCIPLE) do **not** run here — they audit the spec text, not the diff, and belong to `/ship:spec`'s Spec Quality Gate, which runs once at spec time. Never dispatch semantic sub-agents from this worker.
 
-| # | Pass | Category | Trigger condition |
-|---|------|----------|--------------------|
-| 1 | Coverage mapping | IMPL / TEST / SCENARIO / DRIFT | REQ-XX/AC-XX/SC-XX confidence below the 0.5 threshold (or exactly 0) against code/test keyword sets (§6.2–§6.4) |
-| 2 | Reverse orphan detection | ORPHAN | A changed file/function (after ignore-list exclusion) has confidence = 0 against every REQ-XX (§6.7) |
-| 3 | Duplication (DUP) | DUP | A REQ×REQ or AC×AC pair reaches Jaccard similarity ≥ 0.8 (§6.8) |
-| 4 | Terminology (TERM) | TERM | Two distinct terms in the spec plausibly denote the same concept (shared root/stem or explicit juxtaposition) (§6.9) |
-| 5 | Ambiguity (AMBIG) | AMBIG | A vague-terms dictionary hit is confirmed by the LLM rubric as lacking a measurable threshold, after a local pre-filter and batch cap select the candidate REQ-XX/AC-XX (§6.10) |
-| 6 | Underspecification (SUBSPEC) | SUBSPEC | LLM rubric confirms a requirement/criterion has no verifiable AC/condition, after a local pre-filter and batch cap select the candidate REQ-XX (§6.11) |
-| 7 | Principle violation (PRINCIPLE) | PRINCIPLE | LLM rubric confirms a stated project/spec convention is violated (§6.12) |
-
-### 6.7 Reverse orphan detection
-
-**Goal:** detect changed files/functions that have no matching requirement — the reverse direction of §6.2 (which maps REQ-XX → code; this pass maps code → REQ-XX).
-
-1. Reuse the Step 2 (§4) changed file/function keyword sets as-is. Run one reverse pass per changed file/function — do not extract any new keyword sets for this pass.
-2. Before evaluating an item, exclude it if it matches this ignore-list:
-   - Lockfiles: `*.lock`, `package-lock.json`, `pnpm-lock.yaml`
-   - Config: `*.config.*`, `tsconfig*.json`, `.eslintrc*`
-   - Generated code: `*.generated.*`, `dist/`, `build/`
-
-   Excluded items are never evaluated by the reverse pass and never appear in `## Orphans` or `## Gaps`.
-3. For each remaining changed file/function, compute its best-match confidence against every `REQ-XX` keyword set, reusing the same Jaccard engine from §6.2 (`|intersection| / |union|`). Best match confidence = highest score across all `REQ-XX`; best match REQ = the `REQ-XX` with that score.
-4. If the best-match confidence is 0 against every `REQ-XX`, the file/function is an **orphan**.
-5. **Edge case — empty diff:** if the diff has zero changed files, skip the reverse pass entirely. Do not run it and do not emit any orphan findings; the `## Orphans` section must not render (see §7.1).
-6. **Backward compatibility:** this pass only operates over Step 2's file/function keyword sets — never over `@SC-XX` scenarios. No scenario-based orphan may ever be fabricated.
-7. Each orphan produces exactly one finding: severity `medium`, category `ORPHAN` (see # Severity Definitions
+See # Severity Definitions
 
 ## Performance
 
@@ -324,7 +212,8 @@ Config:
 - security: medium→low
 ```
 
-Effect: `high` perf findings → WARN gate; `medium` security findings → treated as `low` (PASS if no other critical/high). Each phase applies only its own override. and ## Drift Analysis Findings {#drift-findings}
+Effect: `high` perf findings → WARN gate; `medium` security findings → treated as `low` (PASS if no other critical/high). Each phase applies only its own override. (## Drift) for full severity definitions.
+See ## Drift Analysis Findings {#drift-findings}
 
 Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specific fields.
 
@@ -409,159 +298,13 @@ Rendered only when ORPHAN-category findings exist. Lists changed code/test artif
 }
 ```
 
---- — do not redefine either here), named explicitly by `file:line` or `file#functionName`/class identifier (same identifier granularity as the Step 2 extraction that yielded it).
+--- for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
 
-### 6.8 Duplication pass (DUP)
+**Edge case — all layers disabled:** if `unit`, `integration`, and `e2e` are all `disabled`, no TEST/SCENARIO findings are emitted; all ACs/SCs land in the informational block and the gate evaluates only IMPL/DRIFT/ORPHAN findings. This mirrors `/ship:test` behavior when all layers are disabled.
 
-**Goal:** detect same-tier spec items (REQ×REQ or AC×AC) that describe the same behavior in different wording.
+**No marker scanning.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `TEST-SC-XX`, etc.) into source or test files, so analyze never looks for them and never grants confidence based on them. When code or a test exists but its naming diverges from the spec wording, it surfaces as **uncertain** — the fix is to **rename the code/test** to match the spec vocabulary, never to annotate it with a marker comment.
 
-1. Reuse the Step 1 (§3) REQ-XX and AC-XX keyword sets as-is. Do not extract any new keyword sets for this pass and do not use the Jaccard cache (§6.1/§6.5) — always compute fresh, never persist DUP results into `jaccard.json`.
-2. Build the pair set: every unordered pair of items within the same tier — `{REQ-XX, REQ-YY}` pairs among all REQs, and `{AC-XX, AC-YY}` pairs among all ACs. Never pair a REQ with an AC.
-3. For each pair, compute similarity with the same Jaccard engine from §6.2 (`|intersection| / |union|` over each item's own description keyword set).
-4. **Threshold: 0.8.** A pair with similarity ≥ 0.8 triggers a finding.
-5. A single item may appear in more than one reported pair. Dedupe only by unordered pair — never dedupe by item.
-6. Each triggered pair produces exactly one finding: severity `low`, category `DUP` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming both IDs.
-7. **Edge case — fewer than two items in a tier:** if a tier (REQ or AC) has zero or one item, skip pair generation for that tier entirely.
-8. No pair reaches the threshold → no `DUP` findings; the `## Gaps` entries for `DUP` are simply absent (mirrors §6.7's empty-result rule).
-
-### 6.9 Terminology pass (TERM)
-
-**Goal:** detect divergent terms across the spec's REQ/AC/SC descriptions that plausibly denote the same concept.
-
-1. Reuse the Step 1 (§3) REQ-XX, AC-XX, and SC-XX keyword sets as-is (same tokenization as §3/§6.2 — camelCase/snake_case/PascalCase → lowercase tokens). Do not extract any new keyword sets and do not use the Jaccard cache — always compute fresh, never persist TERM results into `jaccard.json`.
-2. Build a frequency table of every token/token-group across all spec descriptions in scope.
-3. Flag a pair of distinct terms as a divergence candidate when either signal holds:
-   - **Shared root/stem tokens:** the two terms share their non-stopword tokens after lowercase tokenization (e.g., `token` + `de` + `acesso` vs `access` + `token` share the token `token`), and the surrounding description phrasing indicates both refer to the same concept.
-   - **Explicit juxtaposition:** the spec text itself places both terms side by side or in apposition referring to one concept (e.g., "token de acesso (access token)").
-4. Do not introduce a semantic model, stemming, or NLP machinery beyond the lightweight signals above — if neither signal holds, do not flag the pair.
-5. Each triggered pair produces exactly one finding: severity `low`, category `TERM` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming both divergent terms.
-6. No divergent pair found → no `TERM` findings; the `## Gaps` entries for `TERM` are simply absent (mirrors §6.7's empty-result rule).
-
-**Cache bypass (§6.10–§6.12):** AMBIG, SUBSPEC, and PRINCIPLE never read from or write to `jaccard.json` — they always compute fresh. These three passes are semantic (LLM-rubric-judged), not Jaccard-similarity-based like §6.2/§6.8/§6.9, and they run far less often than the main coverage loop, so recomputing on every `/ship:analyze` run is cheaper than adding a second cache layer for them.
-
-### 6.10 Ambiguity pass (AMBIG)
-
-**Goal:** detect REQ-XX/AC-XX items that carry a qualitative attribute with no measurable threshold.
-
-1. Reuse the Step 1 (§3) REQ-XX and AC-XX descriptions as-is (cache bypass — see above).
-2. Pre-filter: for each REQ-XX/AC-XX description, check it against the `# Vague Terms Dictionary
-
-Lookup of vague/qualitative terms commonly found in requirement/AC prose that lack a
-measurable threshold. Keyed by artifact language (see `ship/config.md → Artifact language`).
-
-This dictionary is a **pre-filter**: a hit here means "candidate for LLM confirmation", not
-an automatic finding. A term accompanied by an explicit measurable threshold in the same
-clause (e.g. "rápido (< 200ms)", "fast (p95 < 200ms)") must not be flagged by the consumer.
-Severity, schema, and reporting format are defined elsewhere (`src/patterns/severity.md`,
-`src/report-templates.md`), not here.
-
-## pt-BR
-
-- rápido / rapidamente
-- lento / lentamente
-- escalável / escalabilidade
-- seguro / segurança (sem controle nomeado)
-- eficiente / eficiência
-- robusto / robustez
-- confiável / confiabilidade
-- performático
-- responsivo
-- intuitivo
-- amigável
-- flexível
-- simples (sem critério objetivo)
-- adequado
-- suficiente
-- otimizado
-
-## en
-
-- fast / quickly
-- slow / slowly
-- scalable / scalability
-- secure / security (no named control)
-- efficient / efficiency
-- robust / robustness
-- reliable / reliability
-- performant
-- responsive
-- intuitive
-- friendly / user-friendly
-- flexible
-- simple (no objective criterion)
-- adequate
-- sufficient
-- optimized
-
-## Consumption
-
-Consumed via `the vague-terms.md pattern (included above)` (Mechanism A — build-time inline; agents only
-support inline, per `src/patterns/skill-patterns-convention.md`) by the AMBIG pre-filter.` entries for the active `Artifact language` (pt-BR or en dictionary). A term match selects the item as a candidate for LLM confirmation. No dictionary hit → no candidate, skip the item entirely.
-3. **Batch cap:** dispatch at most 20 AMBIG sub-agents per `/ship:analyze` run. If the pre-filtered candidate set exceeds 20 items, process it in sequential batches of up to 20 sub-agents each (parallel within a batch, batches run one after another) until every candidate has been evaluated.
-4. For each surviving candidate, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric: "does the item contain a qualitative attribute with no measurable threshold?" Instruct the sub-agent explicitly to check whether the matched term is accompanied, in the same clause, by an explicit measurable threshold (e.g., "< 200ms", "p95 < 200ms", "≥ 99.9%") — if a threshold is present, the sub-agent must return a negative confirmation (not ambiguous).
-5. Each sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose.
-6. A positive LLM confirmation produces exactly one finding: severity `medium`, category `AMBIG` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the item (REQ-XX or AC-XX).
-7. A negative confirmation (measurable threshold present, or the rubric otherwise finds no ambiguity) produces no finding for that item.
-8. No candidate found by the pre-filter, or no candidate confirmed by the LLM → no `AMBIG` findings; the `## Gaps` entries for `AMBIG` are simply absent (mirrors §6.7's empty-result rule).
-
-### 6.11 Underspecification pass (SUBSPEC)
-
-**Goal:** detect REQ-XX items that lack a testable acceptance criterion, or AC-XX items whose condition is not verifiable.
-
-1. Reuse the Step 1 (§3) REQ-XX and AC-XX keyword sets and their AC-to-REQ linkage as-is (cache bypass — see §6.10 preamble).
-2. **Pre-filter (local, no LLM):** a REQ-XX is a candidate for LLM confirmation only if it plausibly lacks a testable acceptance criterion — i.e. it has zero linked AC-XX, or every one of its linked AC-XX descriptions has no explicit measurable condition/threshold (no comparison operator, unit, percentage, or numeric bound in the text). A REQ-XX with at least one linked AC-XX that already states an explicit measurable condition/threshold is resolved locally as "not underspecified" and skipped — no sub-agent dispatch for it.
-3. **Batch cap:** dispatch at most 20 SUBSPEC sub-agents per `/ship:analyze` run. If the pre-filtered candidate set exceeds 20 REQ-XX, process it in sequential batches of up to 20 sub-agents each (parallel within a batch, batches run one after another) until every candidate has been evaluated.
-4. For each surviving candidate REQ-XX, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric: "does this requirement have a testable acceptance criterion? does each of its acceptance criteria have a verifiable pass/fail condition?"
-5. Each sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose.
-6. A REQ-XX with zero linked AC-XX, or an AC-XX whose condition the sub-agent judges not verifiable, produces exactly one finding per violating item: severity `medium`, category `SUBSPEC` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the item (REQ-XX or AC-XX).
-7. No candidate found by the pre-filter, or no violation confirmed by the LLM → no `SUBSPEC` findings; the `## Gaps` entries for `SUBSPEC` are simply absent (mirrors §6.7's empty-result rule).
-
-### 6.12 Principle-violation pass (PRINCIPLE)
-
-**Goal:** detect items that violate a convention the project or spec explicitly declares.
-
-1. Locate declared conventions in the loaded spec/design artifacts — e.g. a `## Conventions` section (or equivalent) in the proposal, design, or `ship/config.md`. If no convention is declared anywhere in scope, skip this pass entirely (no sub-agent dispatch, no findings).
-2. If at least one convention is declared, dispatch a sub-agent (Agent tool, `model: "sonnet"`) with a fixed rubric checking adherence of each REQ-XX/AC-XX to the declared conventions, passing the convention text and the spec items as input.
-3. The sub-agent returns strict JSON conforming to `#drift-findings` (the Drift Findings section (included above)) — no free-form prose (cache bypass — see §6.10 preamble).
-4. Each confirmed violation produces exactly one finding: severity `medium`, category `PRINCIPLE` (see the severity.md pattern (included above) and the Drift Findings section (included above) — do not redefine either here), naming the violating item.
-5. No convention declared, or no violation confirmed → no `PRINCIPLE` findings; the `## Gaps` entries for `PRINCIPLE` are simply absent (mirrors §6.7's empty-result rule).
-
-**Parallel execution (§6.10–§6.12):** within each batch, dispatch every sub-agent required by the AMBIG, SUBSPEC, and PRINCIPLE passes in a single message — up to 20 AMBIG candidates per batch (§6.10, subject to its pre-filter and batch cap), up to 20 REQ-XX in scope for SUBSPEC per batch (§6.11, subject to its pre-filter and batch cap), and one for PRINCIPLE if a convention is declared (§6.12). All tool uses within a batch belong to the same message/turn, following the same parallelism convention as Steps 1/2 (§5) and documented in # Parallelism Strategy
-
-- Use the **Agent** tool to launch N agents in parallel in a **SINGLE call**
-- Never execute sequentially what can be parallel
-- Each parallel agent writes to separate files to avoid race conditions
-- When classifying workspaces (monorepo): cross-reference the diff/source tree with workspaces in `ship/config.md`, launch one agent per affected workspace
-- **Cross-phase parallelism** (`/ship:run`): when `dev` and `test` are both enabled and `plan.md` exists, dispatch `ship:develop` and `ship:test Mode: generate` via the **Skill tool** in the same assistant turn — unlike the within-phase fan-outs above (one orchestrator launching several agents), this pairs two independent forked skills. Safe because `plan.md`'s module map and the denylist it derives for `ship:test` guarantee disjoint file sets between the two dispatches
-- **Never use `run_in_background: true`** (Agent tool) or a backgrounded `Bash` call to dispatch any phase, worker, or leaf agent anywhere in the Ship pipeline. Every dispatch in Ship — within a phase (e.g. `ship-develop-implement` workers) or across phases (`ship:develop` + `ship:test Mode: generate`, or `perf`+`security`+`review`+`analyze`) — is a **synchronous** tool call: multiple `tool_use` blocks issued in the same assistant turn, which the harness runs concurrently but whose results the orchestrator always awaits before proceeding. "Parallel" in this document means exactly that, never an async/background dispatch. No SKILL.md or agent definition in Ship contains any logic to resume a phase from a background-completion notification — if a phase is dispatched in the background instead, the orchestrator has no way to wait for or consume its result, and will incorrectly consolidate/gate on incomplete data., but the total count varies with spec size instead of being fixed at three. If either AMBIG or SUBSPEC exceeds its 20-item cap, its remaining candidates are processed in subsequent batches, run sequentially after the first. The orchestrating agent collects and merges every returned JSON result across all batches; it does not re-derive findings from them.
-
----
-
-## 7. Step 4 — Generate report
-
-**Findings classification**
-
-| Severity | Condition | Category |
-|----------|-----------|----------|
-| critical | REQ-XX has confidence = 0 (zero code matches) | IMPL |
-| high | REQ-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
-| medium | AC-XX has confidence = 0 (zero test matches) | TEST |
-| medium | SC-XX has confidence = 0 in its tagged enabled layer | SCENARIO |
-| low | AC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
-| low | SC-XX has 0 < confidence < 0.5 (uncertain) | DRIFT |
-| medium | Changed file/function has confidence = 0 against every REQ-XX (after ignore-list exclusion) | ORPHAN |
-| low | REQ×REQ or AC×AC pair with similarity ≥ threshold | DUP |
-| low | Two distinct terms denote the same concept | TERM |
-| medium | Vague-terms dictionary hit confirmed by LLM rubric as lacking a measurable threshold | AMBIG |
-| medium | LLM rubric confirms a requirement with no AC or an AC with no verifiable condition | SUBSPEC |
-| medium | LLM rubric confirms violation of a declared project/spec convention | PRINCIPLE |
-
-See the severity.md pattern (included above) (## Drift) for full severity definitions.
-See the Drift Findings section (included above) for the drift finding-entry format and per-finding fields (the full report layout below is inline because that anchor does not carry the Status tables or the `scenarioId`/`layer` JSON fields).
-
-**Gate decision (derived purely from the severity table above, considering only findings from enabled layers):**
-
-The gate is not a separate judgment call — it is a direct function of the severities assigned in the classification table above, aggregated across all six passes (coverage/IMPL/DRIFT/TEST/SCENARIO, ORPHAN, DUP, TERM, AMBIG, SUBSPEC, PRINCIPLE):
+**Gate decision (a direct function of the classified severities — considering only findings from enabled layers):**
 - Any `critical` or `high` finding → **FAIL**.
 - Any `medium` finding (no critical/high) → **WARN**.
 - Only `low` or no findings → **PASS**.
@@ -585,7 +328,7 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 Two distinct artifacts:
 
-1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
+1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured by run-init (step 0.4–0.7), before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
 
    - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
    - **Format:** single line containing the SHA from `git rev-parse HEAD`.
@@ -624,7 +367,7 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 4. Log decision (see format below)
 5. Launch selected phases in parallel
 
-Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input (plus, optionally, the previous `drift-findings.json` as a second argument — see "analyze phase scope mapping" below) and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
 
 ```json
 {"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."},"analyze":{"rerun":true,"reason":"..."}},"out_of_scope":false,"empty":false}
@@ -659,7 +402,7 @@ When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all qualit
 |-------|-------|
 | `analyze` | All files in the original diff (broad scope — re-run if any file changed by fix) |
 
-The analyze phase is always re-run after a fix because spec↔code correlation depends on the entire diff, not individual files.
+The analyze phase is re-run after a fix because spec↔code correlation depends on the entire diff, not individual files. **Single exception**: when `rerun-scope.sh` receives the previous `drift-findings.json` and every finding category is spec-side (`DUP`/`TERM`/`AMBIG`/`SUBSPEC`/`PRINCIPLE`), it returns `analyze.rerun=false` — a code fix cannot alter spec-side findings, so a re-run would reproduce them verbatim. (The re-run itself is also cheap when it does happen: the deterministic correlation engine caches by diff/spec hash.)
 
 ## Re-run: edge cases
 
@@ -701,7 +444,23 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 **Before finalizing findings**, apply severity overrides: read `Severity Overrides` from injected context (or `ship/config.md → Severity Overrides` if not injected). For each override rule (e.g., `high → warn`), downgrade any matching findings accordingly. If the field is absent, no downgrade is applied.
 
-### 7.1 Report format
+---
+
+## 4. Terminology pass (TERM) — in-context
+
+The only judgment-based pass, done by you directly over the spec descriptions already in the script output (no sub-agents, no re-extraction):
+
+1. Flag a pair of distinct terms as a divergence candidate when either signal holds:
+   - **Shared root/stem tokens:** the two terms share their non-stopword tokens after lowercase tokenization (e.g., `token de acesso` vs `access token` share `token`), and the surrounding phrasing indicates both refer to the same concept.
+   - **Explicit juxtaposition:** the spec text itself places both terms side by side referring to one concept (e.g., "token de acesso (access token)").
+2. Do not introduce a semantic model, stemming, or NLP machinery beyond these signals — if neither holds, do not flag the pair.
+3. Each triggered pair produces exactly one finding: severity `low`, category `TERM`, naming both divergent terms. No divergent pair → no `TERM` findings.
+
+---
+
+## 5. Generate the report
+
+### 5.1 Report format
 
 ```markdown
 # Drift Analysis Report — <Feature / Task Title>
@@ -795,11 +554,11 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ## Orphans
 
-| File/Identifier | Line | Best REQ match | Confidence % | Category |
-|------------------|------|-----------------|---------------|----------|
-| src/cache/evict.ts#evictExpired | 42 | REQ-05 (baixa confiança) | 22% | ORPHAN |
+| File | Best REQ match | Confidence % | Category |
+|------|-----------------|---------------|----------|
+| src/cache/evict.ts | — | 0% | ORPHAN |
 
-> `## Orphans` is rendered only when at least one ORPHAN finding exists. Omit the section entirely (no empty heading, no empty table) when there are zero orphans — including the zero-changed-files edge case from §6.7. Orphan findings never appear under `## Gaps`; they exclusively populate `## Orphans`.
+> `## Orphans` is rendered only when at least one ORPHAN finding exists (`orphans[]` non-empty). Omit the section entirely (no empty heading, no empty table) when there are zero orphans — including the zero-changed-files edge case (the engine emits no orphans for an empty diff). Orphan findings never appear under `## Gaps`; they exclusively populate `## Orphans`.
 
 ## Disabled Layers — Informational (does not affect gate)
 
@@ -811,7 +570,7 @@ To audit coverage for these layers, run `/ship:audit:run`.
 | integration | AC-03, AC-07, SC-03 |
 | e2e | AC-01, AC-03, AC-05, AC-07, SC-09 |
 
-> This section appears **only** when `informational_disabled_layers` is non-empty. Omit entirely if all layers are enabled or `informational_disabled_layers` is empty.
+> This section appears **only** when `disabled_layers` is non-empty. Omit entirely if all layers are enabled.
 
 ## Summary
 - Critical: X
@@ -821,7 +580,7 @@ To audit coverage for these layers, run `/ship:audit:run`.
 - **Gate: PASS | WARN | FAIL**
 ```
 
-### 7.2 Lazy-load rendering (user-facing output)
+### 5.2 Lazy-load rendering (user-facing output)
 
 Apply the lazy-load algorithm from ---
 # Lazy-Load Findings Algorithm
@@ -879,7 +638,7 @@ The full `drift-report.md` is always persisted to the scratch dir. The lazy-load
 
 ---
 
-## 8. Persist results
+## 6. Persist results
 
 **Scratch dir (always, when available):**
 - Write `drift-report.md` to `.context/ship-run/<task-id>/drift-report.md`.
@@ -906,14 +665,13 @@ Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the rea
 ## Rules
 
 1. **Always determine storage mode first** (from injected context or `ship/config.md`). Never assume Linear or Local mode.
-2. **Parallelism**: Steps 1 and 2 MUST run in parallel via the Agent tool — never sequentially.
+2. **Determinism first**: extraction and correlation come from the script's JSON. Never re-tokenize, recompute Jaccard, or dispatch sub-agents when the script succeeded — your judgment applies only to the TERM pass, severity classification, and report prose.
 3. **Confidence thresholds**: ≥ 0.5 = implemented/tested; 0 < confidence < 0.5 = uncertain; = 0 = unimplemented/uncovered.
-4. **No marker overrides**: correlation is keyword-based only. Ship never writes spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so analyze never scans for them and never grants confidence based on them. When code or a test exists but its naming diverges from the spec wording, it surfaces as **uncertain** (0 < confidence < 0.5) — the fix is to **rename the code/test** to match the requirement, never to annotate it with a marker comment.
+4. **No marker overrides**: correlation is keyword-based only (see §3). Never grant confidence based on comments or annotations.
 5. **Gate enforcement**: gate FAIL → caller's `on_fail` flow; gate WARN → caller's `on_warn` flow; gate PASS → continue. Respect `Gate Behavior` from `ship/config.md`.
-6. **Monorepo awareness**: detect the active workspace from diff path prefixes (`apps/`, `packages/`, `services/`, `libs/`, `modules/`). Restrict test discovery and file matching to that workspace; if no prefix found, analyze the full repo.
+6. **Monorepo awareness**: the script restricts test discovery to the workspaces detected from diff path prefixes; report which workspace was analyzed when one was detected.
 7. **Storage isolation**: Linear mode → never create local files outside the scratch dir; Local mode → never call Linear API tools.
-8. **Test Scope awareness**: before emitting any coverage finding (TEST or SCENARIO), check the layer in `Test Scope`. For SCENARIO findings the relevant layer is the scenario's own `@layer` tag. Disabled layers never generate MEDIUM/WARN findings — they appear only in `## Disabled Layers — Informational`. If `Test Scope` is absent, treat all layers as enabled.
-9. **Scenario backward compatibility**: presence-based. If the spec has no `@SC-XX` scenarios, skip the scenario tier entirely, omit the Scenarios Status table and the three Scenario summary rows, and behave exactly as before. Never infer or fabricate scenarios.
+8. **Test Scope awareness**: TEST/SCENARIO findings only for enabled layers (the script already filters); disabled layers appear only in `## Disabled Layers — Informational`. If `Test Scope` is absent, treat all layers as enabled.
+9. **Scenario backward compatibility**: presence-based. If the spec has no `@SC-XX` scenarios (`summary.scenarios.total` = 0), omit the Scenarios Status table and the three Scenario summary rows. Never infer or fabricate scenarios.
 10. **Language**: use the `Artifact language` passed by the caller for all user-facing output (reports, summaries, gate results). Code, identifiers, file paths, and Gherkin keywords/tags are always English.
 11. **Read efficiency**: do NOT re-read files after Edit/Write. Re-read only if explicitly requested or compaction is suspected.
-12. **LLM passes always use a fixed rubric + strict JSON**: AMBIG, SUBSPEC, and PRINCIPLE never rely on free-form sub-agent judgment — each dispatch carries a fixed rubric question and requires output conforming to `#drift-findings`; never accept prose-only responses from these sub-agents.
