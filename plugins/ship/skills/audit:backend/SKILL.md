@@ -4,7 +4,7 @@ description: "Ship Audit: project-wide backend performance audit. Detects stack 
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true
-model: haiku
+model: sonnet
 context: fork
 ---
 

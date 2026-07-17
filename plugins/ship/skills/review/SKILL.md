@@ -4,7 +4,7 @@ description: "Ship Phase 6: code review focused on SOLID, DRY, KISS, Clean Code,
 argument-hint: "<feature-name | task-id>"
 allowed-tools: Read, Bash, Agent
 user-invocable: true
-model: haiku
+model: sonnet
 context: fork
 ---
 

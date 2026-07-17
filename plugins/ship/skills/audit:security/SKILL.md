@@ -4,7 +4,7 @@ description: "Ship Audit: project-wide AppSec audit — OWASP Top 10, CWE mappin
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true
-model: haiku
+model: sonnet
 context: fork
 ---
 

@@ -4,7 +4,7 @@ description: "Ship Audit: project-wide test coverage analysis — correlates AC/
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true
-model: haiku
+model: sonnet
 context: fork
 ---
 
