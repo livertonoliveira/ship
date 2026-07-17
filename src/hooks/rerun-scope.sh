@@ -3,9 +3,12 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: rerun-scope.sh [<changed-files-file>]" >&2
+  echo "usage: rerun-scope.sh [<changed-files-file>] [<analyze-findings-json>]" >&2
   echo "  reads changed files (one path per line) from the given file," >&2
   echo "  or from stdin if no argument is given" >&2
+  echo "  optional 2nd arg: drift-findings.json from the previous analyze run;" >&2
+  echo "  when every finding category is spec-side (DUP/TERM/AMBIG/SUBSPEC/PRINCIPLE)," >&2
+  echo "  analyze is not re-run (a code fix cannot change spec-side findings)" >&2
 }
 
 json_escape() {
@@ -66,10 +69,26 @@ emit_phase() {
   printf '"%s":{"rerun":%s,"reason":"%s"}' "$name" "$rerun" "$(json_escape "$reason")"
 }
 
+analyze_findings_spec_side_only() {
+  local findings="$1" cats c
+  [ -f "$findings" ] || return 1
+  cats="$(grep -oE '"category"[[:space:]]*:[[:space:]]*"[A-Z]+"' "$findings" 2>/dev/null \
+    | sed -E 's/.*"([A-Z]+)"$/\1/' | sort -u)"
+  [ -n "$cats" ] || return 1
+  while IFS= read -r c; do
+    case "$c" in
+      DUP|TERM|AMBIG|SUBSPEC|PRINCIPLE) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$cats"
+  return 0
+}
+
 main() {
   local input="${1:-}"
+  local analyze_findings="${2:-}"
 
-  if [ $# -gt 1 ]; then
+  if [ $# -gt 2 ]; then
     usage
     exit 1
   fi
@@ -133,8 +152,13 @@ main() {
     review_rerun="true"
     review_reason="review scope is broad (full diff)"
 
-    analyze_rerun="true"
-    analyze_reason="analyze scope is broad (full diff)"
+    if [ -n "$analyze_findings" ] && analyze_findings_spec_side_only "$analyze_findings"; then
+      analyze_rerun="false"
+      analyze_reason="analyze findings are all spec-side (DUP/TERM/AMBIG/SUBSPEC/PRINCIPLE); a code fix cannot change them"
+    else
+      analyze_rerun="true"
+      analyze_reason="analyze scope is broad (full diff)"
+    fi
   fi
 
   printf '{"phases":{'
