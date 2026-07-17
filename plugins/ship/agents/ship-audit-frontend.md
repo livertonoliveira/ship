@@ -580,7 +580,7 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 Two distinct artifacts:
 
-1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured at step 0.5, before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
+1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured by run-init (step 0.4–0.7), before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
 
    - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
    - **Format:** single line containing the SHA from `git rev-parse HEAD`.
@@ -619,7 +619,7 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 4. Log decision (see format below)
 5. Launch selected phases in parallel
 
-Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input (plus, optionally, the previous `drift-findings.json` as a second argument — see "analyze phase scope mapping" below) and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
 
 ```json
 {"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."},"analyze":{"rerun":true,"reason":"..."}},"out_of_scope":false,"empty":false}
@@ -654,7 +654,7 @@ When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all qualit
 |-------|-------|
 | `analyze` | All files in the original diff (broad scope — re-run if any file changed by fix) |
 
-The analyze phase is always re-run after a fix because spec↔code correlation depends on the entire diff, not individual files.
+The analyze phase is re-run after a fix because spec↔code correlation depends on the entire diff, not individual files. **Single exception**: when `rerun-scope.sh` receives the previous `drift-findings.json` and every finding category is spec-side (`DUP`/`TERM`/`AMBIG`/`SUBSPEC`/`PRINCIPLE`), it returns `analyze.rerun=false` — a code fix cannot alter spec-side findings, so a re-run would reproduce them verbatim. (The re-run itself is also cheap when it does happen: the deterministic correlation engine caches by diff/spec hash.)
 
 ## Re-run: edge cases
 

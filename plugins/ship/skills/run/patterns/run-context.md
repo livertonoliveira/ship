@@ -74,7 +74,7 @@ git diff "$BASE"
 
 The canonical implementation of this capture and its unified-diff assertion is `src/hooks/capture-diff.sh`.
 
-The orchestrator writes it **twice**: a provisional baseline during init (step 0.5, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
+The orchestrator writes it **twice**: a provisional baseline during init (run-init.sh, step 0.4–0.7, before any code exists) and an authoritative refresh after `ship:develop` (step 2.5). The refresh is required because `ship:develop` writes code to the working tree without committing — an init-only, HEAD-based diff would be empty and the quality phases would analyze nothing. Standalone invocations (no scratch dir) fall back to `git diff origin/main...HEAD`, where the work under analysis is already committed.
 
 ### `test-failures.md` format
 
@@ -149,25 +149,27 @@ a1b2c3d4e5f6...
 
 ### `jaccard.json` format
 
-Written and read by the `analyze` agent (pipeline mode only). Invalidated whenever `diff_hash` or `spec_hash` changes.
+Written and read by the deterministic correlation engine (`src/hooks/analyze-correlate.sh`) in pipeline mode only — it is the engine's full output, reused as a cache. Invalidated whenever `diff_hash` or `spec_hash` changes.
 
 ```json
 {
-  "diff_hash": "<sha256 of diff.md content>",
-  "spec_hash": "<sha256 of concatenated REQ-XX/AC-XX descriptions>",
-  "matrix": {
-    "REQ-01": { "code": ["src/foo.ts:10"], "score": 0.7 },
-    "REQ-02": { "code": ["src/bar.ts:55"], "score": 0.3 },
-    "AC-01":  { "tests": ["test/foo.test.ts:42"], "score": 0.9 },
-    "AC-02":  { "tests": [], "score": 0.0 }
-  }
+  "diff_hash": "<sha256 of diff.md>",
+  "spec_hash": "<sha256 of spec.md>",
+  "test_scope": { "unit": "enabled", "integration": "disabled", "e2e": "disabled" },
+  "truncated_tests": false,
+  "requirements": [ { "id": "REQ-01", "description": "...", "confidence": 0.72, "file": "src/foo.ts" } ],
+  "criteria":     [ { "id": "AC-01", "req": "REQ-01", "description": "...", "confidence": 0.9, "file": "test/foo.test.ts", "layer": "unit" } ],
+  "scenarios":    [ { "id": "SC-01", "ac": "AC-01", "layer": "unit", "description": "...", "confidence": 0.9, "file": "test/foo.test.ts" } ],
+  "disabled_layers": { "integration": ["AC-02", "SC-03"] },
+  "orphans":      [ { "file": "src/zzz.ts", "confidence": 0 } ],
+  "duplicates":   [ { "a": "REQ-03", "b": "REQ-04", "score": 0.83 } ],
+  "summary": { "requirements": { "total": 4, "implemented": 2, "uncertain": 1, "unimplemented": 1 } }
 }
 ```
 
-- `diff_hash` and `spec_hash` are used as a compound cache key. If either changes, the entire matrix is recomputed.
-- `matrix` maps each REQ-XX/AC-XX ID to its best-match file(s) and highest Jaccard score.
-- `code` lists matched source file locations (`<path>:<line>`); `tests` lists matched test file locations.
-- Absent file means the cache was computed in standalone mode (no scratch dir) — no `jaccard.json` is written in that case.
+- `diff_hash` and `spec_hash` are a compound cache key. On a hit, the engine returns this file verbatim without recomputing.
+- `confidence` is the highest Jaccard score across candidate files; `file` is the best match (or `null`).
+- Absent file means the run was standalone (no scratch dir passed) — no `jaccard.json` is written in that case.
 
 ---
 

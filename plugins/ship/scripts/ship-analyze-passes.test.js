@@ -6,54 +6,55 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const AGENT_PATH = path.join(__dirname, '..', 'agents', 'ship-analyze.md');
+const SPEC_QUALITY_PATH = path.join(__dirname, '..', '..', '..', 'src', 'patterns', 'spec-quality.md');
 const VAGUE_TERMS_PATH = path.join(__dirname, '..', '..', '..', 'src', 'patterns', 'vague-terms.md');
+const SPEC_SKILL_PATH = path.join(__dirname, '..', '..', '..', 'src', 'skills', 'spec', 'SKILL.md');
 
-function readAgent() {
-  return fs.readFileSync(AGENT_PATH, 'utf8');
-}
+const readAgent = () => fs.readFileSync(AGENT_PATH, 'utf8');
+const readSpecQuality = () => fs.readFileSync(SPEC_QUALITY_PATH, 'utf8');
 
-function section(content, heading, nextHeadingPattern) {
-  const start = content.indexOf(heading);
-  assert.notEqual(start, -1, `heading "${heading}" not found in ship-analyze.md`);
-  const rest = content.slice(start + heading.length);
-  const nextMatch = rest.match(nextHeadingPattern);
-  return nextMatch ? rest.slice(0, nextMatch.index) : rest;
-}
-
-test('AMBIG rubric asks whether the item has a qualitative attribute with no measurable threshold, and names the offending item', () => {
-  const content = readAgent();
-  const ambig = section(content, '### 6.10 Ambiguity pass (AMBIG)', /\n### 6\.11/);
+test('semantic passes live in the spec quality gate with their fixed rubrics', () => {
+  const content = readSpecQuality();
   assert.match(
-    ambig,
+    content,
     /does the item contain a qualitative attribute with no measurable threshold\?/
   );
-  assert.match(ambig, /naming the item \(REQ-XX or AC-XX\)/);
-});
-
-test('SUBSPEC rubric checks for REQ-XX without AC or AC without a verifiable pass/fail condition', () => {
-  const content = readAgent();
-  const subspec = section(content, '### 6.11 Underspecification pass (SUBSPEC)', /\n### 6\.12/);
   assert.match(
-    subspec,
+    content,
     /does this requirement have a testable acceptance criterion\? does each of its acceptance criteria have a verifiable pass\/fail condition\?/
   );
-  assert.match(subspec, /zero linked AC-XX/);
-});
-
-test('PRINCIPLE rubric checks adherence to declared conventions', () => {
-  const content = readAgent();
-  const principle = section(content, '### 6.12 Principle-violation pass (PRINCIPLE)', /\n---/);
   assert.match(
-    principle,
-    /fixed rubric checking adherence of each REQ-XX\/AC-XX to the declared conventions/
+    content,
+    /check adherence of each REQ-XX\/AC-XX to the declared conventions/
   );
 });
 
-test('AMBIG pre-filter states a vague-terms dictionary hit selects the item as an LLM candidate', () => {
-  const content = readAgent();
-  const ambig = section(content, '### 6.10 Ambiguity pass (AMBIG)', /\n### 6\.11/);
-  assert.match(ambig, /A term match selects the item as a candidate for LLM confirmation/);
-  assert.match(ambig, /No dictionary hit → no candidate, skip the item entirely/);
+test('spec quality gate dispatches exactly one batched sub-agent, never one per item', () => {
+  const content = readSpecQuality();
+  assert.match(content, /dispatch \*\*exactly one\*\* sub-agent/);
+  assert.match(content, /ALL candidates in a single prompt/);
+  assert.match(content, /never one dispatch per item/);
+});
+
+test('AMBIG pre-filter selects dictionary hits and suppresses items with measurable thresholds', () => {
+  const content = readSpecQuality();
+  assert.match(content, /A term match selects the item as a candidate for LLM confirmation/);
+  assert.match(content, /No dictionary hit → no candidate, skip the item entirely/);
+  assert.match(content, /must not be selected/);
+});
+
+test('SUBSPEC pre-filter resolves measurable REQs locally without sub-agent dispatch', () => {
+  const content = readSpecQuality();
+  assert.match(content, /zero linked AC-XX/);
+  assert.match(content, /resolved locally as "not underspecified" and skipped/);
+});
+
+test('spec quality passes are excluded from the pipeline by contract', () => {
+  const content = readSpecQuality();
+  assert.match(content, /never run inside the development pipeline/);
+  const skill = fs.readFileSync(SPEC_SKILL_PATH, 'utf8');
+  assert.match(skill, /spec-quality\.md/);
+  assert.match(skill, /never inside the pipeline/);
 });
 
 test('vague-terms.md lists specific vague terms for pt-BR, including "escalável"', () => {
@@ -62,56 +63,19 @@ test('vague-terms.md lists specific vague terms for pt-BR, including "escalável
   assert.match(vagueTerms, /escalável \/ escalabilidade/);
 });
 
-test('AMBIG rubric explicitly states a measurable threshold suppresses the finding', () => {
+test('ship-analyze no longer dispatches semantic sub-agents nor extraction sub-agents', () => {
   const content = readAgent();
-  const ambig = section(content, '### 6.10 Ambiguity pass (AMBIG)', /\n### 6\.11/);
-  assert.match(
-    ambig,
-    /if a threshold is present, the sub-agent must return a negative confirmation \(not ambiguous\)/
-  );
+  assert.doesNotMatch(content, /### 6\.10|### 6\.11|### 6\.12/);
+  assert.doesNotMatch(content, /dispatch a sub-agent/);
+  assert.doesNotMatch(content, /extraction agents/i);
+  assert.match(content, /Never dispatch semantic sub-agents from this worker/);
+  assert.match(content, /do NOT dispatch sub-agents/i);
 });
 
-test('AMBIG, SUBSPEC, and PRINCIPLE each state the no-findings → no-section rule', () => {
+test('ship-analyze delegates extraction and correlation to the deterministic engine', () => {
   const content = readAgent();
-  const ambig = section(content, '### 6.10 Ambiguity pass (AMBIG)', /\n### 6\.11/);
-  const subspec = section(content, '### 6.11 Underspecification pass (SUBSPEC)', /\n### 6\.12/);
-  const principle = section(content, '### 6.12 Principle-violation pass (PRINCIPLE)', /\n---/);
-
-  assert.match(
-    ambig,
-    /no `AMBIG` findings; the `## Gaps` entries for `AMBIG` are simply absent \(mirrors §6\.7's empty-result rule\)/
-  );
-  assert.match(
-    subspec,
-    /no `SUBSPEC` findings; the `## Gaps` entries for `SUBSPEC` are simply absent \(mirrors §6\.7's empty-result rule\)/
-  );
-  assert.match(
-    principle,
-    /no `PRINCIPLE` findings; the `## Gaps` entries for `PRINCIPLE` are simply absent \(mirrors §6\.7's empty-result rule\)/
-  );
-});
-
-test('the Trigger conditions reference documents all seven passes inline', () => {
-  const content = readAgent();
-  assert.match(content, /### Trigger conditions — quick reference \(all seven passes\)/);
-  const table = section(
-    content,
-    '### Trigger conditions — quick reference (all seven passes)',
-    /\n### 6\.7/
-  );
-  for (let n = 1; n <= 7; n += 1) {
-    assert.match(table, new RegExp(`\\| ${n} \\|`), `row ${n} missing from trigger conditions table`);
-  }
-  assert.match(table, /Ambiguity \(AMBIG\)/);
-  assert.match(table, /Underspecification \(SUBSPEC\)/);
-  assert.match(table, /Principle violation \(PRINCIPLE\)/);
-});
-
-test('AMBIG and SUBSPEC each document an explicit batch cap of 20 sub-agent dispatches per run', () => {
-  const content = readAgent();
-  const ambig = section(content, '### 6.10 Ambiguity pass (AMBIG)', /\n### 6\.11/);
-  const subspec = section(content, '### 6.11 Underspecification pass (SUBSPEC)', /\n### 6\.12/);
-
-  assert.match(ambig, /dispatch at most 20 AMBIG sub-agents per `\/ship:analyze` run/);
-  assert.match(subspec, /dispatch at most 20 SUBSPEC sub-agents per `\/ship:analyze` run/);
+  assert.match(content, /Correlate script:/);
+  assert.match(content, /--test-scope/);
+  assert.match(content, /jaccard\.json/);
+  assert.match(content, /Never re-tokenize, recompute Jaccard, or dispatch sub-agents when the script succeeded/);
 });

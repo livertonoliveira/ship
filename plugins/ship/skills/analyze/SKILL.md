@@ -54,14 +54,15 @@ Spec:
 
 ## 4. Invoke ship-analyze agent
 
-Use the Agent tool with `subagent_type: ship:ship-analyze`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-analyze`. Resolve the absolute path of the deterministic correlation engine bundled with this skill — `${CLAUDE_SKILL_DIR}/hooks/analyze-correlate.sh` — and pass it inline as `Correlate script:`. Pass all context inline in the prompt:
 
 ```
 Task: <task-id or feature-name>
 Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
-Test Scope: <e.g., { unit: enabled, integration: disabled, e2e: disabled }>
+Test Scope: unit=<enabled|disabled>,integration=<enabled|disabled>,e2e=<enabled|disabled>
+Correlate script: <absolute path resolved above>
 
 ## Config
 Severity Overrides: <severity-overrides or "none">
@@ -73,4 +74,4 @@ Severity Overrides: <severity-overrides or "none">
 <inline: spec reference — Linear issue ID or local feature path>
 ```
 
-The agent orchestrates the 2 parallel extraction agents, runs the Jaccard correlation engine, classifies gaps, writes the drift report, and returns the gate decision. Return the agent's full output verbatim as your final message.
+The agent runs the deterministic correlation engine (extraction + Jaccard + orphans + duplicates in one script call, cached by diff/spec hash), classifies gaps, writes the drift report, and returns the gate decision — no sub-agents. Return the agent's full output verbatim as your final message.

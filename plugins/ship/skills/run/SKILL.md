@@ -59,119 +59,41 @@ Analyze `$ARGUMENTS` to determine what to work on:
 
 For each task, execute the following phases:
 
-### 0.4. Detect an interrupted prior run (resume check)
+### 0.4–0.7. Initialize the run context (single hook call)
 
-Before touching the scratch dir, check whether one already exists for this `<task-id>` from a prior invocation that may not have finished — e.g. the previous session was closed or restarted mid-pipeline:
+> See ${CLAUDE_SKILL_DIR}/patterns/run-context.md for canonical file formats and lifecycle rules, and ${CLAUDE_SKILL_DIR}/patterns/diff-classifier.md for the classification heuristics.
+
+One deterministic script performs the resume check, scratch-dir init, snapshots, baseline diff capture, and baseline classification. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
 
 ```bash
-test -f .context/ship-run/<task-id>/dispatch-log.md && wc -l < .context/ship-run/<task-id>/dispatch-log.md
+bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id>
 ```
 
-- **File absent, or only the header line present**: no prior run to consider — proceed to step 0.5 as a fresh start.
-- **One or more dispatch rows present**: a previous invocation for this exact `<task-id>` got at least partway through the pipeline. Read `.context/ship-run/<task-id>/dispatch-log.md` and `.context/ship-run/<task-id>/phase-status.md` and compare them: any phase with a dispatch row but **no** corresponding completed row in `phase-status.md` was likely interrupted mid-flight (dispatched, never finished). Report to the user:
+Interpret the result by exit code:
+
+- **Exit 0** — fresh init done. The script created `stack.md` (fields from `ship/config.md`), the provisional baseline `diff.md` (via `capture-diff.sh`; authoritative diff is re-captured post-develop in step 2.5), `phase-status.md` + `dispatch-log.md` headers, `pre-quality-snapshot.sha`, `pre-develop-files.txt` (via `snapshot-files.sh`, consumed by the evidence gate in step 2.6), and `diff-class.txt`. Log to the user, reading `diff_class` from the script output:
 
   ```
-  ⚠ Encontrado um contexto de execução existente para <task-id> (último dispatch: <phase> em <timestamp>).
-  Fases com status registrado: <list, from phase-status.md>
-  Fases despachadas sem conclusão registrada (possivelmente interrompidas): <list, or "nenhuma">
+  Run context: .context/ship-run/<task-id>/ (stack + diff cached)
+  Diff class (baseline): <diff_class>
+  ```
+
+- **Exit 3** — a prior run for this `<task-id>` exists (`RESUME` report on stdout: `last_dispatch`, `dispatched`, `completed`, `unfinished`). Report to the user:
+
+  ```
+  ⚠ Encontrado um contexto de execução existente para <task-id> (último dispatch: <last_dispatch>).
+  Fases com status registrado: <completed>
+  Fases despachadas sem conclusão registrada (possivelmente interrompidas): <unfinished, or "nenhuma">
   ```
 
   Then ask: "Retomar a partir daqui (pular fases já concluídas, re-executar apenas as pendentes/interrompidas) ou reiniciar o pipeline do zero para esta task (isso apaga o contexto existente)?"
 
-  - **Resume**: proceed to step 0.5, but do **not** recreate `phase-status.md` or `dispatch-log.md` — they already have rows worth keeping. Skip re-writing any canonical file in step 0.5 that already exists and looks complete (`stack.md`, `pre-quality-snapshot.sha`, `pre-develop-files.txt`); only `diff.md` is always safe to recapture (it is idempotent and re-running it never loses data). Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or were marked interrupted above.
-  - **Restart**: proceed to step 0.5 exactly as written below (fresh init, overwriting everything).
+  - **Resume**: run `bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id> --mode resume` — it preserves `phase-status.md`, `dispatch-log.md`, and every existing canonical file, re-capturing only `diff.md` (idempotent) and `diff-class.txt`. Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or listed as `unfinished`.
+  - **Restart**: run `bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id> --mode fresh` (overwrites everything) and proceed as a fresh start.
 
   Rationale: the scratch dir is the only durable record across a session restart — blindly recreating it would discard already-completed phase rows or erase `homolog`/`pr` rows still needed.
 
-### 0.5. Initialize shared scratch dir
-
-> See ${CLAUDE_SKILL_DIR}/patterns/run-context.md for canonical file formats and lifecycle rules.
-
-After the trace is initialized, set up the shared scratch directory for this run. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only. **Skip any sub-step below whose file the resume check (step 0.4) told you to preserve.**
-
-```bash
-mkdir -p .context/ship-run/<task-id>
-```
-
-Then populate the canonical files in a single batch:
-
-1. **`stack.md`** — Run stack-detection (see ${CLAUDE_SKILL_DIR}/patterns/stack-detection.md): read `ship/config.md` and extract Language, Runtime, Framework, Test runner, Package manager, and any other relevant fields. Write the result in the canonical format:
-
-   ```markdown
-   # Stack
-
-   - Language: <value>
-   - Runtime: <value>
-   - Framework: <value>
-   - Test runner: <value>
-   - Package manager: <value>
-   ```
-
-   Write this content to `.context/ship-run/<task-id>/stack.md`.
-
-2. **`diff.md`** (provisional baseline) — Capture the branch diff **relative to the merge-base, including the working tree and untracked files**, and write the full output (no truncation) to `.context/ship-run/<task-id>/diff.md`:
-
-   ```bash
-   bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
-   ```
-
-   > **Pre-develop baseline** — pre-existing work only, consumed solely by the planner-gate classification in step 0.7. Authoritative diff is re-captured post-develop in step 2.5.
-
-3. **`phase-status.md`** — Create the file with only the header (no rows yet):
-
-   ```markdown
-   # Phase Status
-
-   | Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |
-   |-------|-----|-----------|-------|------|----------|------|--------|-----|-------|
-   ```
-
-   Write to `.context/ship-run/<task-id>/phase-status.md`.
-
-3b. **`dispatch-log.md`** — Create the file with only the header (no rows yet):
-
-   ```markdown
-   # Dispatch Log
-
-   | Phase | Tool | Name | Model | Timestamp |
-   |-------|------|------|-------|-----------|
-   ```
-
-   Write to `.context/ship-run/<task-id>/dispatch-log.md`. The orchestrator appends one row to this file every time it dispatches a phase (see step 8, "Phase dispatch logging convention"). `homolog` reads it to render the `## Execution Trace` section.
-
-4. **`pre-quality-snapshot.sha`** — Capture the current HEAD SHA:
-
-   ```bash
-   git rev-parse HEAD
-   ```
-
-   Write the SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`.
-
-5. **`pre-develop-files.txt`** — Capture a per-file content snapshot of the working tree **before development**, so the develop evidence gate (step 2.6) can prove mutation. `snapshot-files.sh` (lazy-ref `${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh`) is the canonical content-snapshot implementation, reused by step 2.6 and the Surgical Re-run Procedure, each writing its own output file and comparing via the script's `diff` mode:
-
-   ```bash
-   bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-develop-files.txt
-   ```
-
-Log to the user:
-```
-Run context: .context/ship-run/<task-id>/ (stack + diff cached)
-```
-
-### 0.7. Diff Classification
-
-> See ${CLAUDE_SKILL_DIR}/patterns/diff-classifier.md for the full heuristic reference.
-
-> **Baseline classification** — runs against pre-develop `diff.md`, feeds only the planner-gate decision (step 1.9). Authoritative classification for the Phase 4 gate is recomputed in step 2.5 over the post-develop diff, overwriting `diff-class.txt`.
-
-Run the classification by invoking the script directly:
-
-```bash
-bash "${CLAUDE_SKILL_DIR}/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
-```
-
-- **Inputs**: `.context/ship-run/<task-id>/diff.md` (the pre-develop baseline) and `ship/config.md` (`## Sensitive Paths` overrides, read by the script from its own default path).
-- **Outputs**: the script writes the class word to `.context/ship-run/<task-id>/diff-class.txt` as a direct side effect; log `Diff class (baseline): <script stdout>` (note the `(baseline)` qualifier — the script's own stdout omits it).
+- **Exit 1** — error (e.g., `ship/config.md` missing). Surface the stderr message and stop.
 
 ### 1. Load task context
 
@@ -242,7 +164,7 @@ Build `spec.md` as follows:
 
 1. **This task's own description, in full.** Copy the current issue's Context, What to do, `## Files` section (if present), Acceptance Criteria list, `## Scenarios`, and Notes verbatim.
 2. **Only the requirement sections that this task's own acceptance criteria belong to, in full.** Each acceptance-criteria item belongs to exactly one requirement section in the Proposal document (in Local mode, `proposal.md`); look up which requirement section each criterion comes from and copy that entire section — full text, its own acceptance criteria, and its Scenario Index — into `spec.md`. If criteria span two or more requirement sections, include every one in full.
-3. **A compact scope index for everything else.** For every requirement section in the feature that this issue's criteria do NOT touch, add a single line: `<requirement-id>: <title> — covered by <issue-id>` when you know which other issue owns it, or just `<requirement-id>: <title>` when the covering issue isn't known. Do not copy the full text of these requirements — title-only is enough for later phases to know they exist and are out of scope.
+3. **A compact scope index for everything else.** For every requirement section in the feature that this issue's criteria do NOT touch, add a single line: `<requirement-id> — <title> — covered by <issue-id>` when you know which other issue owns it, or just `<requirement-id> — <title>` when the covering issue isn't known. Do not copy the full text of these requirements — title-only is enough for later phases to know they exist and are out of scope. **Format matters:** use an em-dash after the id, never a colon and never a heading — the analyze correlation engine only registers `REQ-XX:`/heading forms as definitions, which is exactly what keeps scope-index entries out of the drift matrix.
 
 In Local mode, apply this identical slicing rule against `proposal.md` instead of the Linear Proposal document; still write the scratch copy of `spec.md` so every phase has a single canonical path. `design.md` keeps its existing behavior — written in full, unsliced.
 
@@ -258,7 +180,7 @@ In Local mode, apply this identical slicing rule against `proposal.md` instead o
 >
 > When all four hold: **skip** the planner. Log `Planner pulado (issue prevê módulo único: N arquivo(s))` (N = the code-file count from (b)). Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`). Proceed straight to `ship:develop`, which already falls back to single-module mode without a `plan.md`.
 >
-> When any of (a)–(d) fails, fall through to the baseline classification (step 0.7), which measures only work that existed *before* this run:
+> When any of (a)–(d) fails, fall through to the baseline classification (from the run-init call in step 0.4–0.7), which measures only work that existed *before* this run:
 > - **Baseline diff is empty** (greenfield — no pre-existing committed/uncommitted work): the implementation does not exist yet, so its size is unknown and a fresh task almost always warrants decomposition → **run the planner**. Detect with `[ -s .context/ship-run/<task-id>/diff.md ] || echo greenfield`.
 > - **Baseline class `normal` or `large`**: → **run the planner**.
 > - **Baseline class `trivial` or `minor`** (a small change on top of work that already exists): the decomposition is obvious → **skip** the planner; `ship:develop` will treat the task as a single module. Log when skipped: `Diff <class> (baseline) — planner pulado (módulo único)`. Append a skipped row to `dispatch-log.md` (`tool=-`, `name=skipped`, `model=-`).
@@ -267,7 +189,7 @@ In Local mode, apply this identical slicing rule against `proposal.md` instead o
 
 The planner does ONE interpretation of the `@SC-XX` scenarios and emits `.context/ship-run/<task-id>/plan.md` — single source of truth consumed by BOTH develop and test.
 
-> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Do not deep-read the codebase or decide the implementation approach before dispatching `ship:plan`. Spec and design are already in the scratch dir for the planner to read — trust the returned `plan.md`. Your only pre-plan judgment is the baseline classification (step 0.7).
+> **You are the orchestrator, not the planner — do not analyze the feature yourself.** Do not deep-read the codebase or decide the implementation approach before dispatching `ship:plan`. Spec and design are already in the scratch dir for the planner to read — trust the returned `plan.md`. Your only pre-plan judgment is the baseline classification (from step 0.4–0.7).
 
 Invoke the `ship:plan` skill via the **Skill tool**. It declares `context: fork` + `model: "sonnet"` in its frontmatter, so the planning reasoning runs in an isolated Sonnet subagent automatically — do NOT wrap it in an `Agent` tool call. Pass the following context inline:
 
@@ -343,7 +265,7 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 > **Phase check**: Run this step only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, the baseline `diff.md` already reflects the diff under analysis — skip the refresh and keep the baseline classification.
 
-1. **Re-capture `diff.md`** over the post-develop working tree (same range as step 0.5, now including the new and modified source files develop wrote):
+1. **Re-capture `diff.md`** over the post-develop working tree (same range as the init capture in step 0.4–0.7, now including the new and modified source files develop wrote):
 
    ```bash
    bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
@@ -519,11 +441,10 @@ Read the diff yourself from `.context/ship-run/<task-id>/diff.md` — the orches
 
 - Read the spec from `.context/ship-run/<task-id>/spec.md` and the design from `.context/ship-run/<task-id>/design.md` (the orchestrator wrote them there; not injected inline)
 - Use the code diff from `.context/ship-run/<task-id>/diff.md`
-- Run spec extraction and code/test extraction **in parallel** (2 internal sub-agents)
-- Pass results to the Correlation Engine
+- Run the deterministic correlation engine (extraction + Jaccard + orphans + duplicates in a single script call, cached by diff/spec hash) — no internal sub-agents
 - Generate the drift report + compute its own finding severities (critical/high/medium/low) — the aggregated gate decision itself is computed by the orchestrator in step 5, not by this skill
-- Correlate requirements↔code and acceptance-criteria↔tests only over the requirements/criteria fully included in `spec.md`; requirements that appear only in the compact scope index (title-only, not fully included) belong to other tasks and must NOT enter the correlation matrix or be reported as unimplemented
-- **Monorepo support:** detect which workspace is affected by inspecting diff paths; filter spec requirements and test discovery to the detected workspace. If no workspace is detected, analyze the full repository.
+- Requirements that appear only in the compact scope index (em-dash form, title-only) belong to other tasks — the engine ignores them by format, so they never enter the correlation matrix nor get reported as unimplemented
+- **Monorepo support:** the engine restricts test discovery to the workspace(s) detected from diff path prefixes; if none is detected, it analyzes the full repository.
 - Artifact language: `<artifact_language>`
 - **Persist mode-agnostic output** as part of the Phase 5 consolidation (after the fan-out, once the aggregated gate is known): **Linear mode** — post the `drift-findings.json` summary as a comment on the task issue via `mcp__linear-server__save_comment`; **Local mode** — export `drift-report.md` to `ship/changes/<feature>/drift-report.md`.
 
@@ -598,8 +519,11 @@ After the fix agent completes, determine which quality phases to re-run:
    b–d. **Compute the rerun scope with a single script call**: write the modified-files list from step 2 to `.context/ship-run/<task-id>/post-fix-changed-files.txt` (if not already on disk) and call:
 
    ```bash
-   bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" .context/ship-run/<task-id>/post-fix-changed-files.txt
+   bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" .context/ship-run/<task-id>/post-fix-changed-files.txt \
+        .context/ship-run/<task-id>/drift-findings.json
    ```
+
+   The second argument is optional: when `drift-findings.json` exists and every previous analyze finding is spec-side (`DUP`/`TERM`/`AMBIG`/`SUBSPEC`/`PRINCIPLE`), the script returns `analyze.rerun=false` — a code fix cannot change spec-side findings, so re-running analyze would reproduce them verbatim.
 
    Interpret its JSON output:
    - `out_of_scope: true` → follow ${CLAUDE_SKILL_DIR}/patterns/gates.md → Edge case 4 (conservative mode — re-run ALL originally enabled quality phases in parallel as in Phase 4, log the `Fix tocou arquivo(s) fora do scope original` line, and skip to step 4f).
@@ -608,7 +532,7 @@ After the fix agent completes, determine which quality phases to re-run:
 
    e. **Log the decision** before launching agents, reusing each phase's `phases.<phase>.reason` from the JSON as the human-readable reason, in the format defined in ${CLAUDE_SKILL_DIR}/patterns/gates.md ("Re-run cirúrgico → Log format": `Fix tocou:` / `Re-run cirúrgico:` / `Re-run pulado:`).
 
-   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` — never wrap either in `Agent`). `analyze`'s `rerun` is always `true`, driven by the script's own broad-scope logic (${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, regardless of the per-phase decision for the other phases. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row) — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: run `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...` (e.g. `<N>` = `2` for the first re-run, passing each re-invoked phase's `phase-status-<phase>.md` as a scratch file), append its stdout to `.context/ship-run/<task-id>/phase-status.md`, and add `notes=re-run cirúrgico`.
+   f. **Re-invoke only the selected phases** using the same dispatch pattern as Phase 4 (in parallel if multiple): `perf` and `security` via **Agent tool** with their respective `subagent_type` (`ship-perf`, `ship-security`); `review` and `analyze` via **Skill tool** (each declares `context: fork` — never wrap either in `Agent`). `analyze`'s `rerun` follows the script's broad-scope logic (${CLAUDE_SKILL_DIR}/patterns/gates.md → "analyze phase scope mapping") — it re-runs whenever the fix touched **any** file, except when the script decided `analyze.rerun=false` because every previous analyze finding was spec-side (see step b–d above); honor that decision. Include `Artifact language: <artifact_language>` in each re-invocation, same as in Phase 4. Each re-invoked phase writes its row to its own `phase-status-<phase>.md` (overwriting its previous pending row) — **after all re-invoked phases return**, consolidate exactly as in the Phase 4 GATE CHECK step: run `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...` (e.g. `<N>` = `2` for the first re-run, passing each re-invoked phase's `phase-status-<phase>.md` as a scratch file), append its stdout to `.context/ship-run/<task-id>/phase-status.md`, and add `notes=re-run cirúrgico`.
 
 5. **After re-run completes**: evaluate the gate decision again manually based on the new aggregated findings (same FAIL/WARN/PASS criteria as Phase 5). Handle the result using the same `on_fail`/`on_warn` logic — track `$FIX_ITERATION` to enforce the 3-iteration limit.
 
