@@ -66,7 +66,12 @@ comment_pattern_for() {
   esac
 }
 
+FULL_SPEC_RE_CACHE=""
 full_spec_re() {
+  if [ -n "$FULL_SPEC_RE_CACHE" ]; then
+    printf '%s' "$FULL_SPEC_RE_CACHE"
+    return
+  fi
   local re="$SPEC_RE" branch key prefix
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   key="$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)"
@@ -74,6 +79,7 @@ full_spec_re() {
     prefix="${key%%-*}"
     case "$prefix" in REQ|AC|SC|IMPL|TEST) ;; *) re="$re|\\b${prefix}-[0-9]+\\b" ;; esac
   fi
+  FULL_SPEC_RE_CACHE="$re"
   printf '%s' "$re"
 }
 
@@ -89,11 +95,23 @@ added_lines_for() {
   '
 }
 
+COMMENTS_ENABLED_CACHE=""
 comments_enabled() {
-  [ "${SCAN_COMMENTS:-0}" = "1" ] && return 0
-  local root
-  root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-  [ -d "${root:-.}/.context/ship-run" ] || [ -d ".context/ship-run" ]
+  if [ -n "$COMMENTS_ENABLED_CACHE" ]; then
+    [ "$COMMENTS_ENABLED_CACHE" = "1" ]
+    return
+  fi
+  local result=0 root
+  if [ "${SCAN_COMMENTS:-0}" = "1" ]; then
+    result=1
+  else
+    root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -d "${root:-.}/.context/ship-run" ] || [ -d ".context/ship-run" ]; then
+      result=1
+    fi
+  fi
+  COMMENTS_ENABLED_CACHE="$result"
+  [ "$result" = "1" ]
 }
 
 scan_file() {
