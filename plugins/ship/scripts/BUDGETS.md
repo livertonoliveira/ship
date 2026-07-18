@@ -1,34 +1,36 @@
-# Word budget for SKILL.md files
+# Word budget for SKILL.md and agent files
 
-The build (`plugins/ship/scripts/build.js`) walks `src/skills/**/SKILL.md` and `src/agents/*.md`, resolves refs (`@ship/...`), and writes the compiled output to `plugins/ship/`. After `buildSkills()` writes each compiled SKILL.md, a verification gate counts the words of the already-substituted content (`countWords`) and compares it against a per-tier ceiling (`checkBudget`), reading the values from `plugins/ship/scripts/budgets.js`. Any skill that exceeds its tier's ceiling stops the build with `process.exit(1)`.
+The build (`plugins/ship/scripts/build.js`) walks `src/skills/**/SKILL.md` and `src/agents/*.md`, resolves refs (`@ship/...`), and writes the compiled output to `plugins/ship/`. After each file is compiled, a verification gate counts the words of the already-substituted content (`countWords`) and compares it against the ceiling in `plugins/ship/scripts/budgets.js`. Any skill or agent that exceeds the ceiling stops the build with `process.exit(1)`, and the build reports every violation found (not just the first) so all offenders can be fixed in one pass.
 
-## Tiers and ceilings
+## Ceiling
 
-Ceilings are defined in `plugins/ship/scripts/budgets.js` (source of truth).
+The default ceiling for every compiled `SKILL.md` and every compiled agent `.md` is **999 words**. A narrow **orchestrator tier** (1200 words) exists for `run` and `homolog` — see below. Every other skill or agent uses the default; there are no other per-tier exceptions.
 
-| Tier | Ceiling (words) | Skills |
-|------|------------------|--------|
-| orchestrator | 8000 | `run` |
-| heavy | 4000 | `pr` |
-| phase | 3000 | `test`, `develop`, `plan`, `homolog`, `init`, `audit:run`, `perf`, `security`, `review`, `analyze` |
-| small | 900 | `audit:backend`, `audit:database`, `audit:frontend`, `audit:security`, `audit:tests` |
-| explicit override | 4400 | `spec` |
+### Orchestrator tier (1200 words) — `run`, `homolog`
 
-`spec` carries its own explicit ceiling instead of sharing the heavy tier with `pr`: its clarify step adds taxonomy, ranking, and gate prose that push it past the shared heavy-tier ceiling, so it needs headroom the other heavy-tier skill doesn't.
+Granted 2026-07-18 after a live end-to-end run (`scripts/e2e-smoke.sh`) of the flat-999 `run/SKILL.md` surfaced two real bugs directly caused by the ceiling leaving zero slack:
+
+1. `snapshot-files.sh`'s invocation lost its `@@ship/hooks/...` reference syntax during compression (degraded to bare-filename prose), so the build never bundled the script and the develop evidence-gate silently no-op'd at runtime.
+2. Phase 3 ("Testing") lost its explicit `pipeline.sh dispatch` call — present in Phase 2 and Phase 4, missing here — so the test phase never got logged to `dispatch-log.md`/`phase-status.md`; the orchestrator improvised by running the test suite manually instead of dispatching the phase.
+
+Both are consequences of `run/SKILL.md` operating at 994–999/999 words with zero room to word-smith a fix without breaking something else first — confirmed in practice, not hypothesized. `run` and `homolog` are structurally different from every other skill: they are the only two multi-phase orchestrators that wire together literal hook invocations (exact `bash "..."` commands, exact file paths, exact flags) across 6–8 sequential phases, where the failure mode of over-compression is a silently-skipped pipeline step rather than merely thinner prose. 1200 words gives real headroom (~200 words above the point where both bugs were found) without reopening the old unbounded tiers. If a future edit approaches 1200, treat that as the same signal the flat ceiling gives everyone else — prune first, but don't force a cut that drops a concrete `@@ship/...` invocation for vaguer prose.
 
 ## Rationale
 
-What the model pays for in context cost is the **compiled** SKILL.md — with refs already inlined — not the source file in `src/skills/`. That's why the gate measures the output of `buildSkills()`, not the content of `src/**`.
+What the model pays for in context cost is the **compiled** output — with refs already inlined — not the source file in `src/skills/` or `src/agents/`. That's why the gate measures the output of `buildSkills()`/`buildAgents()`, not the content of `src/**`.
 
-Per-tier ceilings were fixed at the size each skill reached after a round of no-op/boilerplate pruning, plus roughly 10–15% headroom. This allows moderate organic growth without requiring a ceiling adjustment for every small change, while still preventing a skill from inflating indefinitely without review.
+A flat sub-1000-word ceiling keeps every prompt loadable at low context cost regardless of which skills/agents a given pipeline run pulls in, and forces prose to stay terse and assertive instead of drifting into exposition over time.
 
 ## When the build fails on budget
 
-If `build.js` reports that a skill exceeded its ceiling, follow this order:
+1. **Try pruning first.** Remove no-ops, compress verbose paragraphs into leading-words, consolidate duplicated boilerplate by extracting it into `src/patterns/*.md` and referencing it via `@ship/...` — but remember refs still count their full expanded word cost against the file that references them, so extracting to a pattern only helps if the pattern is trimmed too, or if it lets multiple sections collapse into one shared anchor.
+2. **If a pattern file itself is the bulk of several files' word count**, trimming that one pattern is the highest-leverage fix — it reduces every file that references it in one edit.
+3. **Only after reasonable pruning is exhausted, escalate to the user.** The ceiling is a deliberate constraint, not a default — do not raise it without an explicit decision to do so, and justify the change in the PR description.
 
-1. **Try pruning first.** Remove no-ops, compress verbose paragraphs into leading-words, consolidate duplicated boilerplate by extracting it into `src/patterns/*.md` and referencing it via `@ship/...`. The goal is to reduce the word count without changing the skill's observable behavior.
-2. **Only after reasonable pruning is exhausted, adjust the ceiling.** Change the corresponding tier's value in `plugins/ship/scripts/budgets.js`, or add an explicit entry for the skill in `WORD_BUDGETS` if it warrants its own ceiling outside the standard tier. Justify the increase in the PR description.
+## Skills and agents without an explicit entry
 
-## Skills without an explicit entry
+Any `skillKey` without an explicit entry in `WORD_BUDGETS` falls back to `DEFAULT_BUDGET` (999 words). In practice `WORD_BUDGETS` is empty — every skill and agent uses the default.
 
-Any `skillKey` without an explicit entry in `WORD_BUDGETS` falls back to `DEFAULT_BUDGET` (1000 words). This covers new skills created without a deliberate tier decision — the goal is to force a conscious tier choice once the skill grows past this default ceiling.
+## Validated, not just assumed (2026-07-18)
+
+`ship-audit-security` needed the deepest cut of any file to fit the ceiling (own prose ~2410 → 228 words after shared-ref overhead; ~91% reduction). Rather than assume that held up, it was validated by actually running the compiled agent against this repo (local-mode override, no Linear writes) and reading its output. Result: it still produced a correct, well-formatted, comprehensive audit — 4 parallel sub-agents covering all 8 category codes, proper OWASP/CWE tagging, a real high-severity finding it verified live against the repo (a `git` guard bypass), and a genuinely novel finding about agent-to-agent trust boundaries. Conclusion: most of what compression removed (verbose OWASP category explanations, elaborate multi-sentence vulnerability writeups) was redundant with the model's own training knowledge — dense category-code hints plus the model's domain expertise reconstructed the detail. This is evidence *for* the flat ceiling holding up even at the extreme, not a reason to add a per-file exception; no exception was granted based on this run. If a future compressed file demonstrably fails in real use (not just "feels thin" on read-through), that's the bar for revisiting its ceiling — see the escalation path above.

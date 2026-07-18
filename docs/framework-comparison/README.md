@@ -67,6 +67,7 @@ Cada item é auto-contido no seu arquivo. Eixo = dimensão da sua pergunta origi
 | [17](spec-17-model-tiering.md)               | Model tiering explícito (Haiku p/ varredura)   | custo + velocidade     | superpowers       |
 | [18](spec-18-conditional-hygiene-secrets.md) | Sweep de higiene condicional + secrets no hook | velocidade + segurança | auditoria interna |
 | [19](spec-19-skill-lifecycle.md)             | Ciclo de vida e disciplina de poda de skills   | manutenção             | Pocock            |
+| [20](spec-20-hybrid-drift-correlation.md)    | Correlação híbrida no `ship:analyze` (Jaccard + escalada semântica) | assertividade | auditoria interna |
 
 ---
 

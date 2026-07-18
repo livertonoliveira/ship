@@ -24,6 +24,14 @@ const REPLACE_LAZY = /@@ship\/([^\s)]+\.(?:md|sh))(#[A-Za-z0-9_-]+)?/g;
 
 const readCache = new Map();
 
+function assertContained(baseDir, candidate, ref, skillRelPath) {
+  const rel = path.relative(baseDir, candidate);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    console.error(`Erro: referência escapa do diretório permitido em ${skillRelPath}: ${ref}`);
+    process.exit(1);
+  }
+}
+
 function readFileCached(absPath) {
   if (!readCache.has(absPath)) {
     readCache.set(absPath, fs.readFileSync(absPath, 'utf8'));
@@ -43,18 +51,35 @@ function walkSkillFiles(dir, results = []) {
   return results;
 }
 
+const FENCE_RE = /^(```|~~~)/;
+
+function headingLevelsByLine(lines) {
+  const levels = new Array(lines.length).fill(0);
+  const headingRe = /^(#{1,6})\s/;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (FENCE_RE.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = lines[i].match(headingRe);
+    if (m) levels[i] = m[1].length;
+  }
+  return levels;
+}
+
 function extractSection(content, anchor, refLabel, skillRelPath) {
   const lines = content.split('\n');
-  const headingRe = /^(#{1,6})\s/;
+  const levels = headingLevelsByLine(lines);
   const markerRe = new RegExp('\\{#' + anchor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\}');
 
   let start = -1;
   let level = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(headingRe);
-    if (m && markerRe.test(lines[i])) {
+    if (levels[i] && markerRe.test(lines[i])) {
       start = i;
-      level = m[1].length;
+      level = levels[i];
       break;
     }
   }
@@ -65,8 +90,7 @@ function extractSection(content, anchor, refLabel, skillRelPath) {
 
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    const m = lines[i].match(headingRe);
-    if (m && m[1].length <= level) {
+    if (levels[i] && levels[i] <= level) {
       end = i;
       break;
     }
@@ -108,6 +132,7 @@ function resolveRefs(content, skillRelPath) {
       seen.add(refKey);
 
       const refPath = path.join(SOURCE_ROOT, ref);
+      assertContained(SOURCE_ROOT, refPath, ref, skillRelPath);
       if (!fs.existsSync(refPath)) {
         console.error(`Erro: referência quebrada em ${skillRelPath}: @ship/${ref}`);
         process.exit(1);
@@ -129,11 +154,13 @@ function processLazyRefs(content, skillRelPath, skillOutDir) {
       process.exit(1);
     }
     const srcPath = path.join(SOURCE_ROOT, ref);
+    assertContained(SOURCE_ROOT, srcPath, ref, skillRelPath);
     if (!fs.existsSync(srcPath)) {
       console.error(`Erro: lazy ref quebrada em ${skillRelPath}: @@ship/${ref}`);
       process.exit(1);
     }
     const destPath = path.join(skillOutDir, ref);
+    assertContained(skillOutDir, destPath, ref, skillRelPath);
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
     if (ref.endsWith('.sh')) {
       fs.copyFileSync(srcPath, destPath);
@@ -196,11 +223,16 @@ function buildSkills() {
   return { count, entries };
 }
 
+function agentKeyFromRelPath(agentRelPath) {
+  return agentRelPath.replace(/\.md$/, '');
+}
+
 function buildAgents() {
   fs.rmSync(OUTPUT_AGENTS, { recursive: true, force: true });
   fs.mkdirSync(OUTPUT_AGENTS, { recursive: true });
   const agentFiles = walkAgentFiles(SOURCE_AGENTS);
   let count = 0;
+  const entries = [];
 
   for (const agentPath of agentFiles) {
     const agentRelPath = path.relative(SOURCE_AGENTS, agentPath);
@@ -209,9 +241,10 @@ function buildAgents() {
     const outPath = path.join(OUTPUT_AGENTS, agentRelPath);
     fs.writeFileSync(outPath, substituted, 'utf8');
     console.log(`✓ agents/${agentRelPath}`);
+    entries.push({ skillKey: agentKeyFromRelPath(agentRelPath), wordCount: countWords(substituted) });
     count++;
   }
-  return count;
+  return { count, entries };
 }
 
 function buildHooks() {
@@ -233,16 +266,21 @@ function buildHooks() {
 }
 
 function main() {
-  const { count: skillCount, entries } = buildSkills();
-  const agentCount = buildAgents();
+  const { count: skillCount, entries: skillEntries } = buildSkills();
+  const { count: agentCount, entries: agentEntries } = buildAgents();
   const hookCount = buildHooks();
 
-  for (const { skillKey, wordCount } of entries) {
+  const violations = [];
+  for (const { skillKey, wordCount } of [...skillEntries, ...agentEntries]) {
     const violation = checkBudget(skillKey, wordCount, WORD_BUDGETS);
-    if (violation) {
-      console.error(`Erro: ${violation.skillKey} tem ${violation.wordCount} palavras, excede o teto de ${violation.limit}`);
-      process.exit(1);
+    if (violation) violations.push(violation);
+  }
+
+  if (violations.length > 0) {
+    for (const v of violations) {
+      console.error(`Erro: ${v.skillKey} tem ${v.wordCount} palavras, excede o teto de ${v.limit}`);
     }
+    process.exit(1);
   }
 
   console.log(`\nBuild concluído. ${skillCount} SKILL.md + ${agentCount} agents + ${hookCount} hooks gerados em ${path.relative(REPO_ROOT, PLUGIN_ROOT)}/.`);

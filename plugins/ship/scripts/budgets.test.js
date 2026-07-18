@@ -17,9 +17,17 @@ test('countWords counts concrete word totals', () => {
   assert.equal(countWords(''), 0);
 });
 
-test('checkBudget returns a violation when a known skillKey exceeds its tier limit', () => {
+test('checkBudget returns a violation using DEFAULT_BUDGET when a skillKey has no explicit tier entry', () => {
+  const violation = checkBudget('spec', 99999, WORD_BUDGETS);
+  assert.deepEqual(violation, { skillKey: 'spec', wordCount: 99999, limit: DEFAULT_BUDGET });
+});
+
+test('checkBudget uses the orchestrator-tier limit for run/homolog', () => {
   const violation = checkBudget('run', 99999, WORD_BUDGETS);
   assert.deepEqual(violation, { skillKey: 'run', wordCount: 99999, limit: WORD_BUDGETS.run });
+  assert.equal(WORD_BUDGETS.run, 1200);
+  assert.equal(WORD_BUDGETS.homolog, 1200);
+  assert.equal(checkBudget('run', 1100, WORD_BUDGETS), null);
 });
 
 test('checkBudget returns null when an unknown skillKey stays within DEFAULT_BUDGET', () => {
@@ -40,16 +48,17 @@ test('skillKeyFromRelPath maps a nested SKILL.md path to its skill key', () => {
   assert.equal(skillKeyFromRelPath(path.join('audit', 'run', 'SKILL.md')), 'audit/run');
 });
 
-test('WORD_BUDGETS.spec has its own explicit ceiling of 4400 words', () => {
-  assert.equal(WORD_BUDGETS.spec, 4400);
+test('WORD_BUDGETS only exempts the orchestrator tier (run, homolog) — every other skillKey falls back to DEFAULT_BUDGET', () => {
+  assert.deepEqual(WORD_BUDGETS, { run: 1200, homolog: 1200 });
+  assert.equal(DEFAULT_BUDGET, 999);
 });
 
-test('build completes without process.exit(1) when the compiled spec skill is ~4100 words against the raised 4400 ceiling', () => {
-  const result = checkBudget('spec', 4100, WORD_BUDGETS);
+test('build completes without process.exit(1) when the compiled spec skill is under the flat 999 ceiling', () => {
+  const result = checkBudget('spec', 955, WORD_BUDGETS);
   assert.equal(result, null);
 });
 
-test('build would trigger checkBudget process.exit(1) when the compiled spec skill is ~4100 words against the old 4000 ceiling', () => {
-  const violation = checkBudget('spec', 4100, { ...WORD_BUDGETS, spec: 4000 });
-  assert.deepEqual(violation, { skillKey: 'spec', wordCount: 4100, limit: 4000 });
+test('build would trigger checkBudget process.exit(1) when the compiled spec skill exceeds the flat 999 ceiling', () => {
+  const violation = checkBudget('spec', 1000, WORD_BUDGETS);
+  assert.deepEqual(violation, { skillKey: 'spec', wordCount: 1000, limit: DEFAULT_BUDGET });
 });

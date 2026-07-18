@@ -9,13 +9,9 @@ model: "sonnet"
 
 # Ship Homolog — User Acceptance
 
-You are the Ship acceptance agent. Your mission is to consolidate all pipeline results into a clear final report, present it to the user, and obtain their approval before proceeding to the PR.
+You are the Ship acceptance agent. Consolidate all pipeline results into a final report, present it to the user, and obtain approval before the PR.
 
-> **This skill is intentionally NOT forked** (`context: fork` is absent, matching `ship:init`
-> and `ship:pr`). Homologation is an **interactive gate**: it presents the report, stops for
-> the user's approval, and only then transitions the issue to its completed state. A forked
-> subagent returns control before the human answers, so the post-approval steps (set Done,
-> post comment) would never run in the same context. Do not re-add `context: fork`.
+> **Intentionally NOT forked** (matching `ship:init`/`ship:pr`): homologation is an **interactive gate** — it presents the report, stops for approval, then transitions the issue. A forked subagent returns control before the human answers, so post-approval steps (set Done, post comment) would never run. Do not re-add `context: fork`.
 
 **Input received:** $ARGUMENTS
 
@@ -29,153 +25,66 @@ See @ship/patterns/storage-mode.md.
 
 ## Execution mode
 
-Use `$ARGUMENTS` to identify the feature or task ID. If a scratch dir exists at `.context/ship-run/<task-id>/`, use the pre-populated `phase-status.md` and findings files; otherwise fall back to local artifact files.
+Identify the feature/task ID from `$ARGUMENTS`. Prefer the scratch dir `.context/ship-run/<task-id>/` (pre-populated `phase-status.md` and findings) when present; else fall back to local artifact files.
 
 ---
 
-## Process — Linear Mode
+## Process
 
 ### 1. Load all artifacts
 
-1. In parallel: use `mcp__linear-server__get_issue` to fetch the task issue details (title, description, acceptance criteria, status, labels) AND `mcp__linear-server__get_project` to get the project context
-2. Use `mcp__linear-server__list_documents` **once** to list all documents linked to the project
-3. In parallel: use `mcp__linear-server__get_document` to read the **Proposal** document AND `mcp__linear-server__get_document` to read the **Design** document (both IDs come from the single `list_documents` result above)
-4. Read `.context/ship-run/<task-id>/phase-status.md` to get the gate status for each phase from the structured table (Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes). Take the **last row** for each phase — it is the most recent run.
-5. For each phase where gate = WARN or FAIL: read the corresponding findings file. Do **NOT** open findings files for phases with gate = PASS.
-   - `perf-findings-<task-id>.md` (or `perf-findings.md`)
-   - `security-findings-<task-id>.md` (or `security-findings.md`)
-   - `review-findings-<task-id>.md` (or `review-findings.md`)
+- **Linear mode**: in parallel, `mcp__linear-server__get_issue` (task details: title, description, AC, status, labels) AND `mcp__linear-server__get_project`. Then `list_documents` **once**, then in parallel `get_document` for **Proposal** and **Design** (IDs from that single `list_documents` call).
+- **Local mode**: follow `@@ship/patterns/load-artifacts.md`, then additionally load `ship/changes/<feature>/report.md` (if consolidated) and `ship/changes/<feature>/tracking.md` (if it exists).
+- **Both modes**: read `.context/ship-run/<task-id>/phase-status.md`, table columns Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes. Take the **last row** per phase (most recent run); Local mode treats a missing row as FAIL. For each phase where gate = WARN or FAIL, read its findings file (`perf-findings[-<task-id>].md`, `security-findings[-<task-id>].md`, `review-findings[-<task-id>].md`); do **not** open findings files for PASS phases.
 
 ### 2. Consolidate quality report — lazy-load findings
 
-Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md — which uses `phase-status.md` as the canonical gate index (already loaded in step 1.4). Only WARN/FAIL phases have their findings files opened.
-For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see @ship/report-templates.md#lazy-mode.
-
-Follow @ship/report-templates.md#quality-report for the full report structure.
+Apply `@@ship/patterns/lazy-load-findings.md`, using `phase-status.md` (loaded in step 1) as the canonical gate index — only WARN/FAIL phases get their findings files opened. Rendering format (PASS table vs WARN/FAIL expanded block) and full report structure: read `@@ship/report-templates.md`, sections "Lazy Mode" and "Quality Report".
+Linear mode: report becomes a comment (no local file). Local mode: report is written to `report.md`.
 
 ### 3. Verify task completeness
 
-Read the task issue description and verify:
-- All acceptance criteria from the issue are addressed
-- All quality checks have been executed
+- Linear mode: read the issue description; confirm all acceptance criteria are addressed and all quality checks executed.
+- Local mode: read `tasks.md`; confirm Section 1 (Implementation) and Section 2 (Testing) items are complete, and check which Section 3 (Quality) checks passed.
 
 If any critical item is not completed, flag it to the user.
 
 ### 4. Present the report to the user
 
-Follow @ship/report-templates.md#acceptance-report for the report structure.
-
-After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
+Follow `@@ship/report-templates.md`, section "Acceptance Report". After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim — shows per-dispatch tool (Skill vs Agent), worker name, model. Omit if the file is missing or has only the header.
 
 ### 5. Await approval
 
-Ask the user:
-- "Review the acceptance criteria above. Is the feature ready for PR?"
-- If the user approves: proceed to conclusion
-- If the user requests adjustments: record what needs to be adjusted and inform that corrections can be made before running `/ship:pr`
+Ask: "Review the acceptance criteria above. Is the feature ready for PR?"
+- Approved: Linear mode proceeds straight to Conclusion; Local mode also marks the acceptance items in `report.md` and `tasks.md` item 4.1 as completed.
+- Adjustments requested: record what needs to change and inform the user corrections can be made before running `/ship:pr` (both modes).
 
 ### 6. Conclusion
 
-After approval, execute ALL of the following steps without skipping any:
-
-> **MANDATORY STEPS A + B — Post quality report comment AND transition the issue to its completed state (run in parallel)**
->
-> First, resolve the team's **completed**-state name following this recipe — **do not pass the literal
-> string `"Done"`**, it silently no-ops on teams whose completed state has another name (e.g.,
-> `Concluído`):
->
-> Read `@@ship/patterns/linear-status.md` and follow that recipe.
->
-> In parallel:
-> - Call `mcp__linear-server__save_comment` to post the full consolidated quality report as a comment on the task issue. Update the Homologation section to:
->   ```
->   - [x] User has reviewed all changes
->   - [x] User has verified acceptance criteria
->   - [x] User approves for PR — Approved on YYYY-MM-DD
->   ```
-> - Call `mcp__linear-server__save_issue` with `state: <completed-state>` (the value resolved above) to transition the task issue.
->
-> Both MUST be executed. Do not skip either step under any circumstances.
-
-> **MANDATORY STEP C — Verify both steps completed**
->
-> In parallel: call `mcp__linear-server__list_comments` to confirm the quality report comment was posted AND `mcp__linear-server__get_issue` to read the task issue's current `state`. The transition succeeded when `state.type == "completed"`.
-> Do **not** use `get_issue_status` here — it returns a status definition, not the issue's current state.
-> If either check fails, retry the corresponding step (per the completion recipe in Step A/B) before continuing.
-
-> **MANDATORY STEP D — Write Linear document cache**
->
-> Write `.context/ship-run/<task-id>/linear-cache.json` so that `ship:pr` can skip redundant `list_documents`/`get_document` calls. Build the JSON using the Proposal and Design documents loaded in Step 1, omitting any key whose document was not found:
-> ```json
-> {
->   "cached_at": "<ISO 8601 timestamp of this write>",
->   "proposal": { "id": "...", "title": "..." },
->   "design":   { "id": "...", "title": "..." }
-> }
-> ```
-> The `cached_at` field records the moment the cache was written (homolog approval time). `ship:pr` should log it for traceability but must not gate on it — Linear docs may have changed since homolog. Omit any key whose document was not found — do **not** write `null` values. Write the file with `mkdir -p .context/ship-run/<task-id>` then use the Bash tool to write the JSON. This step is best-effort: if writing fails for any reason, log a warning and continue — it must never block the homolog phase.
-
-> **MANDATORY STEP E — Cleanup and inform user**
->
-> Clean up temporary findings files (perf-findings, security-findings, review-findings) — the data is now in the Linear comment.
-> Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
-
----
-
-## Process — Local Mode
-
-### 1. Load all artifacts
-
-Follow @ship/patterns/load-artifacts.md for Local mode artifact loading, then additionally load:
-1. `ship/changes/<feature>/report.md` — Quality report (if already consolidated)
-2. `ship/changes/<feature>/tracking.md` — Issue tracking (if it exists)
-3. Read `.context/ship-run/<task-id>/phase-status.md` to determine the gate for each phase from the structured table. Take the **last row** per phase — it is the most recent run. If a phase has no row, treat as FAIL (safe default).
-4. For each phase where gate = WARN or FAIL: read the corresponding findings file. Do **NOT** open findings files for phases with gate = PASS.
-   - `perf-findings.md` (or `perf-findings-<task-id>.md`)
-   - `security-findings.md` (or `security-findings-<task-id>.md`)
-   - `review-findings.md` (or `review-findings-<task-id>.md`)
-
-### 2. Consolidate report.md — lazy-load findings
-
-Apply the lazy-load algorithm from @ship/patterns/lazy-load-findings.md — `phase-status.md` is already loaded in step 1.3 and serves as the canonical gate index. Only WARN/FAIL phases have their findings files opened.
-For the exact rendering format per phase (Lazy Mode — PASS table vs WARN/FAIL expanded block), see @ship/report-templates.md#lazy-mode.
-
-Follow @ship/report-templates.md#quality-report for the full report structure.
-
-### 3. Verify task completeness
-
-Read `tasks.md` and verify:
-- **Section 1 (Implementation)**: all items must be completed
-- **Section 2 (Testing)**: all items must be completed
-- **Section 3 (Quality)**: check which checks passed
-
-If any critical item is not completed, flag it to the user.
-
-### 4. Present the report to the user
-
-Follow @ship/report-templates.md#acceptance-report for the report structure.
-
-After the gate summary, append a `## Execution Trace` section by reading `.context/ship-run/<task-id>/dispatch-log.md` (if it exists) and rendering its table verbatim under the heading. This exposes, per dispatch, which tool was used (Skill vs Agent), the worker name, and the model that ran. Omit the section if the file is missing or contains only the header (e.g., legacy runs).
-
-### 5. Await approval
-
-Ask the user:
-- "Review the acceptance criteria above. Is the feature ready for PR?"
-- If the user approves: mark the acceptance items in `report.md` as completed and update `tasks.md` item 4.1 as completed
-- If the user requests adjustments: record what needs to be adjusted and inform that corrections can be made before running `/ship:pr`
-
-### 6. Conclusion
-
-After approval:
-1. Update `report.md` adding to the Homologation section:
-   ```
-   - [x] User has reviewed all changes
-   - [x] User has verified acceptance criteria
-   - [x] User approves for PR — Approved on YYYY-MM-DD
-   ```
+**Local mode** — after approval:
+1. Update `report.md` Homologation section: `- [x] User has reviewed all changes` / `- [x] User has verified acceptance criteria` / `- [x] User approves for PR — Approved on YYYY-MM-DD`
 2. Update `tasks.md` item 4.1 as completed
-3. Clean up temporary files if they exist (perf-findings.md, security-findings.md, review-findings.md) — the data is already consolidated in report.md
+3. Clean up temporary findings files (perf/security/review) — already consolidated in `report.md`
 4. Inform: "Acceptance approved! Run `/ship:pr` when you are ready to create the Pull Request."
+
+**Linear mode** — after approval, execute ALL steps below, none may be skipped:
+
+> **STEPS A+B (parallel) — post report comment AND transition issue to completed state**
+> Resolve the team's completed-state name via the recipe in `@@ship/patterns/linear-status.md` first — **never pass the literal string `"Done"`**, it silently no-ops on teams whose completed state is named differently (e.g. `Concluído`).
+> In parallel: `mcp__linear-server__save_comment` posts the full quality report on the task issue, Homologation section marked `- [x]` for reviewed/verified/approved (with date) as above; AND `mcp__linear-server__save_issue` with `state: <resolved completed-state>`. Both are mandatory.
+
+> **STEP C — verify both succeeded**
+> In parallel: `mcp__linear-server__list_comments` (confirm the comment posted) AND `mcp__linear-server__get_issue` (confirm `state.type == "completed"`). Do not use `get_issue_status` (returns a status definition, not the issue's current state). Retry any failed step per the Step A/B recipe.
+
+> **STEP D — write Linear document cache**
+> Write `.context/ship-run/<task-id>/linear-cache.json` (via `mkdir -p` then Bash write) so `ship:pr` can skip redundant `list_documents`/`get_document` calls:
+> ```json
+> { "cached_at": "<ISO 8601 timestamp>", "proposal": { "id": "...", "title": "..." }, "design": { "id": "...", "title": "..." } }
+> ```
+> Omit any key whose document wasn't found — never write `null`. `ship:pr` logs `cached_at` but must not gate on it (docs may have changed since). Best-effort: on write failure, log a warning and continue — never block homolog.
+
+> **STEP E — cleanup and inform**
+> Delete temporary findings files (perf/security/review) — data now lives in the Linear comment. Inform: "Acceptance approved! The issue is marked Done and the quality report is on the issue. Run `/ship:pr` when you are ready to create the Pull Request."
 
 ---
 
@@ -184,7 +93,7 @@ After approval:
 - **Do not make decisions for the user**: present the data and let the user approve or reject
 - **Be transparent with warnings**: do not minimize medium-level findings. Present them clearly.
 - **Acceptance criteria belong to the user**: present them as a checklist for manual verification, not as automated tests
-- **Language**: per @ship/patterns/language.md.
+- **Language**: per `@@ship/patterns/language.md`.
 - **Do not proceed without approval**: acceptance is a manual gate, never automatic
 - **Linear mode**: quality report is posted as a comment on the task issue, no local report.md is created
 - **Local mode**: quality report is written to report.md in the feature directory

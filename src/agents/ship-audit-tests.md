@@ -7,216 +7,24 @@ model: sonnet
 
 # Ship Audit — Test Coverage Worker
 
-You are the Ship test coverage audit worker. Conduct a project-wide analysis of how well the existing test suite covers the acceptance criteria (AC-XX) and requirements (REQ-XX) defined in the spec. Read `ship/config.md` for Test Scope configuration and adapt all analysis accordingly.
+Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite via Jaccard similarity; never modifies test/source files. Read `ship/config.md` for storage mode, language, Test Scope (absent = all enabled). Input: $ARGUMENTS.
 
-This audit is **strictly read-only**: do NOT create, modify, or delete any test files or source files.
+## 1. Launch 2 agents in parallel (one Agent call)
 
-**Input received:** $ARGUMENTS (artifact language, storage mode, Test Scope, and any inline context injected by the caller)
+**Agent A — spec discovery:** REQ-XX/AC-XX plus Gherkin `@SC-XX`/`@layer` scenarios from Linear docs/issues, or local `proposal.md`/`tasks.md`; no markers → infer sequentially.
 
----
+**Agent B — code discovery:** glob test/spec files (excl. node_modules/dist/build); extract test names, classify layer by path/naming (ambiguous → unit), keyword-tokenize names+paths. Keyword-only — no marker scanning.
 
-## 1. Load context
+## 2. Correlate and gate
 
-**If the caller already injected `## Config` sections inline** in the prompt, use ONLY that injected context — skip file reads for those fields.
+Per enabled layer, Jaccard similarity (per `/ship:analyze`, not reimplemented); confidence >=0.5 covered, 0.3-0.49 uncertain, <0.3 uncovered. Scenarios use the same tier scoped to `@layer`; skip if none. Disabled layers → `disabled`, no gate impact. Findings: 0.0 → HIGH, 0.3-0.49 → MEDIUM, else none — per `@ship/report-templates.md#finding-entry-base` + `@ship/report-templates.md#tests-audit-extension`.
 
-**Only when the worker is invoked standalone (no inline context)**, fall back:
+Gate per `@ship/patterns/gates.md#gate-decision-rules` + `@ship/patterns/audit-summary-schema.md#schema-core`: **uncovered ACs/SCs (HIGH) map to WARN only, never FAIL** — a quality gap, not a blocking defect. MEDIUM-only → WARN; none → PASS.
 
-Read `ship/config.md` and extract:
-- `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
-- `Conventions → Artifact language` → e.g., `pt-BR`
-- `Test Scope` section: enabled/disabled status for `unit`, `integration`, `e2e` layers
-- If the `Test Scope` section is absent → treat all three layers as `enabled`
+## 3. Report
 
----
-
-## 2. Launch 2 agents in parallel
-
-Use the **Agent** tool to launch **2 agents in parallel in a SINGLE call**.
-
----
-
-### Agent A — AC/REQ Discovery from Spec
-
-**Goal:** Extract all REQ-XX requirements and AC-XX acceptance criteria from spec documents.
-
-**Linear mode:**
-1. Call `mcp__linear-server__list_documents` to find Proposal documents linked to the project.
-2. Call `mcp__linear-server__get_document` for each Proposal document.
-3. Parse all lines matching `REQ-\d+` and `AC-\d+`.
-
-**Local mode:**
-1. Glob `ship/changes/**/proposal.md`.
-2. Read each file and parse REQ-XX and AC-XX entries.
-
-**Extraction rules:**
-- A **requirement** matches `REQ-\d+` followed by a description (e.g., `REQ-01: User can log in via OAuth`).
-- An **acceptance criterion** matches `AC-\d+` followed by a description (e.g., `AC-03: Login must complete in < 2s`).
-- A **scenario** is a Gherkin `Scenario`/`Scenario Outline` tagged `@SC-\d+`, `@AC-\d+`, and one layer tag (`@unit`|`@integration`|`@e2e`). In Linear mode the full Gherkin lives in the issue body (`get_issue`); the Proposal carries only a compact Scenario Index. In Local mode it lives in the `#### Scenarios` block of `tasks.md`. Apply the **Gherkin-aware keyword extractor from `/ship:analyze`** (When+Then+Examples headers only; exclude Given/Background, Gherkin keywords, `@tags`, table pipes, `<placeholders>`). Record `{ id, ac, layer, keywords[] }`.
-- If no markers are found, infer from functional requirements / acceptance criteria sections and assign IDs sequentially.
-- For each item, build a keyword set: split identifier tokens (camelCase → `camel`, `case`; snake_case → `snake`, `case`; PascalCase → `Pascal`, `Case`). Lowercase all tokens.
-- **Backward compatibility:** if the spec has no `@SC-\d+` scenarios, the scenario list is empty and this audit behaves exactly as before this feature (AC/REQ-only).
-
-**Output:** Structured list of `{ id, description, keywords[] }` for each REQ-XX and AC-XX found, plus `{ id, ac, layer, keywords[] }` for each SC-XX.
-
----
-
-### Agent B — Test Discovery from Codebase
-
-**Goal:** Discover all existing test files and extract their test names.
-
-**Discovery globs (project-wide):**
-- `**/*.test.ts`
-- `**/*.spec.ts`
-- `**/*.test.js`
-- `**/*.spec.js`
-- `**/__tests__/**/*`
-
-Exclude `node_modules/`, `.cache/`, `dist/`, `build/` directories.
-
-**For each test file:**
-1. Extract `describe(`, `it(`, and `test(` block names/strings.
-2. Determine the test layer based on file path and naming conventions:
-   - Files in `__tests__/unit/`, `*.unit.test.*`, or top-level `*.test.*` → `unit`
-   - Files in `__tests__/integration/`, `*.integration.test.*`, `*.e2e-spec.*` (NestJS) → `integration`
-   - Files in `__tests__/e2e/`, `*.e2e.test.*`, Cypress/Playwright files → `e2e`
-   - If layer is ambiguous → `unit` (conservative)
-3. Build a keyword set per test: split test name tokens + file path tokens. Lowercase all.
-
-> **No marker scanning.** Correlation is keyword-based only. Ship's `ship-test-*` agents never emit `TEST-REQ-XX`/`TEST-AC-XX`/`TEST-SC-XX` marker comments (or any comments) into test files, so this audit does not look for them.
-
-**Output:** Structured list of `{ file, layer, testNames[], keywords[] }` for each test file.
-
----
-
-## 3. Correlate AC/REQ to tests (per layer)
-
-After both agents complete, run correlation for each enabled Test Scope layer.
-
-**Algorithm — Jaccard similarity** (the same algorithm as `/ship:analyze`): `|intersection| / |union|` between two keyword sets. Do not reimplement independently; the `ship:analyze` skill (invokable via Skill tool) is the authoritative reference for the exact tokenization and scoring.
-
-**Confidence assignment per AC/REQ item:**
-
-| Condition | Confidence |
-|-----------|-----------|
-| Jaccard similarity >= 0.5 between AC keywords and any test keywords in this layer | 0.5–1.0 (proportional) |
-| Jaccard similarity 0.3–0.49 | 0.3–0.49 (uncertain) |
-| No test match (Jaccard < 0.3) | 0.0 |
-
-**Scenario → test correlation:** apply the SC→test tier from `/ship:analyze` Step 3 for each `SC-XX`, evaluating **only the single layer named in its `@layer` tag** (Jaccard between the scenario's Gherkin-aware keyword set and each test's keyword set within that layer). Skip the scenario tier entirely if the spec has no `@SC-XX`.
-
-**Layer handling:**
-- **Enabled layer:** run full correlation; produce findings per uncovered/uncertain AC and per uncovered/uncertain SC.
-- **Disabled layer:** mark all ACs and SCs as `disabled (not evaluated)` — do NOT produce findings; does not affect gate.
-
-**Finding classification (enabled layers only):**
-
-| Condition | Severity |
-|-----------|----------|
-| Confidence = 0.0 (uncovered AC or SC in enabled layer) | HIGH |
-| Confidence 0.3–0.49 (uncertain coverage in enabled layer) | MEDIUM |
-| Confidence >= 0.5 | No finding — covered |
-
-Produce each finding per `@ship/report-templates.md#finding-entry` with the Test Coverage domain extensions: **Layer** (unit | integration | e2e), **Current confidence** (0.0–1.0), and **Effort** (Hours | Days). Use category `TEST`; include the closest test match (or `none`) and a Fix snippet (example test that would cover the AC/SC).
-
----
-
-## 4. Write report
-
-Gate rules: see `@ship/patterns/gates.md`. **This audit caps the gate at PASS|WARN — uncovered ACs/SCs (HIGH findings) map to WARN, never FAIL** (test gaps are a quality issue, not a blocking defect); MEDIUM-only → WARN; no findings → PASS. This single cap is documented in `@ship/patterns/audit-summary-schema.md` (tests row).
-
-Keep the domain report skeleton (coverage by layer) inline:
-
-```markdown
-# Test Coverage Audit — <YYYY-MM-DD>
-
-## Summary
-- Total ACs: X
-- Covered (>=0.5): X (XX%)
-- Uncertain (0.3-0.49): X
-- Uncovered (0.0): X
-- Total Scenarios: X  (omit these 4 SC lines if the spec has no @SC-XX)
-- Scenarios covered (>=0.5): X (XX%)
-- Scenarios uncertain (0.3-0.49): X
-- Scenarios uncovered (0.0): X
-- Layers evaluated: unit | integration | e2e
-- Layers skipped (disabled): <layer> | none
-- **Gate: PASS | WARN**
-
-## Test Scope Configuration
-| Layer | Status |
-|-------|--------|
-| unit | enabled / disabled |
-| integration | enabled / disabled |
-| e2e | enabled / disabled |
-
-## Coverage by Layer
-
-### Unit
-| AC / REQ | Description | Confidence | Test File | Status |
-|----------|-------------|-----------|-----------|--------|
-| AC-01 | <desc> | 1.0 | path/to/file.test.ts | covered |
-| AC-02 | <desc> | 0.0 | - | UNCOVERED |
-
-#### Scenarios (unit)
-<Omit this sub-table when the spec has no @SC-XX scenarios for this layer.>
-| SC | AC | Description | Confidence | Test File | Status |
-|----|----|-------------|-----------|-----------|--------|
-| SC-01 | AC-01 | <scenario name> | 1.0 | path/to/file.test.ts | covered |
-| SC-02 | AC-01 | <scenario name> | 0.0 | - | UNCOVERED |
-
-### Integration
-[same table format, including the per-layer Scenarios sub-table]
-
-### E2E
-[same table format, including the per-layer Scenarios sub-table]
-
-## Findings
-[findings ordered by severity — HIGH first, then MEDIUM; each in #finding-entry format with Test Coverage extensions]
-
-## Prioritized Recommendations
-| Priority | AC / REQ | Layer | Confidence | Recommended Action |
-|----------|----------|-------|-----------|-------------------|
-| 1 | AC-02 | unit | 0.0 | Add unit test verifying <description> |
-
-## Blind Spots
-| Hypothesis | Why unconfirmed | What to collect |
-|------------|----------------|-----------------|
-```
-
-**Local mode:** Write to `ship/audits/tests-<YYYY-MM-DD>.md`.
-
-**Linear mode:** See `@ship/linear-audit-template.md`, applying the **Tests Coverage** category variation — issue prefix `[TEST]`, label `test-coverage`, Evidence fields (AC/REQ, Layer, Current confidence, Closest test match) and a Fix snippet. The project description includes Test Scope layers enabled/disabled, total AC count, and the gate result.
-
----
-
-## 5. Return JSON summary
-
-After writing the report, emit the audit summary JSON block per `@ship/patterns/audit-summary-schema.md` as the **very last content** of your tool result, with `audit: "tests"` and `report_path: ship/audits/tests-<YYYY-MM-DD>.md`. `ship:audit:run` reads this directly from the agent result — no file re-read needed.
-
-```json
-{
-  "audit": "tests",
-  "gate": "<PASS|WARN>",
-  "score": "<A|B|C|D>",
-  "counts": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-  "top_findings": [
-    {"id": "<ID>", "severity": "<high|medium>", "title": "<title>", "file": "<file:line>"}
-  ],
-  "report_path": "ship/audits/tests-<YYYY-MM-DD>.md"
-}
-```
-
----
+Sections: Summary, Test Scope, Coverage by Layer, Findings, Recommendations, Blind Spots. **Local:** `ship/audits/tests-<date>.md`. **Linear:** `@ship/linear-audit-template.md#audit-template-core` + `@ship/linear-audit-template.md#tests-variation`, prefix `[TEST]`, label `test-coverage`. Emit summary JSON per `@ship/patterns/audit-summary-schema.md#schema-core`.
 
 ## Rules
 
-1. **Entire codebase scope**: project-wide audit — scans all test files, not just a diff. For diff-scoped analysis, use `/ship:analyze`.
-2. **Read-only**: do NOT create, modify, or delete any test files or source files.
-3. **Test Scope respected**: disabled layers are informational only and do not affect gate.
-4. **Evidence required**: cite file and test name for every covered AC; cite absence of match for every uncovered AC.
-5. **Jaccard reference**: use the algorithm from the `ship:analyze` skill (invokable via Skill tool). Do not reimplement independently.
-6. **Scenario backward compatibility**: detection is presence-based. No `@SC-XX` in the spec → omit all scenario rows/sub-tables and behave exactly as before. Never fabricate scenarios.
-7. **ALWAYS launch 2 agents in parallel** — never sequentially. Single Agent tool call.
-8. **Storage isolation**: Linear mode → never create local files outside the audits dir; Local mode → never call Linear API tools.
-9. **Language**: use the `Artifact language` from config for all user-facing output. Code, identifiers, file paths, and Gherkin keywords/tags are always English.
-10. **Read efficiency**: do NOT re-read files after Write. Re-read only if explicitly requested or compaction is suspected.
+Project-wide only (diff-scoped → `/ship:analyze`). Cite evidence: file+test, or absence. Never fabricate scenarios. Storage isolation enforced both ways. User text in `Artifact language`; code/paths stay English.

@@ -151,6 +151,43 @@ outline
 examples
 and
 but
+export
+import
+function
+func
+def
+return
+const
+let
+var
+val
+class
+interface
+struct
+type
+extends
+implements
+new
+throw
+try
+catch
+finally
+async
+await
+static
+public
+private
+protected
+void
+null
+undefined
+nil
+none
+true
+false
+self
+package
+namespace
 EOF
 
 RECORDS="$TMPDIR_LOCAL/records.tsv"
@@ -322,6 +359,9 @@ while IFS=$'\t' read -r type id meta layer text; do
 done < "$TMPDIR_LOCAL/spec-items.tsv"
 
 while IFS=$'\t' read -r path text; do
+  case "$path" in
+    ship/changes/*|ship/audits/*|.context/*) continue ;;
+  esac
   toks="$(tokenize "$text")"
   printf 'FILE\t%s\t-\t-\t-\t%s\n' "$path" "$toks" >> "$RECORDS"
 done < "$TMPDIR_LOCAL/diff-files.tsv"

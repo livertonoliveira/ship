@@ -68,14 +68,14 @@ test('ship-analyze no longer dispatches semantic sub-agents nor extraction sub-a
   assert.doesNotMatch(content, /### 6\.10|### 6\.11|### 6\.12/);
   assert.doesNotMatch(content, /dispatch a sub-agent/);
   assert.doesNotMatch(content, /extraction agents/i);
-  assert.match(content, /Never dispatch semantic sub-agents from this worker/);
-  assert.match(content, /do NOT dispatch sub-agents/i);
+  assert.doesNotMatch(content, /dispatch sub-agent/i);
+  assert.match(content, /AMBIG\/SUBSPEC\/PRINCIPLE n\/a here.*owned by/);
 });
 
 test('ship-analyze delegates extraction and correlation to the deterministic engine', () => {
   const content = readAgent();
-  assert.match(content, /Correlate script:/);
+  assert.match(content, /script-path/);
   assert.match(content, /--test-scope/);
-  assert.match(content, /jaccard\.json/);
-  assert.match(content, /Never re-tokenize, recompute Jaccard, or dispatch sub-agents when the script succeeded/);
+  assert.match(content, /Jaccard/);
+  assert.match(content, /never recompute in-context/i);
 });

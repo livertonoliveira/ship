@@ -9,7 +9,7 @@ model: "sonnet"
 
 # Ship Audit — Run All
 
-You are the Ship audit orchestrator. Your mission is to determine which audits apply to this project, launch them as parallel agents, and consolidate the results into a unified audit report with a single gate decision.
+Determine which project-wide audits apply, launch them in parallel, consolidate into one gate report.
 
 ---
 
@@ -21,168 +21,49 @@ See @ship/patterns/storage-mode.md.
 
 ## Process
 
-### 1. Load context
+### 1. Applicable audits
 
-Read `ship/config.md` and extract:
-- **Project Type** (backend | frontend | fullstack | monorepo)
-- **Database** (MongoDB | PostgreSQL | MySQL | none)
-- **Frontend** (Next.js | React | Vue | none | etc.)
-- **Workspaces** (if monorepo)
+Read `ship/config.md` (Project Type, Database, Frontend, Workspaces). `audit:security` and `audit:tests` always run.
 
-### 2. Determine applicable audits
-
-> **`audit:tests` is always included regardless of project type.**
-
-Use this routing table:
-
-| Project Type | Database configured? | Audits to run |
+| Project Type | DB? | Also run |
 |---|---|---|
-| `backend` | yes | audit:backend + audit:database + audit:security + audit:tests |
-| `backend` | no | audit:backend + audit:security + audit:tests |
-| `frontend` | — | audit:frontend + audit:security + audit:tests |
-| `fullstack` | yes | audit:backend + audit:database + audit:frontend + audit:security + audit:tests |
-| `fullstack` | no | audit:backend + audit:frontend + audit:security + audit:tests |
-| `monorepo` | varies | See monorepo logic below + audit:tests |
+| `backend` | no | audit:backend |
+| `backend` | yes | audit:backend + database |
+| `frontend` | — | audit:frontend |
+| `fullstack` | no | audit:backend + frontend |
+| `fullstack` | yes | audit:backend + database + frontend |
+| `monorepo` | varies | see below |
 
-**Monorepo logic:**
-- Read the `Workspaces` section of `ship/config.md`
-- For each workspace classified as `backend`: run `audit:backend` + `audit:security` for that workspace
-- For each workspace classified as `frontend`: run `audit:frontend` for that workspace
-- If any workspace has a database configured: run `audit:database`
-- Always include one `audit:security` covering the full monorepo
-- Always include one `audit:tests` covering the full monorepo
+**Monorepo:** per `backend` workspace → audit:backend (+database if present); per `frontend` workspace → audit:frontend. One shared security + tests audit for the repo.
 
-### 3. Announce the plan
+### 2. Launch in parallel
 
-Before launching agents, output:
+Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently — never sequentially. Each declares `context: fork` + `model: sonnet` and delegates to its `ship-audit-*` agent; do NOT wrap any in an `Agent` call. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
 
-```
-Running Ship audit suite for <Project Type> project:
-- audit:backend    [yes | no]
-- audit:frontend   [yes | no]
-- audit:database   [yes | no — <DB type>]
-- audit:security   [yes]
-- audit:tests      [yes]
+### 3. Consolidate
 
-Launching <N> audits in parallel...
-```
+Extract the JSON summary from each tool result (see @ship/patterns/audit-summary-schema.md) — do NOT re-read the report files. Use the **Agent** tool (`model: sonnet`), passing summaries inline, to apply the gate logic and return the consolidated report.
 
-### 4. Launch all applicable audits in parallel
+**Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 
-Invoke each applicable audit skill via the **Skill tool** in **a SINGLE assistant turn** so they fork concurrently. Each audit skill declares `context: fork` + `model: "sonnet"` in its frontmatter and delegates to its named `ship-audit-*` agent (which runs the heavy analysis on `sonnet`), so each runs in an isolated subagent automatically — do NOT wrap any of them in an `Agent` tool call.
+### 4. Write report
 
-- **`ship:audit:backend`**: returns the findings report from the full backend audit
-- **`ship:audit:database`**: returns the findings report from the full database audit
-- **`ship:audit:frontend`**: returns the findings report from the full frontend audit
-- **`ship:audit:security`**: returns the findings report from the full security audit
-- **`ship:audit:tests`**: returns the findings report from the full test coverage audit
+**Local:** `ship/audits/run-<YYYY-MM-DD>.md`. **Linear:** Document "Audit Suite — <YYYY-MM-DD>" linking each audit's document.
 
-Each agent writes its own report file:
-- `ship/audits/backend-<YYYY-MM-DD>.md`
-- `ship/audits/database-<YYYY-MM-DD>.md`
-- `ship/audits/frontend-<YYYY-MM-DD>.md`
-- `ship/audits/security-<YYYY-MM-DD>.md`
-- `ship/audits/tests-<YYYY-MM-DD>.md`
+Include: gate result; per-audit table (severity counts + gate, TOTAL row); all critical/high findings (category, file, description, impact, suggestion) by severity then audit; unified roadmap; condensed medium/low list; links to each report.
 
-### 5. Consolidate results
+### 5. Present
 
-After all agents complete, each agent's tool result contains a JSON summary block (see @ship/patterns/audit-summary-schema.md). Extract those summaries directly from the tool results — **do NOT re-read the markdown report files**.
-
-Use the **Agent** tool to consolidate results. Pass `model: "sonnet"` — Ship pins every unit to the reasoning tier.
-
-Pass the extracted JSON summaries **inline** in the consolidation agent's prompt. Instruct the agent to:
-1. Use the provided JSON summaries (already included in the prompt — no file reads needed)
-2. Evaluate the consolidated gate logic (see below)
-3. Return the full consolidated summary report as its output
-
-Step 6 writes the output to the correct path.
-
-**Consolidated gate logic:**
-- If ANY individual audit gate = **FAIL** → consolidated gate = **FAIL**
-- If ANY individual audit gate = **WARN** (and none FAIL) → consolidated gate = **WARN**
-- All **PASS** → consolidated gate = **PASS**
-
-### 6. Write consolidated report
-
-**Local mode:** Write to `ship/audits/run-<YYYY-MM-DD>.md`
-
-**Linear mode:**
-1. Create a Linear Document titled "Audit Suite — <YYYY-MM-DD>" with the consolidated report
-2. Individual audit documents (backend, database, frontend, security, tests) were already created by each agent
-3. Link all documents together in the consolidated report
-
-**Consolidated report format:**
-
-```markdown
-# Ship Audit Suite — <YYYY-MM-DD>
-
-## Gate Result
-
-**PASS | WARN | FAIL**
-
-## Summary by Audit
-
-| Audit | Critical | High | Medium | Low | Gate |
-|-------|----------|------|--------|-----|------|
-| Backend Performance | X | X | X | X | PASS/WARN/FAIL |
-| Database | X | X | X | X | PASS/WARN/FAIL |
-| Frontend Performance | X | X | X | X | PASS/WARN/FAIL |
-| Security | X | X | X | X | PASS/WARN/FAIL |
-| Test Coverage | X | X | X | X | PASS/WARN/FAIL |
-| **TOTAL** | **X** | **X** | **X** | **X** | **PASS/WARN/FAIL** |
-
-## Critical and High Findings (All Audits)
-
-[All critical and high findings from all audits, ordered by severity then audit type]
-
-### [SEVERITY] <Finding Title> — <Audit Type>
-- **Category:** ...
-- **File:** ...
-- **Description:** ...
-- **Impact:** ...
-- **Suggestion:** ...
-
-## Unified Prioritized Roadmap
-
-| Priority | Finding | Audit | Severity | Effort | Quick win? |
-|----------|---------|-------|----------|--------|------------|
-
-## Medium and Low Findings
-
-[Summarized — refer to individual audit reports for full details]
-
-| Finding | Audit | Severity | Effort |
-|---------|-------|----------|--------|
-
-## Individual Audit Reports
-
-- Backend: `ship/audits/backend-<YYYY-MM-DD>.md`
-- Database: `ship/audits/database-<YYYY-MM-DD>.md`
-- Frontend: `ship/audits/frontend-<YYYY-MM-DD>.md`
-- Security: `ship/audits/security-<YYYY-MM-DD>.md`
-- Test Coverage: `ship/audits/tests-<YYYY-MM-DD>.md`
-```
-
-### 7. Present results to user
-
-After writing the consolidated report:
-
-1. Show the gate result: **PASS**, **WARN**, or **FAIL**
-2. List all `critical` and `high` findings with their audit source
-3. Show the unified roadmap
-4. If gate = FAIL: "Pipeline is blocked. Resolve critical/high findings before proceeding."
-5. If gate = WARN: "Medium findings detected. Review and decide whether to proceed."
-6. If gate = PASS: "All audits passed. Codebase is in good shape."
+Show the gate, critical/high findings with source, and the roadmap.
+- FAIL → "Pipeline is blocked. Resolve critical/high findings before proceeding."
+- WARN → "Medium findings detected. Review and decide whether to proceed."
+- PASS → "All audits passed. Codebase is in good shape."
 
 ---
 
 ## Rules
 
-- **ALWAYS launch all applicable audits in a single parallel call** — never run audits sequentially.
-- **Do not skip security**: `audit:security` always runs regardless of project type.
-- **Do not skip tests**: `audit:tests` always runs regardless of project type — a failure in `audit:tests` does not block the other audits from running in parallel.
-- **Monorepo**: scope each backend/frontend audit to the correct workspace directory; share the security audit across all workspaces.
-- **Consolidated gate is pessimistic**: a single FAIL in any audit = overall FAIL.
-- **Individual reports are authoritative**: the consolidated report summarizes; individual reports have full details.
-- **Language**: See @ship/patterns/language.md.
-- **For project-wide diff context**: after running `/ship:audit:run`, individual pipeline phases (`/ship:perf`, `/ship:security`) still run per-task during development. Audits are for periodic project-wide health checks.
+- Gate is pessimistic: one FAIL anywhere = overall FAIL.
+- Individual reports are authoritative; the consolidated report only summarizes.
+- Language: see @ship/patterns/language.md.
+- Periodic, project-wide — distinct from diff-scoped `/ship:perf` and `/ship:security`. Never invoke this command from inside `/ship:run`.

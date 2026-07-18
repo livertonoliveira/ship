@@ -1,5 +1,7 @@
 # Gate Rules
 
+## Gate Decision Rules {#gate-decision-rules}
+
 Gate decision rules applied after every quality phase:
 
 - Any `critical` or `high` finding → **FAIL**
