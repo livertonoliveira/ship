@@ -9,7 +9,7 @@ model: "sonnet"
 
 # Ship Init — Initial Project Setup
 
-You are the Ship initialization agent. Your mission is to analyze the current project and create the base configuration that all other Ship commands will use.
+You are the Ship initialization agent. Analyze the project and create the base config all other Ship commands read from.
 
 ---
 
@@ -17,57 +17,27 @@ You are the Ship initialization agent. Your mission is to analyze the current pr
 
 ### 1. Check if already initialized
 
-Check if `ship/config.md` already exists at the project root.
-- If it exists: inform the user and ask if they want to reconfigure.
-  - If reconfiguring: read the existing file and **preserve the `Test Scope`, `Scenario Depth`, and `Clarify` sections** if present — do not overwrite them. Extract the existing values to pre-populate the interactive prompt.
-- If it does not exist: proceed with initialization.
+Check if `ship/config.md` exists at project root.
+- Exists: ask if the user wants to reconfigure. If yes, read the file and **preserve `Test Scope`, `Scenario Depth`, `Clarify`** — pre-populate the prompt with existing values, don't overwrite.
+- Missing: proceed.
 
 ### 2. Explore the project (2 agents in parallel)
 
-Launch **2 agents in parallel** using the Agent tool. For BOTH agents, pass `model: "sonnet"` explicitly to the Agent tool call — they read source code and infer patterns (reasoning work). The orchestrator itself runs on Sonnet per @@ship/patterns/model-routing.md.
+Launch 2 agents in parallel via the Agent tool, both with `model: "sonnet"` explicitly (reasoning work). Orchestrator itself runs on Sonnet per @@ship/patterns/model-routing.md.
 
-**Agent A — Stack Detection:**
-Explore the project to automatically detect:
-- **Runtime**: Node.js (package.json engine), Python (pyproject.toml, requirements.txt), Go (go.mod), Rust (Cargo.toml), Java (pom.xml, build.gradle), Ruby (Gemfile), PHP (composer.json), .NET (*.csproj), etc.
-- **Framework**: NestJS (nest-cli.json, @nestjs/*), Express, Fastify, Hono, Django, Flask, FastAPI, Gin, Echo, Spring Boot, Rails, Laravel, ASP.NET, etc.
-- **Database**: MongoDB (mongoose, @typegoose, mongosh), PostgreSQL (pg, prisma, typeorm), MySQL, Redis, SQLite, DynamoDB, etc.
-- **Frontend**: Next.js (next.config.*), React, Vue, Angular, Svelte, Astro, Nuxt, Remix, SolidJS, etc.
-- **Package Manager**: pnpm (pnpm-lock.yaml), npm (package-lock.json), yarn (yarn.lock), pip, poetry, go mod, cargo, maven, gradle, bundler, composer
-- **Test Framework**: Vitest, Jest, Mocha, pytest, go test, RSpec, PHPUnit, JUnit, xUnit, Playwright, Cypress, etc.
-- **Typecheck command**: tsc, pnpm typecheck, mypy, go vet, etc.
-- **Lint command**: eslint, prettier, ruff, golangci-lint, rubocop, etc.
-- **Monorepo detection**: pnpm-workspace.yaml, lerna.json, nx.json, turbo.json, package.json workspaces. If monorepo, map each workspace with its type (backend/frontend/shared).
-- **Project type**: backend | frontend | fullstack | monorepo
+**Agent A — Stack Detection:** detect Runtime, Framework, Database, Frontend, Package Manager, Test Framework, Typecheck, Lint, Monorepo (workspace→type+framework), Project type (`backend`/`frontend`/`fullstack`/`monorepo`). Heuristics/signal-file table: @@ship/patterns/stack-detection.md — use it, don't re-derive.
 
-> This is the canonical detection logic. The field list is also available at @ship/patterns/stack-detection.md.
-
-**Agent B — Conventions Detection:**
-Read existing code to identify:
-- **Naming conventions**: camelCase, snake_case, PascalCase for files, variables, classes, functions
-- **Folder structure**: how the project organizes modules, components, services, controllers, etc.
-- **Test patterns**: where tests are located (__tests__/, *.spec.ts, *.test.ts, tests/), how they are named, which helpers exist
-- **Import patterns**: barrel exports (index.ts), path aliases (@/), relative imports
-- **Error handling patterns**: custom exceptions, error middleware, try-catch conventions
-- **Commit message style**: analyze the git log to identify the pattern used (conventional commits, etc.)
-- **Existing CLAUDE.md or project docs**: read any existing documentation that defines conventions
+**Agent B — Conventions Detection:** naming (files/vars/classes/functions), folder structure, test patterns (location/naming/helpers), import style (barrels/aliases/relative), error-handling, commit style (`git log`), any existing CLAUDE.md/docs.
 
 ### 3. Check Linear integration
 
-Check if Linear MCP tools are available:
-- Try using `mcp__linear-server__list_teams` to verify if Linear is connected
-- If connected: obtain the Team ID and available labels via `mcp__linear-server__list_teams` and `mcp__linear-server__list_issue_labels`
-- If connected: also call `mcp__linear-server__list_issue_statuses` for the team and record the **names** of the workflow states whose `type` is `started` (e.g., `In Progress`, `Em andamento`) and `completed` (e.g., `Done`, `Concluído`). These are stored as `In Progress Status` and `Done Status` so the pipeline transitions issues by the team's real state names instead of hardcoding `"In Progress"`/`"Done"`. If multiple states share a type, prefer the conventional name (`In Progress`/`Em andamento`, `Done`/`Concluído`); otherwise take the first of that type.
-- If not connected: record as "not configured"
+- Probe with `mcp__linear-server__list_teams`.
+- Connected: fetch Team ID and labels via `list_teams`/`list_issue_labels`. Call `list_issue_statuses`; record the workflow-state **names** whose `type` is `started`/`completed` (e.g. "In Progress"/"Em andamento", "Done"/"Concluído") as `In Progress Status`/`Done Status` so the pipeline never hardcodes state names. If several states share a type, prefer the conventional name; else take the first.
+- Not connected: record "not configured".
 
 ### 4. Synthesize and create artifacts
 
-With the results from both agents, create:
-
-1. **`ship/` directory** at the project root
-2. **`ship/changes/` directory** for active features
-3. **`ship/changes/archive/` directory** for completed features
-4. **`ship/audits/` directory** for project-wide audit reports
-5. **`ship/config.md`** with the following format:
+Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `ship/config.md`:
 
 ```markdown
 # Ship — Project Configuration
@@ -108,33 +78,24 @@ With the results from both agents, create:
 - pr: enabled
 
 ## Test Scope
-# Which test layers /ship:test generates per task.
-# Layers disabled here are NOT generated during the pipeline,
-# but can be backfilled via /ship:audit:tests.
+# disabled layers skip pipeline gen; backfill via /ship:audit:tests
 - unit: [default based on project type]
 - integration: [default based on project type]
 - e2e: [default based on project type]
 
 ## Scenario Depth
-# How rigorously /ship:spec captures Gherkin scenarios per acceptance
-# criterion, threaded through develop/test/analyze.
-#   none  — no Scenarios section; pipeline behaves exactly as pre-feature
-#   light — every AC gets >=1 scenario (nominal + dominant error)
-#   full  — nominal + key edge + error per AC (Scenario Outline for combinatorics)
+# none=no Scenarios; light=1/AC (nominal+error); full=nominal+edge+error/AC
 - depth: full
 
 ## Clarify
-# Whether /ship:spec asks up to 5 ranked clarifying questions (Impact x Uncertainty)
-# before writing the spec.
-#   on  — ask up to 5 clarifying questions before writing the spec (default)
-#   off — skip clarification entirely; pipeline behaves exactly as pre-feature
+# on=ask up to 5 ranked questions before spec; off=skip
 - mode: on
 
 ## Linear Integration
 - Configured: [yes | no]
 - Team ID: [ID or "not configured"]
-- In Progress Status: [started-state name, e.g. "In Progress" / "Em andamento", or "not configured"]
-- Done Status: [completed-state name, e.g. "Done" / "Concluído", or "not configured"]
+- In Progress Status: [started-state name, or "not configured"]
+- Done Status: [completed-state name, or "not configured"]
 - Default Labels: [detected labels or "none"]
 
 ## Pipeline Profile
@@ -144,7 +105,7 @@ With the results from both agents, create:
 - categories: all
 
 ## Severity Overrides
-[empty by default — add rules like `high → warn` to downgrade findings before gate evaluation]
+[empty by default — e.g. `high → warn` to downgrade a finding before gate evaluation]
 
 ## Gate Behavior
 - on_fail: ask
@@ -152,98 +113,46 @@ With the results from both agents, create:
 - on_fail_rerun: surgical
 
 ## Rules
-[Any project-specific rules discovered — to be extended over time]
+[project-specific rules discovered — extended over time]
 ```
 
-#### Test Scope defaults by project type
+**Test Scope defaults by project type** — substitute the `[default based on project type]` placeholders with:
+- `prompt-toolkit`/library: unit=enabled, integration=disabled, e2e=disabled
+- `backend`/`fullstack`: unit=enabled, integration=enabled, e2e=disabled
+- `frontend`: unit=enabled, integration=disabled, e2e=disabled
+- `monorepo`: unit=enabled, integration=enabled, e2e=disabled
+- unrecognized: unit=enabled, integration=disabled, e2e=disabled
 
-When populating the `Test Scope` section, apply the following defaults based on the detected project type:
+`Scenario Depth → depth` and `Clarify → mode` default to `full` and `on` respectively for **all** project types — override only if the user changes them in step 5.
 
-| Project Type | unit | integration | e2e |
-|---|---|---|---|
-| `prompt-toolkit` / library | enabled | disabled | disabled |
-| `backend` / `fullstack` | enabled | enabled | disabled |
-| `frontend` | enabled | disabled | disabled |
-| `monorepo` | enabled | enabled | disabled |
-| (unrecognized) | enabled | disabled | disabled |
+Preservation rule from step 1 applies here too: never overwrite existing `Test Scope`/`Scenario Depth`/`Clarify` values with these defaults.
 
-Substitute `[default based on project type]` placeholders in the `Test Scope` section with the appropriate `enabled`/`disabled` values before presenting the config to the user.
-
-**Preservation rule:** If `ship/config.md` already exists and already contains a `## Test Scope` section, keep those existing values verbatim — do not overwrite with defaults.
-
-#### Scenario Depth default
-
-`## Scenario Depth → depth` defaults to `full` for **all** project types (no per-type table). Write `- depth: full` unless the user changes it in question 5.
-
-**Preservation rule:** If `ship/config.md` already exists and already contains a `## Scenario Depth` section, keep the existing value verbatim — do not overwrite with the default.
-
-#### Clarify default
-
-`## Clarify → mode` defaults to `on` for **all** project types (no per-type table). Write `- mode: on` unless the user changes it in the clarify question.
-
-**Preservation rule:** If `ship/config.md` already exists and already contains a `## Clarify` section, keep the existing value verbatim — do not overwrite with the default.
-
-> **Gate Behavior options:**
-> - `on_fail` — what to do when the gate finds critical/high issues:
->   - `ask` (default): prompt the user before fixing
->   - `fix`: apply fixes automatically without asking
->   - `defer`: create tracking issues and continue without fixing
-> - `on_warn` — what to do when the gate finds medium issues:
->   - `ask` (default): prompt the user before fixing
->   - `fix`: apply fixes automatically without asking
->   - `pass`: continue to acceptance without fixing
+**Gate Behavior options:**
+- `on_fail` (critical/high): `ask`=prompt before fixing (default), `fix`=auto-fix without asking, `defer`=create tracking issues and continue
+- `on_warn` (medium): `ask`=prompt before fixing (default), `fix`=auto-fix without asking, `pass`=continue without fixing
 
 ### 5. Ask interactive configuration questions
 
-Ask the user the following questions **one block at a time** (present all at once, wait for a single reply):
+Present all at once, in one block, wait for a single reply. Skip any question whose section already exists in `ship/config.md` (note: "already configured — preserving existing value").
 
-> **1. Gate behavior** — When the gate finds issues, what should the pipeline do?
-> - **ask** — prompt you each time (recommended for teams)
-> - **fix** — apply fixes automatically without asking (recommended for solo work)
-> - **defer** — track and continue (only for `on_fail`)
->
-> You can set different behaviors for critical/high (`on_fail`) and medium (`on_warn`).
+1. **Gate behavior** — `ask` (teams, default), `fix` (solo), `defer` (only `on_fail`); `on_fail`/`on_warn` set independently.
+2. **Artifact/prompt language** — e.g. `pt-BR`, `en`, `es`; see @@ship/patterns/language.md.
+3. **Pipeline phases** — default all enabled (dev, test, perf, security, review, homolog, pr); name any to disable.
+4. **Test Scope** — show detected type + computed defaults; reply with overrides or Enter to confirm.
+5. **Scenario Depth** — `full` (default: nominal+edge+error/AC), `light` (nominal+dominant error/AC), `none`.
+6. **Clarify step** — `on` (default, up to 5 ranked questions before spec) or `off`.
 
-> **2. Language** — Which language should Ship use for artifacts (specs, issues, reports) and prompts? See @ship/patterns/language.md for conventions.
-> - Examples: `pt-BR`, `en`, `es`
+Write the answers into the matching config fields above.
 
-> **3. Pipeline phases** — Which phases do you want enabled?
-> - All enabled by default: dev, test, perf, security, review, homolog, pr
-> - Say which ones you want to disable, or press Enter to keep all.
+### 6. Present and confirm
 
-> **4. Test Scope** — I detected project type `[detected-type]`. Default Test Scope: unit=[X], integration=[X], e2e=[X].
-> Would you like to change any of these values before saving? (reply with the values you want to change, or press Enter to confirm)
-
-If the existing `ship/config.md` already contains a `## Test Scope` section, skip question 4 and display a note: "Test Scope already configured — preserving existing values."
-
-> **5. Scenario Depth** — How thoroughly should `/ship:spec` capture Gherkin scenarios per acceptance criterion? Default: `full`.
-> - **full** — nominal + key edge + error scenario per AC (recommended)
-> - **light** — nominal + dominant error scenario per AC
-> - **none** — no scenarios; pipeline behaves exactly as before this feature
-> Press Enter to keep `full`, or reply with `light` / `none`.
-
-If the existing `ship/config.md` already contains a `## Scenario Depth` section, skip question 5 and display a note: "Scenario Depth already configured — preserving existing value."
-
-> **6. Clarify step** — Should `/ship:spec` ask clarifying questions (max 5, ranked by Impact x Uncertainty) before writing the spec? Default: `on`.
-> Press Enter to keep `on`, or reply with `off` to skip clarification (pre-feature behavior).
-
-If the existing `ship/config.md` already contains a `## Clarify` section, skip question 6 and display a note: "Clarify already configured — preserving existing value."
-
-Update `on_fail`, `on_warn`, `on_fail_rerun`, `artifact_language`, `prompt_language`, `profile`, `Security Focus → categories`, the pipeline phases, the `Test Scope` values, `Scenario Depth → depth`, and `Clarify → mode` in the config based on the user's answers.
-
-### 6. Present to the user
-
-Display the generated configuration and ask: "Is the configuration correct? Would you like to adjust anything?" Apply any adjustments requested.
-
-### 7. Confirm
-
-After approval, inform: "Ship initialized successfully. You can now use `/ship:run <issue or description>` to start the full pipeline."
+Show the generated config, ask "Is the configuration correct? Would you like to adjust anything?", apply adjustments. After approval: "Ship initialized successfully. You can now use `/ship:run <issue or description>` to start the full pipeline."
 
 ---
 
 ## Rules
 
-- Never fabricate information — if you cannot detect something, mark it as "not detected" and let the user fill it in
-- Prioritize filesystem evidence (config files, package.json, etc.) over assumptions
-- If the project is empty (no code), create a minimal config and inform that it will be updated as code is created
-- Always use the Agent tool to parallelize exploration — never perform both analyses sequentially
+- Never fabricate — mark undetected fields "not detected", let the user fill them in
+- Prioritize filesystem evidence over assumptions
+- Empty project: create a minimal config, note it updates as code is created
+- Always parallelize exploration via the Agent tool — never run analyses sequentially
