@@ -18,6 +18,7 @@ is_excluded() {
   esac
   case "$base" in
     package-lock.json|pnpm-lock.yaml|yarn.lock|go.sum|Cargo.lock|*.lock) return 0 ;;
+    hygiene-scan.sh) return 0 ;;
   esac
   return 1
 }
@@ -76,6 +77,18 @@ full_spec_re() {
   printf '%s' "$re"
 }
 
+added_lines_for() {
+  local p="$1"
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf 'ALL'; return; }
+  git rev-parse --verify HEAD >/dev/null 2>&1 || { printf 'ALL'; return; }
+  git ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || { printf 'ALL'; return; }
+  git diff -U0 HEAD -- "$p" 2>/dev/null | awk '
+    /^@@/ { split($3, a, ","); ln = substr(a[1], 2) + 0; next }
+    /^\+\+\+/ { next }
+    /^\+/ { print ln; ln++ }
+  '
+}
+
 comments_enabled() {
   [ "${SCAN_COMMENTS:-0}" = "1" ] && return 0
   local root
@@ -84,7 +97,7 @@ comments_enabled() {
 }
 
 scan_file() {
-  local p="$1" found=1 cre spec
+  local p="$1" found=1 cre spec added lineno
   [ -f "$p" ] || return 1
   is_excluded "$p" && return 1
   spec="$(full_spec_re)"
@@ -94,10 +107,17 @@ scan_file() {
   if comments_enabled; then
     cre="$(comment_pattern_for "$p")"
     if [ -n "$cre" ]; then
-      while IFS= read -r line; do
-        case "$line" in 1:'#!'*) continue ;; esac
-        HITS+=("$p:$line"); found=0
-      done < <(grep -nE "$cre" "$p" 2>/dev/null || true)
+      added="$(added_lines_for "$p")"
+      if [ -n "$added" ]; then
+        while IFS= read -r line; do
+          case "$line" in 1:'#!'*) continue ;; esac
+          if [ "$added" != "ALL" ]; then
+            lineno="${line%%:*}"
+            printf '%s\n' "$added" | grep -qx "$lineno" || continue
+          fi
+          HITS+=("$p:$line"); found=0
+        done < <(grep -nE "$cre" "$p" 2>/dev/null || true)
+      fi
     fi
   fi
 

@@ -28,6 +28,44 @@ resolve_runner() {
   fi
 }
 
+pkg_script_exists() {
+  local script="$1"
+  [ -f package.json ] || return 1
+  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json | grep -qE "\"${script}\"[[:space:]]*:"
+}
+
+resolve_static_checks() {
+  local scratch="$1" config="$2"
+  local runner="npm"
+  is_resolved "$PKG" && runner="$PKG"
+
+  TYPECHECK_CMD="$(field_from "$scratch/stack.md" 'Typecheck command')"
+  is_resolved "$TYPECHECK_CMD" || TYPECHECK_CMD="$(field_from "$config" 'Typecheck command')"
+  if ! is_resolved "$TYPECHECK_CMD"; then
+    if pkg_script_exists typecheck; then
+      TYPECHECK_CMD="$runner run typecheck"
+    elif pkg_script_exists type-check; then
+      TYPECHECK_CMD="$runner run type-check"
+    fi
+  fi
+
+  LINT_CMD="$(field_from "$scratch/stack.md" 'Lint command')"
+  is_resolved "$LINT_CMD" || LINT_CMD="$(field_from "$config" 'Lint command')"
+  if ! is_resolved "$LINT_CMD" && pkg_script_exists lint; then
+    LINT_CMD="$runner run lint"
+  fi
+}
+
+run_static_check() {
+  local cmd="$1"
+  CHECK_OUT="$(mktemp)"
+  CHECK_EXIT=0
+  set +e
+  bash -c "$cmd" > "$CHECK_OUT" 2>&1
+  CHECK_EXIT=$?
+  set -e
+}
+
 build_test_command() {
   local runner="$1" pkg="$2"
   CMD_WORDS=()
@@ -93,6 +131,19 @@ write_reports() {
 
   {
     printf '# Test Failures\n'
+    if [ "$TYPECHECK_EXIT" -gt 0 ]; then
+      printf '\n## Typecheck failed (`%s`)\n\n```\n' "$TYPECHECK_CMD"
+      tail -60 "$TYPECHECK_OUT"
+      printf '```\n'
+      if [ "$SUITE_SKIPPED" -eq 1 ]; then
+        printf '\nTest suite not run: fix the typecheck errors first.\n'
+      fi
+    fi
+    if [ "$LINT_EXIT" -gt 0 ]; then
+      printf '\n## Lint failed (`%s`)\n\n```\n' "$LINT_CMD"
+      tail -60 "$LINT_OUT"
+      printf '```\n'
+    fi
     if [ -n "$failed_files" ]; then
       printf '\n'
       printf '%s\n' "$failed_files" | uniq -c | while read -r count file; do
@@ -141,6 +192,28 @@ main() {
 
   build_test_command "$RUNNER" "$PKG"
 
+  TYPECHECK_CMD=""
+  LINT_CMD=""
+  TYPECHECK_EXIT=0
+  LINT_EXIT=0
+  TYPECHECK_OUT=""
+  LINT_OUT=""
+  SUITE_SKIPPED=0
+  resolve_static_checks "$scratch" "$config"
+
+  if is_resolved "$TYPECHECK_CMD"; then
+    run_static_check "$TYPECHECK_CMD"
+    TYPECHECK_EXIT="$CHECK_EXIT"
+    TYPECHECK_OUT="$CHECK_OUT"
+    echo "typecheck ($TYPECHECK_CMD): $([ "$TYPECHECK_EXIT" -eq 0 ] && echo pass || echo fail)"
+  fi
+  if is_resolved "$LINT_CMD"; then
+    run_static_check "$LINT_CMD"
+    LINT_EXIT="$CHECK_EXIT"
+    LINT_OUT="$CHECK_OUT"
+    echo "lint ($LINT_CMD): $([ "$LINT_EXIT" -eq 0 ] && echo pass || echo fail)"
+  fi
+
   collect_test_files "$scratch/generated-tests.md"
   if [ "${#TEST_FILES[@]}" -gt 0 ]; then
     if [ "$CMD_USES_PKG_SCRIPT" -eq 1 ] && [ "$PKG" = "npm" ]; then
@@ -149,18 +222,29 @@ main() {
     CMD_WORDS+=("${TEST_FILES[@]}")
   fi
 
-  run_suite "${CMD_WORDS[@]}"
-  parse_failed_files "$RUN_OUTPUT_FILE"
-  rm -f "$RUN_OUTPUT_FILE"
+  if [ "$TYPECHECK_EXIT" -gt 0 ]; then
+    SUITE_SKIPPED=1
+    RUN_EXIT_CODE=1
+    FAILED_FILES=""
+  else
+    run_suite "${CMD_WORDS[@]}"
+    parse_failed_files "$RUN_OUTPUT_FILE"
+    rm -f "$RUN_OUTPUT_FILE"
 
-  if [ -z "$FAILED_FILES" ] && [ "$RUN_EXIT_CODE" -ne 0 ]; then
-    FAILED_FILES="(unparsed)"
+    if [ -z "$FAILED_FILES" ] && [ "$RUN_EXIT_CODE" -ne 0 ]; then
+      FAILED_FILES="(unparsed)"
+    fi
   fi
 
-  write_reports "$scratch" "$FAILED_FILES" "$RUN_EXIT_CODE"
+  local overall=0
+  { [ "$RUN_EXIT_CODE" -ne 0 ] || [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && overall=1
 
-  [ "$RUN_EXIT_CODE" -eq 0 ] && exit 0
-  exit 1
+  write_reports "$scratch" "$FAILED_FILES" "$overall"
+
+  [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
+  [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
+
+  exit "$overall"
 }
 
 main "$@"
