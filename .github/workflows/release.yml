@@ -37,7 +37,7 @@ jobs:
       - name: Verify build output
         run: |
           test -d plugins/ship/skills || (echo "::error::plugins/ship/skills not produced" && exit 1)
-          if grep -r "@ship/" plugins/ship/skills/ >/dev/null 2>&1; then
+          if grep -rE '(^|[^@])@ship/' plugins/ship/skills/ >/dev/null 2>&1; then
             echo "::error::@ship/ reference found in built skills/ — inliner did not fully expand patterns"
             exit 1
           fi

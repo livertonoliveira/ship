@@ -15,7 +15,7 @@ Drive a task through implementation → verification → user acceptance, maximi
 
 **Input received:** $ARGUMENTS
 
-> **STRICT RULE:** never invoke `ship:audit:*` from this pipeline — audits are project-wide, user-triggered separately; `ship:run` is diff-scoped only.
+> **STRICT RULE:** never run `ship:audit:*` from this pipeline — audits are project-wide, user-triggered separately; `ship:run` is diff-scoped only.
 
 > `${CLAUDE_SKILL_DIR}/...` failure: log, skip — never search the filesystem.
 
