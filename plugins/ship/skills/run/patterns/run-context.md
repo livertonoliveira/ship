@@ -157,6 +157,7 @@ Written and read by the deterministic correlation engine (`src/hooks/analyze-cor
   "spec_hash": "<sha256 of spec.md>",
   "test_scope": { "unit": "enabled", "integration": "disabled", "e2e": "disabled" },
   "truncated_tests": false,
+  "truncated_spec": false,
   "requirements": [ { "id": "REQ-01", "description": "...", "confidence": 0.72, "file": "src/foo.ts" } ],
   "criteria":     [ { "id": "AC-01", "req": "REQ-01", "description": "...", "confidence": 0.9, "file": "test/foo.test.ts", "layer": "unit" } ],
   "scenarios":    [ { "id": "SC-01", "ac": "AC-01", "layer": "unit", "description": "...", "confidence": 0.9, "file": "test/foo.test.ts" } ],
