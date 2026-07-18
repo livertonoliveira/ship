@@ -130,6 +130,31 @@ test_pipeline_complete_call_removal_breaks_detection() {
   fi
 }
 
+test_pipeline_gate_wired_in_gate_check_section() {
+  local name="the GATE CHECK section invokes pipeline.sh gate"
+  local section
+  section="$(sed -n '/### 5\. GATE CHECK/,/#### Surgical Re-run Procedure/p' "$RUN_SKILL")"
+
+  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" gate'; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+}
+
+test_pipeline_gate_call_removal_breaks_detection() {
+  local name="removing the pipeline.sh gate call from a scratch copy breaks the GATE CHECK assertion"
+  local section stripped
+  section="$(sed -n '/### 5\. GATE CHECK/,/#### Surgical Re-run Procedure/p' "$RUN_SKILL")"
+  stripped="$(printf '%s' "$section" | grep -v '@@ship/hooks/pipeline.sh" gate')"
+
+  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" gate'; then
+    log_fail "$name (stripped copy still matched)"
+  else
+    log_pass "$name"
+  fi
+}
+
 test_evidence_gate_wired_in_develop_section() {
   local name="the develop evidence gate section invokes evidence-gate.sh"
   local section
@@ -209,6 +234,8 @@ test_run_context_init_call_removal_breaks_detection
 test_phase2_development_wired_in_pipeline_dispatch
 test_phase2_development_pipeline_dispatch_removal_breaks_detection
 test_pipeline_complete_call_removal_breaks_detection
+test_pipeline_gate_wired_in_gate_check_section
+test_pipeline_gate_call_removal_breaks_detection
 test_evidence_gate_wired_in_develop_section
 test_rerun_scope_wired_in_surgical_rerun_step
 test_old_manual_run_substitution_prose_removed
