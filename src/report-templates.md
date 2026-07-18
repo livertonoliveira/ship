@@ -195,11 +195,14 @@ Criterion/scenario confidence < 0.5 (any category) → low severity, PASS.
 
 `✓ Análise de Drift: PASS (0 gaps) — [ver relatório completo](link)`
 
-```
-### [CRITICAL] Requisito não implementado: REQ-05
-- **Categoria:** IMPL
-- **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
+### Semantic Escalation Log {#drift-semantic-escalation}
+
+Only when escalated (0<confidence<0.5). Audit trail:
+
+```markdown
+| REQ | Confidence | File checked | Decision | Justification |
+|-----|-----------|--------------|----------|----------------|
+| REQ-01 | 30% | src/calculator.js | Match | Exports the functions the spec lists. |
 ```
 
 ### Orphans
@@ -214,22 +217,7 @@ Rendered only when ORPHAN-category findings exist. Lists changed code/test artif
 
 ### JSON Schema
 
-```json
-{
-  "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | SCENARIO | DRIFT | ORPHAN | DUP | AMBIG | SUBSPEC | PRINCIPLE | TERM",
-  "title": "string",
-  "description": "string",
-  "suggestion": "string",
-  "requirementId": "REQ-XX | null",
-  "criterionId": "AC-XX | null",
-  "scenarioId": "SC-XX | null",
-  "layer": "unit | integration | e2e | null",
-  "filePath": "string | null",
-  "line": "number | null",
-  "confidence": "number 0-100 | null"
-}
-```
+Fields: `severity`(critical|high|medium|low) · `category`(IMPL|TEST|SCENARIO|DRIFT|ORPHAN|DUP|AMBIG|SUBSPEC|PRINCIPLE|TERM) · `title` · `description` · `suggestion` · `requirementId`(REQ-XX|null) · `criterionId`(AC-XX|null) · `scenarioId`(SC-XX|null) · `layer`(unit|integration|e2e|null) · `filePath`(string|null) · `line`(number|null) · `confidence`(0-100|null).
 
 ---
 
