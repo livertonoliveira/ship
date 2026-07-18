@@ -35,8 +35,11 @@
 >   `Write`/`Edit` — they are always wrong in code, and the precise regex never false-positives on
 >   `UTF-8`/`SHA-256`/etc.
 > - **Comments** are a Ship convention, not a universal rule, so they are flagged **only inside an
->   active Ship run** (a `.context/ship-run/` marker dir at the repo root). Outside a run, the hook
->   does not police the user's hand-written comments. The whole-tree `--all` sweep enables both.
+>   active Ship run** (a `.context/ship-run/` marker dir at the repo root) and **only on lines added
+>   relative to `HEAD`** (untracked files count as fully added). Pre-existing comments in a file a
+>   worker merely edited are never flagged — stripping them broke typecheck and burned fix→re-review
+>   cycles. Outside a run, the hook does not police the user's hand-written comments. The whole-tree
+>   `--all` sweep enables both rules, with the same added-lines scope for comments.
 >
 > **Caveat:** the hook only catches `Write`/`Edit` going forward and only where the Ship plugin
 > is enabled. Spec IDs already committed in earlier runs are not swept retroactively — run

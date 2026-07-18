@@ -208,6 +208,123 @@ printf '#!/usr/bin/env bash\necho hi\n# this is a comment\n' > "$dir/notes.sh"
 run_stdin "$dir" "notes.sh" "SCAN_COMMENTS=1"
 assert_status "comment detected when SCAN_COMMENTS=1 is set" 2
 
+make_repo() {
+  local dir
+  dir="$(mktemp -d)"
+  (
+    cd "$dir"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    mkdir -p .context/ship-run
+  ) >/dev/null
+  printf '%s' "$dir"
+}
+
+scan() {
+  local dir="$1" file="$2"
+  (cd "$dir" && printf '{"file_path":"%s"}' "$file" | bash "$HYGIENE_SCRIPT" 2>&1)
+}
+
+test_preexisting_comment_not_flagged() {
+  local name="editing a tracked file with pre-existing comments does not flag them"
+  local dir file out status
+  dir="$(make_repo)"
+  file="$dir/service.ts"
+  printf '// legacy note kept by the project\nexport const a = 1;\n' > "$file"
+  (cd "$dir" && git add service.ts && git commit -qm init)
+  printf '// legacy note kept by the project\nexport const a = 1;\nexport const b = 2;\n' > "$file"
+
+  status=0
+  out="$(scan "$dir" "$file")" || status=$?
+  if [ "$status" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (exit=$status, out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_added_comment_flagged() {
+  local name="a comment on an added line is flagged, pre-existing comment line is not"
+  local dir file out status
+  dir="$(make_repo)"
+  file="$dir/service.ts"
+  printf '// legacy note kept by the project\nexport const a = 1;\n' > "$file"
+  (cd "$dir" && git add service.ts && git commit -qm init)
+  printf '// legacy note kept by the project\nexport const a = 1;\n// freshly added marker\nexport const b = 2;\n' > "$file"
+
+  status=0
+  out="$(scan "$dir" "$file")" || status=$?
+  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "service.ts:3" && ! printf '%s' "$out" | grep -q "service.ts:1"; then
+    log_pass "$name"
+  else
+    log_fail "$name (exit=$status, out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_untracked_file_fully_scanned() {
+  local name="an untracked file with a comment is flagged in full"
+  local dir file out status
+  dir="$(make_repo)"
+  (cd "$dir" && git commit -qm init --allow-empty)
+  file="$dir/new-module.ts"
+  printf '// brand new comment\nexport const c = 3;\n' > "$file"
+
+  status=0
+  out="$(scan "$dir" "$file")" || status=$?
+  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "new-module.ts:1"; then
+    log_pass "$name"
+  else
+    log_fail "$name (exit=$status, out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_preexisting_spec_id_still_flagged() {
+  local name="a pre-existing spec ID in a tracked file is still flagged"
+  local dir file out status spec_id
+  spec_id='A''C-12'
+  dir="$(make_repo)"
+  file="$dir/service.ts"
+  printf 'export const guard = "%s";\n' "$spec_id" > "$file"
+  (cd "$dir" && git add service.ts && git commit -qm init)
+  printf 'export const guard = "%s";\nexport const d = 4;\n' "$spec_id" > "$file"
+
+  status=0
+  out="$(scan "$dir" "$file")" || status=$?
+  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "service.ts:1"; then
+    log_pass "$name"
+  else
+    log_fail "$name (exit=$status, out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_all_mode_only_added_comment() {
+  local name="--all sweep flags only added comment lines across the tree"
+  local dir out
+  dir="$(make_repo)"
+  printf '// legacy note kept by the project\nexport const a = 1;\n' > "$dir/service.ts"
+  (cd "$dir" && git add service.ts && git commit -qm init)
+  printf '// legacy note kept by the project\nexport const a = 1;\n// freshly added marker\n' > "$dir/service.ts"
+
+  out="$(cd "$dir" && bash "$HYGIENE_SCRIPT" --all 2>&1)"
+  if printf '%s' "$out" | grep -q "service.ts:3" && ! printf '%s' "$out" | grep -q "service.ts:1"; then
+    log_pass "$name"
+  else
+    log_fail "$name (out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_preexisting_comment_not_flagged
+test_added_comment_flagged
+test_untracked_file_fully_scanned
+test_preexisting_spec_id_still_flagged
+test_all_mode_only_added_comment
+
 echo ""
 echo "$pass_count passed, $fail_count failed"
 
