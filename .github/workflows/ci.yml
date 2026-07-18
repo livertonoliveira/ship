@@ -42,6 +42,16 @@ jobs:
       - name: Check status scripts wired post-run
         run: ./scripts/check-status-scripts-wired.sh
 
+  hook-tests:
+    name: Hook Tests — src/hooks/tests/*.test.sh
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run hook tests
+        run: ./scripts/run-hook-tests.sh
+
   build-drift:
     name: Build Drift — src/ ↔ plugins/ship/ em sincronia
     if: github.event_name == 'pull_request'
