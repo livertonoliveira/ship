@@ -85,6 +85,107 @@ test('loadCase lança erro mencionando "assertions" quando há um nome de assert
   }
 });
 
+test('loadCase carrega gateFixture, expectedDecision e expectedAction quando gateSemantics esta presente', () => {
+  const caseJson = baseCase({
+    assertions: ['gateSemantics'],
+    gateFixture: {
+      rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+      config: { onFail: 'ask', onWarn: 'ask' },
+    },
+    expectedDecision: 'FAIL',
+    expectedAction: 'ask',
+  });
+  const dir = makeCaseDir(caseJson);
+  try {
+    const result = loadCase(dir);
+    assert.deepEqual(result.gateFixture, caseJson.gateFixture);
+    assert.equal(result.expectedDecision, 'FAIL');
+    assert.equal(result.expectedAction, 'ask');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadCase aceita expectedAction "defer" e "pass" como valores validos do contrato de gate', () => {
+  const deferCase = baseCase({
+    assertions: ['gateSemantics'],
+    gateFixture: {
+      rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+      config: { onFail: 'defer', onWarn: 'ask' },
+    },
+    expectedDecision: 'FAIL',
+    expectedAction: 'defer',
+  });
+  const deferDir = makeCaseDir(deferCase);
+  const passCase = baseCase({
+    assertions: ['gateSemantics'],
+    gateFixture: {
+      rows: [{ phase: 'perf', critical: 0, high: 0, medium: 1, low: 0 }],
+      config: { onFail: 'ask', onWarn: 'pass' },
+    },
+    expectedDecision: 'WARN',
+    expectedAction: 'pass',
+  });
+  const passDir = makeCaseDir(passCase);
+  try {
+    assert.equal(loadCase(deferDir).expectedAction, 'defer');
+    assert.equal(loadCase(passDir).expectedAction, 'pass');
+  } finally {
+    fs.rmSync(deferDir, { recursive: true, force: true });
+    fs.rmSync(passDir, { recursive: true, force: true });
+  }
+});
+
+test('loadCase lança erro mencionando "gateFixture" quando gateSemantics esta presente sem o campo', () => {
+  const caseJson = baseCase({
+    assertions: ['gateSemantics'],
+    expectedDecision: 'FAIL',
+    expectedAction: 'ask',
+  });
+  const dir = makeCaseDir(caseJson);
+  try {
+    assert.throws(() => loadCase(dir), /gateFixture/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadCase lança erro mencionando "expectedDecision" quando o valor e invalido', () => {
+  const caseJson = baseCase({
+    assertions: ['gateSemantics'],
+    gateFixture: {
+      rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+      config: { onFail: 'ask', onWarn: 'ask' },
+    },
+    expectedDecision: 'BOGUS',
+    expectedAction: 'ask',
+  });
+  const dir = makeCaseDir(caseJson);
+  try {
+    assert.throws(() => loadCase(dir), /expectedDecision/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadCase lança erro mencionando "expectedAction" quando o valor e invalido', () => {
+  const caseJson = baseCase({
+    assertions: ['gateSemantics'],
+    gateFixture: {
+      rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+      config: { onFail: 'ask', onWarn: 'ask' },
+    },
+    expectedDecision: 'FAIL',
+    expectedAction: 'bogus',
+  });
+  const dir = makeCaseDir(caseJson);
+  try {
+    assert.throws(() => loadCase(dir), /expectedAction/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('listReps enumera os diretórios de reps de um braço em ordem ascendente', () => {
   const dir = makeCaseDir(baseCase());
   try {
