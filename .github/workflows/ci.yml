@@ -45,6 +45,9 @@ jobs:
       - name: Check no manual bookkeeping prose in run orchestrator
         run: ./scripts/check-no-bookkeeping.sh
 
+      - name: Check worker Skill wrappers stay thin
+        run: ./scripts/check-wrapper-is-thin.sh
+
   hook-tests:
     name: Hook Tests — src/hooks/tests/*.test.sh
     runs-on: ubuntu-latest
