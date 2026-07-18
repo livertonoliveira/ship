@@ -327,7 +327,7 @@ if [ -s "$WORKSPACES" ]; then
     [ -d "$REPO_ROOT/$ws" ] && SEARCH_ROOTS+=("$REPO_ROOT/$ws")
   done < "$WORKSPACES"
 fi
-if [ "${#SEARCH_ROOTS[@]:-0}" -eq 0 ]; then
+if [ "${#SEARCH_ROOTS[@]}" -eq 0 ]; then
   SEARCH_ROOTS=("$REPO_ROOT")
 fi
 
