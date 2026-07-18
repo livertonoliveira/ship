@@ -45,7 +45,7 @@ Generation-only: writes test files, never runs a test command, never writes `tes
 
 ### 3.1 Resolve the denylist
 
-`plan.md` exists → collect every file path across all modules' file sets (`ship:develop`'s owned files), injected as `## Denylist` below. Absent → empty denylist (standalone has no module boundary).
+`plan.md` exists → collect every file path across all modules' file sets (`ship:develop`'s owned files), injected as `## Denylist` below. Absent, `## Files` populated → its `create`/`modify` paths. Neither → empty denylist.
 
 ### 3.2 Fan out to named agents (parallel) — MANDATORY ACTION
 
