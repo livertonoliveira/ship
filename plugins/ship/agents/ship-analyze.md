@@ -30,7 +30,7 @@ Output JSON: requirements/criteria/scenarios/orphans/duplicates/disabled_layers/
 
 ## 3. Classify findings
 
-Confidence: 0=not found, <0.5=uncertain, ≥0.5=ok.
+Confidence: 0=not found, <0.5=uncertain, ≥0.5=ok. Gray zone (`0<confidence<0.5`): read the REQ's spec body + correlated file, decide match/no-match, log it in the escalation table (§5); never rewrites `jaccard.json`, bounded to gray-zone count only. `Match` clears DRIFT/IMPL; `No-match` keeps severity.
 
 IMPL(REQ=0→critical), DRIFT(REQ<0.5→high, AC/SC<0.5→low), TEST(AC=0→medium), SCENARIO(SC=0 in-layer→medium), ORPHAN(file~noREQ→medium), DUP(sim≥0.8→low), TERM(§4→low). AMBIG/SUBSPEC/PRINCIPLE n/a here — owned by `/ship:spec`.
 
@@ -67,11 +67,14 @@ Criterion/scenario confidence < 0.5 (any category) → low severity, PASS.
 
 `✓ Análise de Drift: PASS (0 gaps) — [ver relatório completo](link)`
 
-```
-### [CRITICAL] Requisito não implementado: REQ-05
-- **Categoria:** IMPL
-- **Descrição:** O requisito "REQ-05: Cache invalidation" não possui implementação identificada.
-- **Sugestão:** Implemente o requisito REQ-05 no arquivo.
+### Semantic Escalation Log {#drift-semantic-escalation}
+
+Only when escalated (0<confidence<0.5). Audit trail:
+
+```markdown
+| REQ | Confidence | File checked | Decision | Justification |
+|-----|-----------|--------------|----------|----------------|
+| REQ-01 | 30% | src/calculator.js | Match | Exports the functions the spec lists. |
 ```
 
 ### Orphans
@@ -86,22 +89,7 @@ Rendered only when ORPHAN-category findings exist. Lists changed code/test artif
 
 ### JSON Schema
 
-```json
-{
-  "severity": "critical | high | medium | low",
-  "category": "IMPL | TEST | SCENARIO | DRIFT | ORPHAN | DUP | AMBIG | SUBSPEC | PRINCIPLE | TERM",
-  "title": "string",
-  "description": "string",
-  "suggestion": "string",
-  "requirementId": "REQ-XX | null",
-  "criterionId": "AC-XX | null",
-  "scenarioId": "SC-XX | null",
-  "layer": "unit | integration | e2e | null",
-  "filePath": "string | null",
-  "line": "number | null",
-  "confidence": "number 0-100 | null"
-}
-```
+Fields: `severity`(critical|high|medium|low) · `category`(IMPL|TEST|SCENARIO|DRIFT|ORPHAN|DUP|AMBIG|SUBSPEC|PRINCIPLE|TERM) · `title` · `description` · `suggestion` · `requirementId`(REQ-XX|null) · `criterionId`(AC-XX|null) · `scenarioId`(SC-XX|null) · `layer`(unit|integration|e2e|null) · `filePath`(string|null) · `line`(number|null) · `confidence`(0-100|null).
 
 ---.
 
@@ -123,14 +111,14 @@ Flag cognate/explicitly-juxtaposed term pairs (spec text) → one `low`/`TERM` f
 
 ## 5. Report
 
-Sections: Summary, Requirements/Criteria/Scenarios-Status(omit Scenarios if no `@SC-XX`), Gaps, Orphans/Disabled-Layers(if non-empty), tally.
+Sections: Summary, Requirements/Criteria/Scenarios-Status(omit Scenarios if no `@SC-XX`), Gaps, Semantic Escalation Log(§2.5, if any), Orphans/Disabled-Layers(if non-empty), tally.
 
 ### 5.2 Lazy-load rendering (user-facing output)
 
 Lazy-load rendering rule when presenting the report to the user (same PASS/WARN/FAIL branching `homolog.md` uses via the lazy-load-findings pattern):
 
 - **Gate = PASS:** single summary line, no embedded findings: `✓ Drift Analysis: PASS (0 gaps) — [ver relatório completo](<link or scratch dir path>)`
-- **Gate = WARN or FAIL:** embed all `critical`/`high`/`medium` findings in full (both `## Gaps` and the medium-severity `## Orphans` rows — neither is ever collapsed). Replace all `low` findings, in either section, with: `+ N achados de severidade baixa — [ver relatório completo](<link or scratch dir path>)`
+- **Gate = WARN or FAIL:** embed all `critical`/`high`/`medium` findings in full (both `## Gaps` and the medium-severity `## Orphans` rows — neither is ever collapsed). Replace all `low` findings, in either section, with: `+ N achados de severidade baixa — [ver relatório completo](<link or scratch dir path>)`. Escalation Log never collapses.
 
 `drift-report.md` is always persisted in full to the scratch dir; lazy-load rendering applies only to the user-facing output and the Linear comment (if Linear mode).
 
