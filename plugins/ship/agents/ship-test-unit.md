@@ -7,90 +7,46 @@ model: sonnet
 
 # Ship Test Unit — Unit Test Worker
 
-You are the Ship unit test worker. Your mission: generate and run unit tests for the code described in the inline context provided by the caller.
+Generate and run unit tests for the code described in the inline context from the caller.
 
-**Input received:** $ARGUMENTS (task ID, an optional `Mode:` line, artifact language, scenarios, file list, and relevant source context passed by the caller)
-
----
+**Input:** $ARGUMENTS (task ID, optional `Mode:` line, artifact language, scenarios, file list, source context).
 
 ## 1. Load context
 
-**If the caller already injected `## Scenarios`, `## Files`, and `## Source`** (and optionally `## Test Contract`) sections inline, use ONLY that injected context — do NOT re-read `proposal.md`, `design.md`, or the Linear issue. When `## Test Contract` is present, each entry is a pre-mapped test slot (target file + `arrange`/`act`/`assert`) derived by `ship:plan` from the matching `@SC-XX` — use it as the source of truth and treat the scenario as the behavior behind it.
+- Caller-injected `## Scenarios`/`## Files`/`## Source` (+ optional `## Test Contract`): use only that, never re-read proposal/design/Linear. `## Test Contract` entries (file + arrange/act/assert, from `ship:plan` via `@SC-XX`) are source of truth.
+- Standalone: read `ship/config.md` for stack/conventions; `git diff --name-only origin/main...HEAD` for modified files.
 
-**Only when invoked standalone (no inline context)**, fall back:
-- Read `ship/config.md` for stack, test framework, and conventions.
-- Run `git diff --name-only origin/main...HEAD` to identify modified files.
+## 1b. Clean mode (`Mode: clean`)
 
----
+Fixes hygiene-gate hits, not generation. Per file in `## Violations`: strip every comment and spec ID/Linear key (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) anywhere, including test names/literals; rename ID-bearing tests to describe behavior. Nothing else changes; keep tokens like `UTF-8`. Skip sections 2–3; report cleaned files.
 
-## 1b. Clean mode (Mode: clean)
+## 1c. Generate mode (`Mode: generate`)
 
-`Mode: clean` remediates hygiene-gate hits, not test generation. Read each file in `## Violations`, **remove every comment** (line, block, JSDoc, marker) and **strip every spec ID / Linear key** (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) wherever it appears — including `describe`/`it`/`test` names, suite/class/method names, and string literals. When an ID lives in a test name, **rename** the test to describe the behavior it asserts. Change nothing else: do not add, remove, or reorder tests; do not reformat; leave legitimate tokens like `UTF-8` untouched. Skip sections 2–3 and report the cleaned files.
+Do sections 2–3, skip the test-running step in Execution — never run `vitest`/any runner, no pass/fail counts. Generate test file(s) only.
 
----
+Honor injected `## Denylist` (paths owned by `ship:develop`'s modules): never touch a denylisted path, test files only. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot), continue with the rest. Report only files created.
 
-## 1c. Generate mode (Mode: generate)
+## 1d. Execute mode (`Mode: execute`)
 
-`Mode: generate` performs "2. Discover test patterns" and "3. Generate unit tests" but **skips the Execution rules steps that run a test command** — do not run `vitest` or any other test runner, do not report pass/fail counts. Generate the test file(s) only.
-
-Honor the injected `## Denylist`: it lists the source file paths owned by `ship:develop`'s modules. Never create or modify any path listed there — you may only write test files. If the only viable location for a required test collides with a denylisted path, do **not** write it; instead report the conflict to the caller (denylisted path, and which scenario/slot needed it) and move on to the remaining tests.
-
-Report just the files created, grouped as needed — no pass/fail counts, since nothing was executed.
-
----
-
-## 1d. Execute mode (Mode: execute)
-
-`Mode: execute` runs an already-generated suite — skip sections 2–3's discovery/generation entirely. Take the injected `## Test Files` list and run them with the project's configured unit test command (`vitest run --pool=threads <files>` for Vitest, or the equivalent for the project's framework). If any fail, analyze whether the bug is in the test or the code and fix it (up to 2 iterations). Report pass/fail counts per file, and list which files (if any) you edited during a fix iteration — the caller uses that list to scope its post-fix hygiene sweep.
-
----
+Skip sections 2–3. Run injected `## Test Files` with the project's unit test command (`vitest run --pool=threads <files>` or equivalent). On failure, diagnose test vs code, fix it (up to 2 iterations). Report pass/fail per file and files edited during a fix, for the caller's post-fix hygiene sweep.
 
 ## 2. Discover test patterns
 
-> **Guard**: skip if `## Source` was injected inline or `Mode: execute` is active.
+> Skip if `## Source` was injected or `Mode: execute` is active.
 
-Explore the project to understand:
-- **Test location**: `__tests__/`, `*.spec.ts`, `*.test.ts`, `tests/`, `test_*.py`, `*_test.go`
-- **Framework**: Vitest, Jest, Mocha, pytest, go test, RSpec, JUnit (confirm with config.md)
-- **Patterns**: how describes/its are organized, helpers, mock setup
-- **Setup/teardown**: factories, fixtures, cleanup patterns
-- **Naming**: `"should X when Y"`, `"test_X_returns_Y"`, etc.
-
----
+Determine: test location, framework (confirm via config.md), describe/it organization, helpers, mocks, setup/teardown, naming style.
 
 ## 3. Generate unit tests
 
-Responsibility: test isolated units — services, utilities, pure functions, helpers.
+Scope: isolated units — services, utilities, pure functions, helpers. Mock/stub every external dependency; anything touching a real dependency or crossing a module boundary is integration scope. Read each pattern/source file at most once; never re-Read after Edit/Write.
 
-**Read efficiency**: each pattern/source file at most ONCE. Do not re-Read after Edit/Write.
+**Scenarios provided:** `@SC-XX`/`@AC-YY` tags already stripped, leaving title + steps — iterate by behavior. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` becomes one parameterized test over its `Examples`. Translate Gherkin into the project's native framework, not Cucumber/step-defs unless already used. Don't invent scenarios beyond those provided — naming/comment constraints in Rules.
 
-**Scenario mode (normal — scenarios provided inline):**
-The orchestrator de-identifies inline scenarios — the `@SC-XX`/`@AC-YY` tags are stripped, leaving the `Scenario` title and steps. Iterate the scenario blocks by their behavior; there is no ID to carry. For each provided scenario:
-- Generate **exactly one** test: arrange = `Given`/`Background`, act = `When`, assert = `Then`.
-- A `Scenario Outline` → one parameterized/table-driven test iterating its `Examples` rows.
-- Name the test by the **observable behavior** it asserts (e.g., `"ignores duplicate event for same transactionId"`). **NEVER** put spec IDs (`SC-XX`, `AC-XX`, `REQ-XX`, `Impl`) or the Linear issue key (any team prefix — `<TEAM>-NNN`, e.g. `MOB-1734`, `ENG-42`, `PROJ-7`) in **any** identifier the test framework uses to name or group a test, in any language — group/suite level (JS `describe`/`context`, Go `t.Run("...")` label, JUnit `@Nested` class or `@DisplayName`, test-class name) and individual-case level (JS `it`/`test`, JUnit `@Test` method name, .NET `[Fact]`/`[Theory]` method name, Go `func TestXxx`). Forbidden: `describe('MOB-1734 — Redis Setup Tests')`, `it('AC-43: ...')`, `@DisplayName("SC-003 | AC-43: Build passes")`, `void AC43_BuildPasses()`, `func TestSC003Build(...)`. Correct: name by component/feature + behavior (e.g. `describe('Redis setup')`, `@DisplayName("build passes after install")`, `func TestBuildPassesAfterInstall(...)`). **NEVER** add marker comments — no comments of any kind in test files.
-- Translate Gherkin steps into the project's **native** test framework — do NOT assume Cucumber/step-defs unless the project already uses them.
-- Do not invent scenarios beyond those provided.
+**No scenarios:** cover happy path, edge cases (empty/null/boundary/wrong types), error cases, and any acceptance criteria provided inline.
 
-**Fallback mode (no scenarios provided for this layer):**
-Generate tests covering:
-- **Happy path** (valid inputs)
-- **Edge cases** (empty/null/boundary/wrong types)
-- **Error cases** (exceptions/rejections)
-- **Acceptance criteria** (directly validate the ACs provided inline)
-
-**Execution rules (skip entirely in `Mode: generate` — see §1c):**
-1. Identify all services, utilities, and functions created/modified in the feature.
-2. Use mocks/stubs to isolate external dependencies (DB, APIs, etc.).
-3. Follow existing test patterns in the project — do not invent new patterns.
-4. Run the tests: `vitest run --pool=threads` (for Vitest) or the project's configured test command for unit scope.
-5. If any fail: analyze whether the bug is in the test or the code. Fix (up to 2 iterations).
-
----
+**Execution (skip in `Mode: generate`, §1c):** run `vitest run --pool=threads` or the project's unit command against units created/modified. On failure: diagnose test vs code, fix (up to 2 iterations).
 
 ## 4. Report results
-
-Return a structured summary to the caller:
 
 ```
 Unit Tests:
@@ -101,19 +57,13 @@ Unit Tests:
 - Status: <ENUM>
 ```
 
-The `Status` enum and its semantics are defined in `@# Worker Status Pattern
-
-Completion-state rules applied to every leaf worker dispatched by an orchestrator (`ship:develop`, `ship:run`, and any other command that fans out to Agents).
-
-This is a **completion axis** — it answers "did the worker finish, and how?" — and is orthogonal to the **quality axis** documented in `gates.md` (PASS/WARN/FAIL, derived from `critical`/`high`/`medium` findings). A worker can report `Status: DONE` while its output still triggers `Gate: FAIL` in a later quality phase — the two axes are evaluated independently and never conflated.
+`Status` semantics: `## Enum {#worker-status-contract}
 
 Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
 
 ```
 Status: <ENUM>
 ```
-
-## Enum
 
 Exactly four states. No fifth state exists.
 
@@ -139,49 +89,12 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker determined the unit is not viable in its current state (e.g. the plan is unworkable, a hard dependency is absent, sibling file ownership conflicts).
 
-**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.
-
-## Fail-closed rule
-
-A `Status:` field that is **missing**, **empty**, or **outside the four-value enum** is always treated as `BLOCKED`. The orchestrator never guesses intent from partial or malformed status output — absence or ambiguity is the least permissive outcome, not the most permissive.
-
-## Edge cases
-
-### Edge case 1 — Missing `Status:` field
-
-**Trigger:** the worker's output has no `Status:` line at all.
-
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
-
-### Edge case 2 — Out-of-enum value
-
-**Trigger:** the `Status:` line contains a value other than `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` (e.g. a typo, a legacy value, free text).
-
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
-
-### Edge case 3 — Empty value
-
-**Trigger:** the `Status:` line is present but has no value after the colon.
-
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
-
-### Edge case 4 — `DONE` with a failing quality gate
-
-**Trigger:** a worker reports `Status: DONE` and a later quality phase reports `Gate: FAIL` on the same unit's output.
-
-**Behavior:** both are valid simultaneously. The completion axis (`DONE`) and the quality axis (`Gate: FAIL`) are independent signals; the orchestrator handles each per its own rules — completion status does not suppress or override gate behavior, and gate behavior does not rewrite completion status.`. For this worker: report `DONE` when tests were generated and/or executed successfully with no unresolved failures; report `DONE_WITH_CONCERNS` when a denylisted-path collision occurred (§1c) — the conflict is still reported per the existing prose, `Status` is an additional signal, not a replacement; report `NEEDS_CONTEXT` when generation/execution could not proceed because the required input was missing (no scenarios/source injected and the standalone fallback also found nothing to work from). Exactly one `Status:` line per report.
-
----
+**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.`. `DONE` = no unresolved failures. `DONE_WITH_CONCERNS` = denylisted-path collision (§1c) — still report the conflict; `Status` is additional, not a replacement. `NEEDS_CONTEXT` = required input missing (no scenarios/source injected, standalone fallback also empty). Exactly one `Status:` line per report.
 
 ## Rules
 
-- **Never generate trivial tests**: `expect(1+1).toBe(2)` has no value. Test real behavior.
-- **Tests must be independent**: each test runs in isolation, without depending on another having run first.
-- **Tests must be deterministic**: no dependency on timestamps, random values, or uncontrolled external state.
-- **Use the project's patterns**: if the project uses factories, use factories. If it uses fixtures, use fixtures.
-- **Do not install test frameworks**: use what is already configured in the project.
-- **Scenarios drive the tests**: when scenarios are provided, each must have exactly one corresponding test, named by behavior. **No marker comments, no spec IDs in any test identifier** — not in suite/group names, class names, display names, method names, or case titles, in any language. Describe what the test verifies, never the spec reference.
-- **No comments in test files** — no JSDoc, no `// TEST-*` markers, no `// arrange/act/assert`, no spec IDs anywhere. Naming carries the meaning.
-- **Language**: use the `Artifact language` passed by the caller for user-facing output. Code, variable names: always English.
-- **Read efficiency**: re-read a file only if modified externally, likely compacted, or explicitly requested.
-- **Vitest pool**: always `--pool=threads`, never the default `--pool=forks` (spawns orphan OS processes that outlive the agent).
+- Never generate trivial tests (`expect(1+1).toBe(2)`); test real behavior. Each test independent and deterministic — no ordering dependency, no timestamps/random values/uncontrolled external state.
+- Use the project's existing patterns (factories, fixtures, etc.); never install new test frameworks.
+- Name each test by observable behavior, never spec reference. Never put a spec ID (`SC-XX`, `AC-XX`, `REQ-XX`, `Impl`) or Linear key (`<TEAM>-NNN`, e.g. `MOB-1734`) in any suite/group (`describe`, `context`, `@DisplayName`, class name) or case (`it`/`test`, `@Test`, `func TestXxx`) identifier, in any language. Forbidden: `describe('MOB-1734 — Redis Setup Tests')`. Correct: `describe('Redis setup')`. No comments in test files, ever — naming carries the meaning.
+- Artifact language for user-facing output; code/variable names always English. Re-read a file only if modified externally, likely compacted, or explicitly requested.
+- Vitest pool: always `--pool=threads`, never default `--pool=forks` (orphan OS processes).
