@@ -49,29 +49,7 @@ longo prazo.
 
 ---
 
-## 2. Índice de melhorias (candidatas a spec)
-
-Cada item é auto-contido no seu arquivo. Eixo = dimensão da sua pergunta original
-(assertividade / tokens / velocidade / outras oportunidades).
-
-| #                                            | Melhoria                                       | Eixo                   | Fonte da ideia    |
-| -------------------------------------------- | ---------------------------------------------- | ---------------------- | ----------------- |
-| [09](spec-09-worker-status-contract.md)      | Contrato de status fechado para workers        | assertividade          | superpowers       |
-| [10](spec-10-progress-ledger.md)             | Ledger de progresso resistente à compactação   | assertividade + custo  | superpowers       |
-| [11](spec-11-converge-brownfield.md)         | `ship:converge` para adoção brownfield         | adoção                 | spec-kit          |
-| [12](spec-12-project-constitution.md)        | Constituição de projeto normativa              | assertividade          | spec-kit          |
-| [13](spec-13-dedup-agents.md)                | Dedup de agentes de teste e audit              | tokens + manutenção    | auditoria interna |
-| [14](spec-14-file-handoff.md)                | Handoff por arquivo em vez de injeção inline   | tokens                 | superpowers       |
-| [15](spec-15-english-checklists.md)          | Checklists "testes unitários de inglês"        | assertividade          | spec-kit          |
-| [16](spec-16-trigger-only-descriptions.md)   | Descrições de skill só com gatilhos            | assertividade          | superpowers       |
-| [17](spec-17-model-tiering.md)               | Model tiering explícito (Haiku p/ varredura)   | custo + velocidade     | superpowers       |
-| [18](spec-18-conditional-hygiene-secrets.md) | Sweep de higiene condicional + secrets no hook | velocidade + segurança | auditoria interna |
-| [19](spec-19-skill-lifecycle.md)             | Ciclo de vida e disciplina de poda de skills   | manutenção             | Pocock            |
-| [20](spec-20-hybrid-drift-correlation.md)    | Correlação híbrida no `ship:analyze` (Jaccard + escalada semântica) | assertividade | auditoria interna |
-
----
-
-## 4. Ideias que valem citar mesmo sem virar spec agora
+## 2. Ideias que valem citar mesmo sem virar spec agora
 
 - **Convergência de OpenSpec e superpowers em fundamentos:** descrições só com gatilhos,
   progressive disclosure, brainstorm/grill antes de código, TDD, "delete não apode". Ambos
