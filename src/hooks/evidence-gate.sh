@@ -15,8 +15,12 @@ is_test_file() {
 
 stem_of() {
   local p="$1" base dir
-  base="$(basename "$p")"
-  dir="$(dirname "$p")"
+  base="${p##*/}"
+  if [ "$base" = "$p" ]; then
+    dir="."
+  else
+    dir="${p%/*}"
+  fi
   local IFS=/ seg segs=() out=()
   read -ra segs <<< "$dir"
   for seg in "${segs[@]+"${segs[@]}"}"; do
