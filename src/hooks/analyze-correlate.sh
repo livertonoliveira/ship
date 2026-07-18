@@ -13,6 +13,7 @@ SCRATCH=""
 TEST_SCOPE="unit=enabled,integration=enabled,e2e=enabled"
 REPO_ROOT="."
 MAX_TEST_FILES=400
+MAX_SPEC_ITEMS=500
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -190,21 +191,6 @@ package
 namespace
 EOF
 
-RECORDS="$TMPDIR_LOCAL/records.tsv"
-: > "$RECORDS"
-
-tokenize() {
-  printf '%s\n' "$1" \
-    | sed -E 's/([a-z0-9])([A-Z])/\1 \2/g; s/([A-Z]+)([A-Z][a-z])/\1 \2/g' \
-    | tr '[:upper:]' '[:lower:]' \
-    | tr -cs 'a-z0-9' '\n' \
-    | awk 'length($0) >= 2' \
-    | grep -v -x -F -f "$STOPWORDS" \
-    | sort -u \
-    | tr '\n' ' ' \
-    | sed 's/ $//' || true
-}
-
 # --- Spec extraction: raw items to TYPE \t id \t meta \t layer \t text ---
 awk '
   function clean(s) { gsub(/\t/, " ", s); gsub(/^[[:space:]#*>-]+/, "", s); gsub(/[[:space:]]+$/, "", s); return s }
@@ -322,7 +308,7 @@ awk '
   }
 ' "$DIFF" | sort > "$TMPDIR_LOCAL/diff-files.tsv"
 
-# --- Test discovery, layer classification, name extraction ---
+# --- Test discovery + layer classification (no forks: `case` is a shell builtin) ---
 layer_of() {
   local f="$1"
   case "$f" in
@@ -360,29 +346,9 @@ if [ "$(grep -c '' "$TEST_LIST.all" 2>/dev/null || echo 0)" -gt "$MAX_TEST_FILES
 fi
 head -n "$MAX_TEST_FILES" "$TEST_LIST.all" > "$TEST_LIST"
 
-test_names_of() {
-  local f="$1"
-  {
-    grep -hoE "(it|test|describe)\(['\"\`][^'\"\`]*" "$f" 2>/dev/null | sed -E "s/^(it|test|describe)\(['\"\`]//" || true
-    grep -hoE '^[[:space:]]*def test_[a-zA-Z0-9_]+' "$f" 2>/dev/null | sed 's/.*def //' || true
-    grep -hoE 'func Test[A-Za-z0-9_]+' "$f" 2>/dev/null | sed 's/func //' || true
-  } | tr '\n' ' '
-}
-
-# --- Assemble records with token sets ---
-while IFS=$'\t' read -r type id meta layer text; do
-  toks="$(tokenize "$text")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$id" "$meta" "$layer" "$text" "$toks" >> "$RECORDS"
-done < "$TMPDIR_LOCAL/spec-items.tsv"
-
-while IFS=$'\t' read -r path text; do
-  case "$path" in
-    ship/changes/*|ship/audits/*|.context/*) continue ;;
-  esac
-  toks="$(tokenize "$text")"
-  printf 'FILE\t%s\t-\t-\t-\t%s\n' "$path" "$toks" >> "$RECORDS"
-done < "$TMPDIR_LOCAL/diff-files.tsv"
-
+# --- Test-file control list: layer \t relpath \t abspath (no fork: builtins only) ---
+TESTFILES="$TMPDIR_LOCAL/testfiles.tsv"
+: > "$TESTFILES"
 while IFS= read -r tf; do
   [ -n "$tf" ] || continue
   layer="$(layer_of "$tf")"
@@ -394,16 +360,23 @@ while IFS= read -r tf; do
   src_path="$REPO_ROOT/$tf"
   [ -f "$src_path" ] || src_path="$tf"
   [ -f "$src_path" ] || continue
-  names="$(test_names_of "$src_path")"
-  toks="$(tokenize "$tf $names")"
-  printf 'TESTF\t%s\t-\t%s\t-\t%s\n' "$tf" "$layer" "$toks" >> "$RECORDS"
+  printf '%s\t%s\t%s\n' "$layer" "$tf" "$src_path" >> "$TESTFILES"
 done < "$TEST_LIST"
 
 # --- Correlation + JSON emission ---
-OUTPUT="$(awk -F'\t' \
+# Tokenization and test-name extraction happen inside this single awk process
+# (BEGIN-only script, no main loop): no per-record shell fork, unlike a
+# bash loop that shells out to sed/tr/grep/sort for every spec item/test file.
+OUTPUT="$(awk \
   -v diff_hash="$DIFF_HASH" -v spec_hash="$SPEC_HASH" \
   -v unit_scope="$UNIT_SCOPE" -v integration_scope="$INTEGRATION_SCOPE" -v e2e_scope="$E2E_SCOPE" \
-  -v truncated="$TRUNCATED_TESTS" '
+  -v truncated="$TRUNCATED_TESTS" \
+  -v max_spec_items="$MAX_SPEC_ITEMS" \
+  -v stopwords_file="$STOPWORDS" \
+  -v spec_file="$TMPDIR_LOCAL/spec-items.tsv" \
+  -v diff_file="$TMPDIR_LOCAL/diff-files.tsv" \
+  -v testfiles_file="$TESTFILES" \
+  '
   function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\r/, "", s); return s }
   function jaccard(a, b,   ta, tb, seen, i, na, nb, inter, uni) {
     if (a == "" || b == "") return 0
@@ -431,22 +404,114 @@ OUTPUT="$(awk -F'\t' \
     if (l == "e2e") return e2e_scope == "enabled"
     return 0
   }
-  $1 == "REQ" { nreq++; req_id[nreq] = $2; req_desc[nreq] = $5; req_tok[nreq] = $6 }
-  $1 == "AC" { nac++; ac_id[nac] = $2; ac_req[nac] = $3; ac_desc[nac] = $5; ac_tok[nac] = $6 }
-  $1 == "SC" { nsc++; sc_id[nsc] = $2; sc_ac[nsc] = $3; sc_layer[nsc] = ($4 == "" ? "-" : $4); sc_desc[nsc] = $5; sc_tok[nsc] = $6 }
-  $1 == "FILE" { nfile++; file_path[nfile] = $2; file_tok[nfile] = $6 }
-  $1 == "TESTF" { ntest++; test_path[ntest] = $2; test_layer[ntest] = $4; test_tok[ntest] = $6 }
-  END {
+
+  # camelCase/PascalCase boundary split + lowercase + alnum tokenize + stopword
+  # filter + dedupe, all in-process (mirrors the old sed|tr|tr|awk|grep|sort pipeline).
+  function tokenize(s,    n, i, c, prevc, camel, low, cnt, arr, tok, out, j, seen_tok) {
+    n = length(s)
+    camel = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (i > 1) {
+        prevc = substr(s, i - 1, 1)
+        if (prevc ~ /[a-z0-9]/ && c ~ /[A-Z]/) {
+          camel = camel " "
+        } else if (i < n && prevc ~ /[A-Z]/ && c ~ /[A-Z]/ && substr(s, i + 1, 1) ~ /[a-z]/) {
+          camel = camel " "
+        }
+      }
+      camel = camel c
+    }
+    low = tolower(camel)
+    cnt = split(low, arr, /[^a-z0-9]+/)
+    out = ""
+    for (j = 1; j <= cnt; j++) {
+      tok = arr[j]
+      if (tok == "" || length(tok) < 2) continue
+      if (tok in stop) continue
+      if (tok in seen_tok) continue
+      seen_tok[tok] = 1
+      out = out (out == "" ? "" : " ") tok
+    }
+    return out
+  }
+
+  # Repeats a dynamic-regex match across the whole line (match() only finds
+  # the first hit), stripping prefix_pat from each captured piece.
+  function extract_all(line, pat, prefix_pat,    out, rest, piece) {
+    out = ""
+    rest = line
+    while (match(rest, pat)) {
+      piece = substr(rest, RSTART, RLENGTH)
+      sub(prefix_pat, "", piece)
+      out = out " " piece
+      rest = substr(rest, RSTART + RLENGTH)
+    }
+    return out
+  }
+
+  BEGIN {
+    while ((getline line < stopwords_file) > 0) if (line != "") stop[line] = 1
+    close(stopwords_file)
+
+    sq = sprintf("%c", 39)
+    quotes = sq "\"" sprintf("%c", 96)
+    js_pat = "(it|test|describe)\\([" quotes "][^" quotes "]*"
+    js_prefix = "^(it|test|describe)\\([" quotes "]"
+    py_pat = "^[ \t]*def test_[A-Za-z0-9_]+"
+    py_prefix = "^[ \t]*def "
+    go_pat = "func Test[A-Za-z0-9_]+"
+    go_prefix = "^func "
+
+    spec_truncated = 0
+    while ((getline line < spec_file) > 0) {
+      split(line, f, "\t")
+      if (f[1] == "REQ") {
+        if (nreq < max_spec_items) { nreq++; req_id[nreq] = f[2]; req_desc[nreq] = f[5]; req_tok[nreq] = tokenize(f[5]) }
+        else spec_truncated = 1
+      } else if (f[1] == "AC") {
+        if (nac < max_spec_items) { nac++; ac_id[nac] = f[2]; ac_req[nac] = f[3]; ac_desc[nac] = f[5]; ac_tok[nac] = tokenize(f[5]) }
+        else spec_truncated = 1
+      } else if (f[1] == "SC") {
+        if (nsc < max_spec_items) { nsc++; sc_id[nsc] = f[2]; sc_ac[nsc] = f[3]; sc_layer[nsc] = (f[4] == "" ? "-" : f[4]); sc_desc[nsc] = f[5]; sc_tok[nsc] = tokenize(f[5]) }
+        else spec_truncated = 1
+      }
+    }
+    close(spec_file)
+
+    while ((getline line < diff_file) > 0) {
+      split(line, f, "\t")
+      path = f[1]; text = f[2]
+      if (path ~ /^ship\/changes\// || path ~ /^ship\/audits\// || path ~ /^\.context\//) continue
+      nfile++; file_path[nfile] = path; file_tok[nfile] = tokenize(text)
+    }
+    close(diff_file)
+
+    while ((getline line < testfiles_file) > 0) {
+      split(line, f, "\t")
+      layer = f[1]; relpath = f[2]; abspath = f[3]
+      names = ""
+      while ((getline tline < abspath) > 0) {
+        names = names extract_all(tline, js_pat, js_prefix)
+        names = names extract_all(tline, py_pat, py_prefix)
+        names = names extract_all(tline, go_pat, go_prefix)
+      }
+      close(abspath)
+      ntest++; test_path[ntest] = relpath; test_layer[ntest] = layer; test_tok[ntest] = tokenize(relpath " " names)
+    }
+    close(testfiles_file)
+
     printf "{\"diff_hash\":\"%s\",\"spec_hash\":\"%s\",", diff_hash, spec_hash
     printf "\"test_scope\":{\"unit\":\"%s\",\"integration\":\"%s\",\"e2e\":\"%s\"},", unit_scope, integration_scope, e2e_scope
     printf "\"truncated_tests\":%s,", truncated
+    printf "\"truncated_spec\":%s,", (spec_truncated ? "true" : "false")
 
     printf "\"requirements\":["
     for (r = 1; r <= nreq; r++) {
       best = 0; bestf = ""
-      for (f = 1; f <= nfile; f++) {
-        s = jaccard(req_tok[r], file_tok[f])
-        if (s > best) { best = s; bestf = file_path[f] }
+      for (fi = 1; fi <= nfile; fi++) {
+        s = jaccard(req_tok[r], file_tok[fi])
+        if (s > best) { best = s; bestf = file_path[fi] }
       }
       req_best[r] = best
       printf "%s{\"id\":\"%s\",\"description\":\"%s\",\"confidence\":%.4f,\"file\":%s}", \
@@ -502,15 +567,15 @@ OUTPUT="$(awk -F'\t' \
     printf "\"orphans\":["
     first = 1
     if (nfile > 0 && nreq > 0) {
-      for (f = 1; f <= nfile; f++) {
-        if (ignored(file_path[f])) continue
+      for (fi = 1; fi <= nfile; fi++) {
+        if (ignored(file_path[fi])) continue
         best = 0
         for (r = 1; r <= nreq; r++) {
-          s = jaccard(file_tok[f], req_tok[r])
+          s = jaccard(file_tok[fi], req_tok[r])
           if (s > best) best = s
         }
         if (best == 0) {
-          printf "%s{\"file\":\"%s\",\"confidence\":0}", (first ? "" : ","), jesc(file_path[f])
+          printf "%s{\"file\":\"%s\",\"confidence\":0}", (first ? "" : ","), jesc(file_path[fi])
           first = 0
           norph++
         }
@@ -536,8 +601,9 @@ OUTPUT="$(awk -F'\t' \
     printf "\"scenarios\":{\"total\":%d,\"covered\":%d,\"uncertain\":%d,\"uncovered\":%d,\"skipped_disabled\":%d},", nsc, sc_cov, sc_unc, sc_uncov, sc_skipped
     printf "\"changed_files\":%d,\"test_files\":%d,\"orphans\":%d,\"duplicates\":%d", nfile, ntest, norph, ndup
     printf "}}"
+    exit
   }
-' "$RECORDS")"
+  ')"
 
 if [ -n "$SCRATCH" ]; then
   mkdir -p "$SCRATCH"
