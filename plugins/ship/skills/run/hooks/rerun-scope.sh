@@ -105,7 +105,7 @@ main() {
   done < <(read_changed_files "$input")
 
   local empty="false"
-  if [ "${#files[@]:-0}" -eq 0 ]; then
+  if [ "${#files[@]}" -eq 0 ]; then
     empty="true"
   fi
 
