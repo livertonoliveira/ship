@@ -91,13 +91,15 @@ On failure: dispatch `Mode: fix` with the error output and offending files, re-r
 
 ## 6. Hygiene gate — final sweep (MANDATORY)
 
-Mandatory Bash call:
+Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 7.
+
+Present → run as before:
 
 ```bash
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
 
-Hits → dispatch `Mode: clean` with the exact `file:line` hits, re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. `Ship hygiene — clean.` → step 7.
+Hits → dispatch `Mode: clean` with the exact `file:line` hits, re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then step 7.
 
 ---
 
