@@ -45,7 +45,7 @@ Read `ship/config.md` (@@ship/patterns/stack-detection.md); effective phase set 
 
 Before invoking ANY phase tool below — plan/dev/test/perf/security/review/analyze, no exceptions: `bash "@@ship/hooks/pipeline.sh" dispatch .context/ship-run/<task-id> <phase> <Skill|Agent> <name> <model>` (skipped → `-`/`skipped`/`-`; re-runs append again).
 
-> Linear MANDATORY: move issue to started state (@@ship/patterns/linear-status.md, never hardcode); confirm first.
+> Linear MANDATORY: move issue to started state (@@ship/patterns/linear-status.md, never hardcode) — automatically, no confirmation.
 
 Persist `spec.md`+`design.md` to scratch once (@@ship/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + only the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`, em-dash, never a heading, so analyze ignores it).
 
