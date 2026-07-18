@@ -9,6 +9,8 @@ Import by reference: `See ship/report-templates.md#<anchor>`.
 
 Base template. All domains share this structure.
 
+### Base Template {#finding-entry-base}
+
 ```markdown
 ### [SEVERITY] <Descriptive Title>
 - **Category:** <domain-specific — see extensions below>
@@ -22,12 +24,15 @@ Base template. All domains share this structure.
 
 ### Domain extensions
 
-Fields that **replace or add to** the base template per domain:
+Fields that **replace or add to** the base template per domain. Each consumer pulls `#finding-entry-base` plus only its own domain's extension below.
 
-**Performance pipeline** (`perf.md`) — categories: `DB | ALGO | MEM | NET | BUNDLE | RENDER | ARCH`
-> No extra fields. Uses base template as-is.
+#### Performance pipeline (`perf.md`) {#perf-extension}
 
-**Security pipeline** (`security.md`) — categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC`
+Categories: `DB | ALGO | MEM | NET | BUNDLE | RENDER | ARCH`. No extra fields — uses base template as-is.
+
+#### Security pipeline (`security.md`) {#security-pipeline-extension}
+
+Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC`
 ```markdown
 - **OWASP:** <e.g., A01:2021 Broken Access Control>                   # adds
 - **CWE:** <e.g., CWE-639 Authorization Bypass Through User-Controlled Key>  # adds
@@ -37,26 +42,34 @@ Fields that **replace or add to** the base template per domain:
 - **Fix:** <specific code change with example>                         # replaces Suggestion
 ```
 
-**Code Review pipeline** (`review.md`) — categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
+#### Code Review pipeline (`review.md`) {#review-extension}
+
+Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
 ```markdown
 - **Principle:** <SOLID-* | DRY | KISS | CLEAN | CONSISTENCY | TEST>  # replaces Category
 - **Problem:** <what's wrong and why it matters>                      # replaces Description
 ```
 
-**Frontend audit** (`audit/frontend.md`) — categories: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
+#### Frontend audit (`audit/frontend.md`) {#frontend-audit-extension}
+
+Categories: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
 (Next.js: `STRATEGY | BOUNDARY | CACHE | BUNDLE | STREAMING | IMG | FONT | MIDDLEWARE | BUILD | COLD | ARCH`)
 ```markdown
 - **Metric affected:** LCP | INP | CLS | FCP | TTFB | TBT | First Load JS | Bundle size  # adds
 - **Effort:** <Hours | Days | Weeks>                                   # adds
 ```
 
-**Backend audit** (`audit/backend.md`) — categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
+#### Backend audit (`audit/backend.md`) {#backend-audit-extension}
+
+Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 ```markdown
 - **Effort:** <Hours | Days | Weeks>                                   # adds
 - **Maintenance window:** <Yes | No>                                   # adds
 ```
 
-**Security audit** (`audit/security.md`) — categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
+#### Security audit (`audit/security.md`) {#security-audit-extension}
+
+Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 ```markdown
 - **OWASP:** <e.g., A01:2021 Broken Access Control>                   # adds
 - **CWE:** <e.g., CWE-639>                                            # adds
@@ -68,14 +81,18 @@ Fields that **replace or add to** the base template per domain:
 - **Urgent deploy:** <Yes | No>                                        # adds
 ```
 
-**Database audit** (`audit/database.md`) — categories: `MDL | IDX | QRY | WRT | CFG | SCH | PERF`
+#### Database audit (`audit/database.md`) {#database-audit-extension}
+
+Categories: `MDL | IDX | QRY | WRT | CFG | SCH | PERF`
 ```markdown
 - **Collection/Table:** <name(s) affected>                             # adds (before File)
 - **Effort:** <Hours | Days | Weeks>                                   # adds
 - **Requires migration:** <Yes | No>                                   # adds
 ```
 
-**Tests audit** (`audit/tests.md`) — category: `TEST`
+#### Tests audit (`audit/tests.md`) {#tests-audit-extension}
+
+Category: `TEST`
 ```markdown
 - **Layer:** <unit | integration | e2e>                                # adds
 - **Current confidence:** <0.0–1.0>                                    # adds
@@ -155,49 +172,29 @@ Used by `/ship:analyze` phase. Extends the base Finding Entry with drift-specifi
 
 ### Finding Entry Format
 
-| Field | Type | Description |
-|-------|------|-------------|
-| Severity | critical \| high \| medium \| low | See severity.md — Drift domain |
-| Category | IMPL \| TEST \| SCENARIO \| DRIFT \| ORPHAN \| DUP \| AMBIG \| SUBSPEC \| PRINCIPLE \| TERM | IMPL = implementation gap, TEST = AC test coverage gap, SCENARIO = scenario coverage gap, DRIFT = low-confidence match, ORPHAN = changed code/test with no matching requirement, DUP = duplicate requirement/criterion, AMBIG = vague/unmeasurable term, SUBSPEC = underspecified item, PRINCIPLE = violation of a stated principle/convention, TERM = terminology inconsistency between spec and code |
-| File | path or — | Source file where the issue was detected |
-| Description | string | What is missing or mismatched |
-| Suggestion | string | How to fix: implement the requirement or add the missing test |
-| Requirement ID | REQ-XX or — | Linked requirement, if applicable |
-| Criterion ID | AC-XX or — | Linked acceptance criterion, if applicable |
-| Scenario ID | SC-XX or — | Linked scenario, if applicable |
-| Layer | unit \| integration \| e2e or — | Scenario's tagged test layer (SCENARIO findings only) |
-| Confidence % | integer 0-100 | Match confidence rendered as an integer percentage |
+Fields: Severity (critical|high|medium|low, see severity.md#drift) · Category (see below) · File (path or —) · Description · Suggestion · Requirement ID (REQ-XX or —) · Criterion ID (AC-XX or —) · Scenario ID (SC-XX or —) · Layer (unit|integration|e2e or —, SCENARIO findings only) · Confidence % (integer 0-100).
 
-### Severity Mapping
+Categories, each with its severity trigger and gate impact:
 
-| Severity | Trigger | Gate Impact |
-|----------|---------|-------------|
-| critical | Requirement with 0 code matches | FAIL |
-| high | Requirement confidence < 0.5 | FAIL |
-| medium | Acceptance criterion with 0 test matches | WARN |
-| medium | Scenario with 0 test matches in its tagged enabled layer | WARN |
-| low | Criterion or scenario confidence < 0.5 | PASS |
-| medium | Changed code/function has no match against any requirement (ORPHAN) | WARN |
-| low | Duplicate requirement/criterion (DUP) | PASS |
-| medium | Vague term with no measurable threshold (AMBIG) | WARN |
-| medium | Underspecified item, e.g. a requirement without acceptance criteria (SUBSPEC) | WARN |
-| medium | Violation of a stated principle or documented project convention (PRINCIPLE) | WARN |
-| low | Terminology inconsistency between spec and code (TERM) | PASS |
+| Category | Meaning | Severity trigger | Gate |
+|----------|---------|-------------------|------|
+| IMPL | Implementation gap | Requirement with 0 code matches | FAIL (critical) |
+| DRIFT | Low-confidence match | Requirement confidence < 0.5 | FAIL (high) |
+| TEST | AC test coverage gap | Acceptance criterion with 0 test matches | WARN (medium) |
+| SCENARIO | Scenario coverage gap | Scenario with 0 test matches in its tagged enabled layer | WARN (medium) |
+| ORPHAN | Changed code/test with no matching requirement | — | WARN (medium) |
+| DUP | Duplicate requirement/criterion | — | PASS (low) |
+| AMBIG | Vague/unmeasurable term | No measurable threshold | WARN (medium) |
+| SUBSPEC | Underspecified item (e.g. requirement without AC) | — | WARN (medium) |
+| PRINCIPLE | Violation of a stated principle/convention | — | WARN (medium) |
+| TERM | Terminology inconsistency spec↔code | — | PASS (low) |
+
+Criterion/scenario confidence < 0.5 (any category) → low severity, PASS.
 
 ### Example Reports
 
-#### PASS
 `✓ Análise de Drift: PASS (0 gaps) — [ver relatório completo](link)`
 
-#### WARN (medium findings)
-```
-### [MEDIUM] Critério sem cobertura de teste: AC-03
-- **Categoria:** TEST
-- **Descrição:** O critério de aceitação "AC-03" não possui testes identificados.
-- **Sugestão:** Crie um teste para o critério AC-03.
-```
-
-#### FAIL (critical findings)
 ```
 ### [CRITICAL] Requisito não implementado: REQ-05
 - **Categoria:** IMPL

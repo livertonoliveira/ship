@@ -4,13 +4,13 @@ Completion-state rules applied to every leaf worker dispatched by an orchestrato
 
 This is a **completion axis** — it answers "did the worker finish, and how?" — and is orthogonal to the **quality axis** documented in `gates.md` (PASS/WARN/FAIL, derived from `critical`/`high`/`medium` findings). A worker can report `Status: DONE` while its output still triggers `Gate: FAIL` in a later quality phase — the two axes are evaluated independently and never conflated.
 
+## Enum {#worker-status-contract}
+
 Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
 
 ```
 Status: <ENUM>
 ```
-
-## Enum
 
 Exactly four states. No fifth state exists.
 

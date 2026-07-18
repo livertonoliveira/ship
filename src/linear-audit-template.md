@@ -7,101 +7,47 @@ Used by: `audit/backend.md`, `audit/frontend.md`, `audit/security.md`, `audit/da
 
 ---
 
-## When to use
+## Core Template {#audit-template-core}
 
-Apply this template in **Linear mode** (i.e., `ship/config.md → Linear Integration: yes`) after completing an audit analysis and generating a report.
+### Steps {#audit-template-steps}
 
-In **Local mode**, write the report to `ship/audits/<type>-<YYYY-MM-DD>.md` instead.
+Apply in **Linear mode** (`ship/config.md → Linear Integration: yes`) after generating the audit report. **Local mode**: write to `ship/audits/<type>-<YYYY-MM-DD>.md` instead.
 
----
+Team/Project fields below always come from `ship/config.md → Linear Integration → Team ID` / the project created in step 1. "Per variation" means see [Category variations](#category-variations) for this audit type's specific value.
 
-## Step 1 — Create Linear project
+1. **Project** — `mcp__linear-server__save_project`: Name `<Audit Type> — <YYYY-MM-DD>`, Team, Description per variation (app name, stack context, gate result + findings count, one-sentence top issue). **Never reuse an existing project** — always create a new one per run.
+2. **Report document** — `mcp__linear-server__save_document`: Title `<Audit Type> — <YYYY-MM-DD>`, Project, Content = full report markdown.
+3. **Milestones** — `mcp__linear-server__save_milestone`, one per severity with ≥1 finding (skip empty ones): "Critical Fixes" / "High Fixes" / "Medium Fixes" / "Low Fixes". Team, Project.
+4. **Issues per finding** — `mcp__linear-server__save_issue` for every finding at any severity: Title `[PREFIX] <title>` (prefix per variation), Team, Project, Priority Urgent|High|Medium|Low matching severity, Labels = primary label per variation + `severity` label, Milestone from step 3, Description = base template below (unless the variation fully replaces it) extended with the variation's category-specific fields.
 
-Call `mcp__linear-server__save_project` with:
-
-- **Name**: `<Audit Type> — <YYYY-MM-DD>` (e.g., "Backend Performance Audit — 2026-04-29")
-- **Team**: from `ship/config.md → Linear Integration → Team ID`
-- **Description** (varies by audit type — see [Category variations](#category-variations)):
-  - Project/app name (from `ship/config.md → Project → Name`)
-  - Stack context (runtime, framework, database or framework methodology)
-  - Gate result and findings count (e.g., "2 critical, 3 high, 1 medium")
-  - One-sentence summary of the most critical/impactful issue found
-
-> **Never search for or reuse an existing project** — not even one that looks related. Each audit run gets its own dedicated project.
-
----
-
-## Step 2 — Create report document
-
-Call `mcp__linear-server__save_document` with:
-
-- **Title**: `<Audit Type> — <YYYY-MM-DD>`
-- **Project**: the project created in Step 1
-- **Content**: the full audit report in markdown
-
----
-
-## Step 3 — Create milestones per severity
-
-Call `mcp__linear-server__save_milestone` for each severity level that has at least one finding. Skip milestones with zero findings.
-
-| Condition | Milestone name |
-|-----------|---------------|
-| Any `critical` findings | "Critical Fixes" |
-| Any `high` findings | "High Fixes" |
-| Any `medium` findings | "Medium Fixes" |
-| Any `low` findings | "Low Fixes" |
-
-For each milestone:
-- **Team**: from `ship/config.md → Linear Integration → Team ID`
-- **Project**: the project created in Step 1
-
----
-
-## Step 4 — Create issues per finding
-
-For each finding at any severity (critical, high, medium, low), call `mcp__linear-server__save_issue` with:
-
-- **Title**: `[PREFIX] <finding title>` — see [Category variations](#category-variations) for the prefix
-- **Team**: from `ship/config.md → Linear Integration → Team ID`
-- **Project**: the project created in Step 1
-- **Priority**: Urgent (critical) / High (high) / Medium (medium) / Low (low)
-- **Labels**: primary label (or closest available in the team) + `severity` label — see [Category variations](#category-variations)
-- **Milestone**: link to the corresponding milestone from Step 3
-- **Description**: use the base template below, extended with category-specific fields
-
-### Base issue description template
-
+### Base Template {#audit-template-base}
 ```markdown
 ## Problem
-<What the problem is, with concrete evidence from the code. Cite file and line.>
+<Evidence from code, cite file:line.>
 
 ## Impact
-<Estimated impact — latency, memory, security risk, data integrity. Include projection at 10x data if relevant.>
+<Estimated impact — latency, memory, security, data integrity.>
 
 ## Evidence
 - **File:** <path>:<line>
-- **Code:** <relevant snippet showing the issue>
+- **Code:** <snippet>
 
 ## Fix
-<Specific fix with a code example in the project's language and framework.>
+<Specific fix with a code example.>
 
 ## Acceptance Criteria
-- [ ] <Specific, verifiable criterion>
-- [ ] <Another verifiable criterion>
+- [ ] <Verifiable criterion>
 - [ ] No regressions in related tests
 
 ## Notes
 - **Effort:** <Hours | Days | Weeks>
 ```
 
----
-
 ## Category variations {#category-variations}
 
 Each audit type customizes the project description, issue prefix, labels, and adds extra fields to the issue description template.
 
-### Backend Performance (`audit/backend.md`)
+### Backend Performance (`audit/backend.md`) {#backend-variation}
 
 - **Project description**: includes runtime, framework, database
 - **Issue prefix**: `[PERF]`
@@ -111,7 +57,7 @@ Each audit type customizes the project description, issue prefix, labels, and ad
   - **Maintenance window required:** <Yes | No>
   ```
 
-### Frontend Performance (`audit/frontend.md`)
+### Frontend Performance (`audit/frontend.md`) {#frontend-variation}
 
 - **Project description**: includes framework and methodology (e.g., "Next.js App Router — 5-layer methodology")
 - **Issue prefix**: `[PERF]`
@@ -126,40 +72,14 @@ Each audit type customizes the project description, issue prefix, labels, and ad
   - **Affected Web Vital:** <LCP | CLS | INP | TTFB | FCP | TBT>
   ```
 
-### Security (`audit/security.md`)
+### Security (`audit/security.md`) {#security-variation}
 
 - **Project description**: includes runtime, framework, database and overall A–F score
 - **Issue prefix**: `[SEC]`
 - **Labels**: `security`
-- **Replaces base template** with:
-  ```markdown
-  ## Vulnerability
-  <What the vulnerability is, with concrete evidence. Cite file and line. Include OWASP category and CWE.>
+- **Replaces base template** with: `## Vulnerability` (evidence, file:line, OWASP+CWE) · `## Attack Vector` (exploit steps, auth required?) · `## Impact` (what attacker/breach yields) · `## Proof of Concept` (critical/high: exploit payload) · `## Fix` (code change) · `## Acceptance Criteria` (verifiable checklist incl. security tests pass, no regressions) · `## Notes` (Effort, Urgent deploy required Yes|No)
 
-  ## Attack Vector
-  <How this could be exploited — step-by-step. Who can trigger it (unauthenticated / authenticated).>
-
-  ## Impact
-  <What an attacker or a data breach would yield. Data exposed, accounts compromised, system access gained.>
-
-  ## Proof of Concept
-  <For critical/high: example malicious request, payload, or exploit flow demonstrating the vulnerability.>
-
-  ## Fix
-  <Specific code change with example using the project's patterns.>
-
-  ## Acceptance Criteria
-  - [ ] <Specific, verifiable criterion — e.g., "input is validated server-side before being used in query">
-  - [ ] <Another verifiable criterion>
-  - [ ] Security-related tests pass
-  - [ ] No regressions in related tests
-
-  ## Notes
-  - **Effort:** <Hours | Days | Weeks>
-  - **Urgent deploy required:** <Yes | No>
-  ```
-
-### Database (`audit/database.md`)
+### Database (`audit/database.md`) {#database-variation}
 
 - **Project description**: includes database engine and version (MongoDB / PostgreSQL / MySQL)
 - **Issue prefix**: `[DB]`
@@ -175,7 +95,7 @@ Each audit type customizes the project description, issue prefix, labels, and ad
   - **Maintenance window required:** <Yes | No>
   ```
 
-### Tests Coverage (`audit/tests.md`)
+### Tests Coverage (`audit/tests.md`) {#tests-variation}
 
 - **Project description**: includes Test Scope layers enabled/disabled (unit, integration, e2e), total AC count, gate result (PASS / WARN), and one-sentence summary of the most critical coverage gap
 - **Issue prefix**: `[TEST]`

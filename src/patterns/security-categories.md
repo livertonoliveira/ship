@@ -1,31 +1,10 @@
 # Security Categories
 
-Mapping of Security Focus categories to active OWASP Top 10 IDs for `/ship:security` and `/ship:audit:security`.
+## Category Mapping {#category-mapping}
 
-## Category → OWASP mapping
+Security Focus categories → active OWASP Top 10 IDs (`/ship:security`, `/ship:audit:security`) — OWASP IDs use standard Top 10 2021 numbering (A01-A10):
 
-| Category           | OWASP IDs activated                              | Count |
-|--------------------|--------------------------------------------------|-------|
-| `all` (default)    | A01, A02, A03, A04, A05, A06, A07, A08, A09, A10 | 10/10 |
-| `web-api`          | A01, A02, A03, A05, A07, A08                     | 6/10  |
-| `mobile`           | A01, A02, A03, A07                               | 4/10  |
-| `infrastructure`   | A05, A06, A09, A10                               | 4/10  |
-| `none`             | (skip security phase entirely)                   | 0/10  |
-
-## OWASP Top 10 reference
-
-| ID  | Name                                        |
-|-----|---------------------------------------------|
-| A01 | Broken Access Control                       |
-| A02 | Cryptographic Failures                      |
-| A03 | Injection                                   |
-| A04 | Insecure Design                             |
-| A05 | Security Misconfiguration                   |
-| A06 | Vulnerable and Outdated Components          |
-| A07 | Identification and Authentication Failures  |
-| A08 | Software and Data Integrity Failures        |
-| A09 | Security Logging and Monitoring Failures    |
-| A10 | Server-Side Request Forgery (SSRF)          |
+`all` (default) → A01-A10 (10/10) · `web-api` → A01,A02,A03,A05,A07,A08 (6/10) · `mobile` → A01,A02,A03,A07 (4/10) · `infrastructure` → A05,A06,A09,A10 (4/10) · `none` → skip security phase entirely (0/10)
 
 ## Category rationale
 
