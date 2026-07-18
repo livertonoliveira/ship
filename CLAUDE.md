@@ -95,6 +95,11 @@ ship/
 - Each compiled `SKILL.md` must stay under a per-tier word ceiling enforced by `plugins/ship/scripts/build.js`.
 - See `plugins/ship/scripts/BUDGETS.md` for the tiers, ceilings, rationale, and the procedure to follow when a skill legitimately grows.
 
+### Anti-Bloat Rule
+- This rule exists because Ship's bloat came from an identifiable dynamic: every behavior bug got fixed by adding defensive prose to a SKILL or agent instead of removing surface or moving the fix to a script, and that pushed a run to 6,900 words even under the word-budget ceiling — new prose can fit under the ceiling and still be the wrong fix.
+- Every pipeline behavior fix must either (a) move the logic into a deterministic script/hook, or (b) remove the surface that caused the problem — never add defensive prose to a SKILL or agent file.
+- See `plugins/ship/scripts/BUDGETS.md` for the ceilings and the change procedure.
+
 ### Audit vs Pipeline Phases
 - **Pipeline phases** (`/ship:perf`, `/ship:security`) are diff-scoped: they analyze only changed code during the development pipeline.
 - **Audit commands** (`/ship:audit:*`) are project-wide: they scan the entire codebase for systemic issues. Run them periodically or before releases.
