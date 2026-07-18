@@ -61,9 +61,9 @@ Invoke `ship:plan` via Skill (`context: fork`, `model: sonnet`, never Agent) —
 
 > Skip if `dev` disabled (Verification's test-exec still runs).
 
-Overlap: `ship:develop` + `ship:test Mode: generate` same turn (both forked Skills) when `dev`+`test` enabled and `plan.md` exists (denylist keeps file sets disjoint). Log both via `pipeline.sh dispatch` first.
+Overlap: `ship:develop` + `ship:test Mode: generate` same turn (forked Skills) when `dev`+`test` enabled and `plan.md` exists, or planner skipped (§1.9) with populated `## Files` (disjoint either way). Log both via `pipeline.sh dispatch` first.
 
-`ship:develop`: task/title, language, scratch dir, storage mode, spec/design pointer — reads `plan.md` module map, else single-module. `ship:test Mode: generate` (overlap only): same inline data + `Mode: generate` — reads the Test Contract, writes tests + `generated-tests.md`, doesn't run them.
+`ship:develop`: task/title, language, scratch dir, storage mode, spec/design pointer — reads `plan.md` module map, else single-module. `ship:test Mode: generate` (overlap only): `Mode: generate`, writes tests + `generated-tests.md`; denylist `plan.md` else `## Files`.
 
 Consolidate phase-status (MANDATORY, before proceeding) — you are the sole writer of `phase-status.md`: `bash "@@ship/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev test` (drop `test` if the overlap didn't run). Line-count: `git diff --stat`, warn past 400.
 

@@ -69,7 +69,7 @@ Artifact language: <artifact_language>
 
 **De-identify before injecting:** strip spec-ID tags from `## Scenarios`/`## Module`/`## Design` before slicing — keep behavior, drop tags, so the worker can't echo an ID it never received. Keep the `SC-XX → module` mapping in your notes for the report. Read `${CLAUDE_SKILL_DIR}/patterns/deidentify-context.md` and follow it.
 
-Single-module fallback: dispatch one worker with the full inline spec/design as `## Module`.
+Single-module fallback: dispatch one worker with the full inline spec/design as `## Module`. Overlap active this turn (`plan.md` absent, `## Files` triggered `ship:test Mode: generate` per run/SKILL.md) → the test file paths from `## Files` are out of scope for this worker; never create or modify them, they belong to the concurrent test-generate worker.
 
 ---
 
