@@ -253,6 +253,14 @@ awk '
   /^#/ || /^[[:space:]]*(Feature|Rule):/ { flush_sc(); in_sc = 0 }
   {
     line = $0
+
+    if (in_req_body) {
+      if (line ~ /^#/) { in_req_body = 0 }
+      else if (match(line, /AC-[0-9]+/) && line !~ /@AC-[0-9]+/ && substr(line, RSTART + RLENGTH) ~ /^[[:space:]]*:/) { in_req_body = 0 }
+      else if (match(line, /REQ-[0-9]+/) && (substr(line, RSTART + RLENGTH) ~ /^[[:space:]]*:/ || line ~ /^#/)) { in_req_body = 0 }
+      else if (line !~ /^[[:space:]]*$/) { req_extra[req_body_id] = req_extra[req_body_id] " " clean(line) }
+    }
+
     if (match(line, /REQ-[0-9]+/)) {
       id = substr(line, RSTART, RLENGTH)
       after = substr(line, RSTART + RLENGTH)
@@ -262,9 +270,12 @@ awk '
           desc = after
           sub(/^[[:space:]]*[:.—–-]+[[:space:]]*/, "", desc)
           if (desc == "") desc = line
-          print "REQ\t" id "\t-\t-\t" clean(desc)
+          req_order[++nreq_seen] = id
+          req_desc0[id] = clean(desc)
         }
         cur_req = id
+        req_body_id = id
+        in_req_body = 1
       }
     }
     if (match(line, /AC-[0-9]+/) && line !~ /@AC-[0-9]+/) {
@@ -282,7 +293,13 @@ awk '
       }
     }
   }
-  END { flush_sc() }
+  END {
+    flush_sc()
+    for (i = 1; i <= nreq_seen; i++) {
+      id = req_order[i]
+      print "REQ\t" id "\t-\t-\t" req_desc0[id] req_extra[id]
+    }
+  }
 ' "$SPEC" > "$TMPDIR_LOCAL/spec-items.tsv"
 
 # --- Diff extraction: path \t aggregated added text ---
