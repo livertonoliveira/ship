@@ -152,9 +152,19 @@ bad() { printf '\033[31m✗\033[0m %s\n' "$1"; fail=1; }
 SCR="$(find .context/ship-run -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1 || true)"
 if [ -n "$SCR" ]; then
   ok "scratch dir: $SCR"
-  for f in diff.md spec.md design.md plan.md phase-status.md; do
+  for f in diff.md spec.md design.md phase-status.md; do
     if [ -s "$SCR/$f" ]; then ok "scratch artifact: $f"; else bad "missing/empty scratch artifact: $f"; fi
   done
+  # plan.md exists only when the planner runs. For single-module tasks the
+  # pipeline legitimately skips it (run/SKILL.md §1.9), logging `plan ... skipped`
+  # in dispatch-log.md — so require plan.md only when the planner actually ran.
+  if grep -qE '^\| *plan .*\| *skipped ' "$SCR/dispatch-log.md" 2>/dev/null; then
+    ok "planner skipped (single-module task) — plan.md not expected"
+  elif [ -s "$SCR/plan.md" ]; then
+    ok "scratch artifact: plan.md"
+  else
+    bad "missing/empty scratch artifact: plan.md (planner ran but wrote none)"
+  fi
 else
   bad "no .context/ship-run/<task>/ scratch dir produced"
 fi
