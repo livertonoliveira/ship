@@ -4,6 +4,10 @@ set -euo pipefail
 
 SPEC_RE='\b(REQ|AC|SC|IMPL|TEST)-[0-9]+\b'
 
+SECRET_PROVIDER_RE='AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|xox[baprs]-[A-Za-z0-9-]{10,48}|(sk|rk)_live_[0-9a-zA-Z]{24,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+
+GENERIC_SECRET_ASSIGN_RE='(api[_-]?key|secret|token|password|passwd|credential)[^=:]{0,20}(=|:|=>)[[:space:]]*("[^"]{16,}"|'"'"'[^'"'"']{16,}'"'"')'
+
 is_excluded() {
   local p="$1" base
   base="$(basename "$p")"
@@ -16,6 +20,35 @@ is_excluded() {
     package-lock.json|pnpm-lock.yaml|yarn.lock|go.sum|Cargo.lock|*.lock) return 0 ;;
   esac
   return 1
+}
+
+is_excluded_secrets() {
+  local p="$1" base
+  is_excluded "$p" && return 0
+  base="$(basename "$p")"
+  case "$base" in
+    .env|.env.*) return 0 ;;
+  esac
+  return 1
+}
+
+generic_secret_hit() {
+  local content="$1" lit inner lower uniq
+  lit="$(printf '%s' "$content" | grep -oE '"[^"]{16,}"|'"'"'[^'"'"']{16,}'"'"'' | head -1)"
+  [ -z "$lit" ] && return 1
+  inner="${lit%\"}"; inner="${inner#\"}"
+  inner="${inner%\'}"; inner="${inner#\'}"
+  case "$inner" in
+    *process.env.*|*os.environ*|*'${'*) return 1 ;;
+    '<'*'>') return 1 ;;
+  esac
+  lower="$(printf '%s' "$inner" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    *xxx*|*changeme*|*example*|*dummy*|*test*|*fake*|*your_*|*insert_*) return 1 ;;
+  esac
+  uniq="$(printf '%s' "$inner" | fold -w1 | sort -u | wc -l | tr -d '[:space:]')"
+  [ "$uniq" = "1" ] && return 1
+  return 0
 }
 
 comment_pattern_for() {
@@ -67,6 +100,20 @@ scan_file() {
       done < <(grep -nE "$cre" "$p" 2>/dev/null || true)
     fi
   fi
+
+  if ! is_excluded_secrets "$p"; then
+    while IFS= read -r line; do
+      HITS+=("$p:$line"); found=0; HAS_SECRET_HIT=1
+    done < <(grep -nE "$SECRET_PROVIDER_RE" "$p" 2>/dev/null || true)
+
+    while IFS= read -r line; do
+      local lineno="${line%%:*}" content="${line#*:}"
+      if generic_secret_hit "$content"; then
+        HITS+=("$p:$lineno"); found=0; HAS_SECRET_HIT=1
+      fi
+    done < <(grep -inE "$GENERIC_SECRET_ASSIGN_RE" "$p" 2>/dev/null || true)
+  fi
+
   return $found
 }
 
@@ -82,6 +129,7 @@ if [ "${1:-}" = "--dir" ]; then
   fi
   SCAN_COMMENTS=1
   HITS=()
+  HAS_SECRET_HIT=0
   while IFS= read -r f; do [ -n "$f" ] && scan_file "$f" || true; done < <(walk_dir "$target_dir")
   if [ "${#HITS[@]}" -gt 0 ]; then
     printf 'Ship hygiene — %d hit(s) found:\n' "${#HITS[@]}"
@@ -95,6 +143,7 @@ fi
 if [ "${1:-}" = "--all" ]; then
   SCAN_COMMENTS=1
   HITS=()
+  HAS_SECRET_HIT=0
   while IFS= read -r f; do [ -n "$f" ] && scan_file "$f" || true; done < <(
     { git ls-files; git ls-files --others --exclude-standard; } 2>/dev/null | sort -u
   )
@@ -114,6 +163,7 @@ file_path="$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space
 [ -f "$file_path" ] || exit 0
 
 HITS=()
+HAS_SECRET_HIT=0
 if scan_file "$file_path"; then
   {
     echo "Ship hygiene gate: forbidden content in the file you just wrote — fix it before continuing."
@@ -127,7 +177,11 @@ if scan_file "$file_path"; then
     echo "  wherever it appears — including describe/it/test names, suite/class/method names, and"
     echo "  string literals. When an ID names a test, RENAME the test to describe the behavior."
     echo "- Leave legitimate tokens that merely resemble a pattern (UTF-8, SHA-256, ISO-8601) alone."
+    if [ "$HAS_SECRET_HIT" = "1" ]; then
+      echo "- Secrets: move to an environment variable / secrets manager; rotate the credential if it was ever committed."
+    fi
   } >&2
+  [ -d .context/ship-run ] && touch .context/ship-run/.hygiene-hit
   exit 2
 fi
 
