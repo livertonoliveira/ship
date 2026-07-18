@@ -146,6 +146,94 @@ test('jest-style runner composes "<package manager> test", forwards file args af
   assert.match(failuresContent, /src\/bar\.test\.js \(2 failures\)/);
 });
 
+function writeFakeCheck(dir, name, { exitCode, output }) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(
+    file,
+    ['#!/usr/bin/env bash', `echo "${output}"`, `exit ${exitCode}`, ''].join('\n')
+  );
+  fs.chmodSync(file, 0o755);
+  return file;
+}
+
+test('failing typecheck exits 1, reports a Typecheck section, and skips the suite', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const fake = writeFakeCheck(dir, 'fake-tsc.sh', {
+    exitCode: 2,
+    output: "src/foo.ts(3,1): error TS2304: Cannot find name 'x'.",
+  });
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Typecheck command: ${fake}\n`);
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /## Typecheck failed/);
+  assert.match(failuresContent, /error TS2304/);
+  assert.match(failuresContent, /Test suite not run/);
+  const statusRow = fs.readFileSync(path.join(dir, 'scratch', 'phase-status-test.md'), 'utf8');
+  assert.match(statusRow, /\| test \| #<RUN> \|.*\| fail \|/);
+});
+
+test('failing lint with a green suite exits 1 and reports a Lint section', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const fake = writeFakeCheck(dir, 'fake-eslint.sh', {
+    exitCode: 1,
+    output: 'src/foo.ts:12:3 error no-restricted-syntax',
+  });
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Lint command: ${fake}\n`);
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /## Lint failed/);
+  assert.match(failuresContent, /no-restricted-syntax/);
+});
+
+test('passing typecheck and lint keep a green suite at exit 0 with header-only report', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const tsc = writeFakeCheck(dir, 'fake-tsc.sh', { exitCode: 0, output: 'ok' });
+  const lint = writeFakeCheck(dir, 'fake-eslint.sh', { exitCode: 0, output: 'ok' });
+  fs.appendFileSync(
+    path.join(dir, 'scratch', 'stack.md'),
+    `- Typecheck command: ${tsc}\n- Lint command: ${lint}\n`
+  );
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 0, res.stderr);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.equal(failuresContent.trim(), '# Test Failures');
+});
+
+test('lint script from package.json is auto-detected when no command is configured', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const fake = writeFakeCheck(dir, 'fake-eslint.sh', {
+    exitCode: 1,
+    output: 'src/foo.ts:1:1 error detected-via-package-json',
+  });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: 'fixture', scripts: { lint: fake } })
+  );
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /## Lint failed/);
+  assert.match(failuresContent, /detected-via-package-json/);
+});
+
 test('pytest-style FAILED summary lines are parsed into per-file failure counts', () => {
   const dir = setupProject({ testRunner: undefined, packageManager: undefined });
   const fakePytest = path.join(dir, 'fake-pytest.sh');
