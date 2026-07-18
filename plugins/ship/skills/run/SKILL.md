@@ -1,6 +1,6 @@
 ---
 name: ship:run
-description: "Full development pipeline for a task: develop → verify (test ∥ quality, one gate) → homolog. 1 task by default, or N / whole project on request."
+description: "Full development pipeline for a task: develop → test → quality (perf/security/review/analyze in parallel, one gate) → homolog. 1 task by default, or N / whole project on request."
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
@@ -9,7 +9,7 @@ model: "sonnet"
 
 # Ship Run — Development Pipeline
 
-Drive a task through implementation → verification → user acceptance, maximizing parallel agents.
+Drive a task through implementation → testing → quality → user acceptance, maximizing parallel agents.
 
 **Linear:** everything lives in Linear. **Local:** everything lives in `ship/changes/<feature>/`.
 
@@ -86,7 +86,7 @@ Exit 0 → log `Plan validado ✓`, proceed. Exit 2 → do NOT dispatch develop/
 
 ### 2. PHASE: Development
 
-> Skip entirely if `dev` disabled (the verification stage's test-exec branch runs unaffected).
+> Skip entirely if `dev` disabled (Phase 3 then runs `Mode: full`).
 
 **Overlap** (dispatch `ship:develop` + `ship:test Mode: generate` in the SAME turn, both forked skills — never `Agent`) applies only when `dev`+`test` enabled AND `plan.md` exists (its denylist keeps file sets disjoint). Log both via `pipeline.sh dispatch` (`dev`, and `test` as `ship:test (generate)`) first.
 
@@ -104,7 +104,7 @@ bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id
 
 ### 2.5. Refresh diff + classification (authoritative)
 
-> Only if `dev` ran — develop writes to the tree without committing, so the baseline diff misses it. Authoritative input for the verification stage and Phase 5.
+> Only if `dev` ran — develop writes to the tree without committing, so the baseline diff misses it. Authoritative input for Phase 4/5.
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
@@ -132,24 +132,22 @@ bash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh" .context/ship-run/<task-id>/de
 ```
 Log its `untested` JSON list. `test` enabled AND `untested` non-empty → append `warn` row — never `fail`.
 
-### 3-4. STAGE: Verification (test-exec ∥ quality)
+### 3. PHASE: Testing
 
-`test` enabled, no `generated-tests.md` yet → dispatch `ship:test Mode: generate` (no denylist).
+> Skip if `test` disabled.
 
-> Same turn: (a) `test-exec.sh`, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
+Invoke `ship:test` via **Skill tool** (forked, never `Agent`), mode depends on Phase 2:
+- Overlap `Mode: generate` succeeded (`generated-tests.md` written) → **`execute`**: reads it, runs those files, writes `test-failures.md`.
+- Overlap ran but generate failed/no manifest → warn, **`full`** (generate+execute).
+- No overlap (`dev`/`test` disabled or no `plan.md`) → **`full`** directly.
 
-**(a) Test execution:**
-```bash
-timeout 300 bash "${CLAUDE_SKILL_DIR}/hooks/test-exec.sh" .context/ship-run/<task-id> [--config <config-path>]
-```
-- **0** green → pass, continue, zero agents.
-- **1** red → ONE fix **Agent** (`model: sonnet`, `test-failures.md`); `$TEST_FIX_ITERATION` (≠ `$FIX_ITERATION`); re-run after fix; `>2` → **STOP** ("Suíte vermelha. Intervenção manual necessária.").
-- **2** unresolved → warn; write `phase-status-test.md` gate=`skip`; offer `Mode: execute`, never auto-invoke.
-- **124** timeout → **STOP**.
+Inline for both: task/title, `Artifact language`, scratch dir, storage mode; `full` adds "use AC to guide generation, scoped to this task"; `execute` adds `Mode: execute` only.
 
-**Reconciliation** (fix touched source, suite green): snapshot files (`snapshot-files.sh`, as below) → `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` → re-dispatch quality phases marked `rerun`.
+If tests fail after fix attempts: STOP, inform the user, ask about an auto-fix.
 
-**(b)** — `perf`/`security`/`review`/`analyze` per the effective set.
+### 4. PHASES: Quality Checks (PARALLEL)
+
+> Check `perf`/`security`/`review`/`analyze` individually against the effective phase set. All disabled → skip to Phase 5 (trivial PASS). Some disabled → launch only the enabled ones.
 
 Pre-quality snapshot already captured (`pre-quality-snapshot.sha`, step 0).
 
@@ -203,7 +201,7 @@ bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" .context/ship-run/<task-id>/post
 ```
 JSON: `out_of_scope: true` → gates.md Edge case 4 (re-run all enabled phases, log `Fix tocou arquivo(s) fora do scope original`); `empty: true` → confirms the empty case; else read `phases.<phase>.rerun`/`.reason` per phase, logging gates.md's `Fix tocou:`/`Re-run cirúrgico:`/`Re-run pulado:` format.
 
-**Re-invoke only the selected phases** (same pattern as the verification stage's quality fan-out, parallel if multiple; `analyze` follows gates.md's broad-scope rule unless `analyze.rerun=false`). Each writes its `phase-status-<phase>.md`; after all return, consolidate again:
+**Re-invoke only the selected phases** (same pattern as Phase 4, parallel if multiple; `analyze` follows gates.md's broad-scope rule unless `analyze.rerun=false`). Each writes its `phase-status-<phase>.md`; after all return, consolidate again:
 ```bash
 bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...
 ```
