@@ -66,7 +66,7 @@ For each task, execute the following phases:
 One deterministic script performs the resume check, scratch-dir init, snapshots, baseline diff capture, and baseline classification. Use the issue ID (e.g., `MOB-1147`) as `<task-id>` — it must match `[a-zA-Z0-9_-]` only.
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id>
+bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" init <task-id>
 ```
 
 Interpret the result by exit code:
@@ -88,8 +88,8 @@ Interpret the result by exit code:
 
   Then ask: "Retomar a partir daqui (pular fases já concluídas, re-executar apenas as pendentes/interrompidas) ou reiniciar o pipeline do zero para esta task (isso apaga o contexto existente)?"
 
-  - **Resume**: run `bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id> --mode resume` — it preserves `phase-status.md`, `dispatch-log.md`, and every existing canonical file, re-capturing only `diff.md` (idempotent) and `diff-class.txt`. Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or listed as `unfinished`.
-  - **Restart**: run `bash "${CLAUDE_SKILL_DIR}/hooks/run-init.sh" <task-id> --mode fresh` (overwrites everything) and proceed as a fresh start.
+  - **Resume**: run `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" init <task-id> --mode resume` — it preserves `phase-status.md`, `dispatch-log.md`, and every existing canonical file, re-capturing only `diff.md` (idempotent) and `diff-class.txt`. Then jump pipeline execution to right after the last phase with a completed row in `phase-status.md`, in the normal phase order (`plan` → `dev` → `test` → quality → `homolog` → `pr`), re-dispatching only phases that are pending, disabled-then-re-enabled, or listed as `unfinished`.
+  - **Restart**: run `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" init <task-id> --mode fresh` (overwrites everything) and proceed as a fresh start.
 
   Rationale: the scratch dir is the only durable record across a session restart — blindly recreating it would discard already-completed phase rows or erase `homolog`/`pr` rows still needed.
 
@@ -116,27 +116,21 @@ Interpret the result by exit code:
 
 7. Read `Scenario Depth → depth` from `ship/config.md` (default `full` if absent). Visibility-only — the orchestrator does not thread scenarios. Log alongside the profile/test-scope logs: `Scenario Depth: <depth>`.
 
-8. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–4 below (Development, Testing, Quality — the latter now includes `analyze` in its fan-out), emit a single line to the terminal **AND** append the same data as a row to `.context/ship-run/<task-id>/dispatch-log.md`.
+8. **Phase dispatch logging convention** — every time you dispatch a phase in steps 2–4 below (Development, Testing, Quality — the latter now includes `analyze` in its fan-out), call, immediately before invoking the tool:
 
-   Terminal format (one line, printed immediately before invoking the tool):
-
-   ```
-   ▶ Fase: <phase> | tool=<Skill|Agent> | name=<name> | model=<sonnet>
+   ```bash
+   bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" dispatch .context/ship-run/<task-id> <phase> <Skill|Agent> <name> <sonnet>
    ```
 
-   `dispatch-log.md` row format:
-
-   ```
-   | <phase> | <Skill|Agent> | <name> | <sonnet> | <ISO-8601 UTC> |
-   ```
+   The script appends the row to `dispatch-log.md` and prints the terminal line itself.
 
    Field rules:
    - `<phase>`: one of `plan`, `dev`, `test`, `perf`, `security`, `review`, `analyze`.
    - `<tool>`: `Agent` when dispatching a named agent via `subagent_type` (e.g., `ship:ship-perf`); `Skill` when dispatching a forked skill via the Skill tool (e.g., `ship:test`, `ship:review`).
    - `<name>`: the `subagent_type` value (for Agent) or the skill name with `ship:` prefix (for Skill).
    - `<model>`: read from the dispatched worker's `model:` frontmatter. Named agents in `agents/` and skills in `skills/` both declare it.
-   - For re-runs (Surgical Re-run Procedure), append a new row per re-dispatched phase — do not edit existing rows.
-   - For skipped phases (diff-class adjustments, disabled in effective phase set): append a row with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
+   - For re-runs (Surgical Re-run Procedure), call the script again per re-dispatched phase — it always appends, never edits existing rows.
+   - For skipped phases (diff-class adjustments, disabled in effective phase set): call the script with `tool=-`, `name=skipped`, `model=-` so the trace remains complete.
 
    **Language convention (applies to every phase dispatch below):** include `Artifact language: <artifact_language>` (resolved value from step 6) in each dispatched phase's inline context. Phase SKILL.md files use this for all user-facing output and do NOT re-load `${CLAUDE_SKILL_DIR}/patterns/language.md`.
 
@@ -226,7 +220,7 @@ bash "${CLAUDE_SKILL_DIR}/hooks/plan-validate.sh" .context/ship-run/<task-id>/pl
 2. `test` is `enabled` in the effective phase set;
 3. `.context/ship-run/<task-id>/plan.md` exists (the planner ran).
 
-When all three hold, dispatch `ship:develop` **and** `ship:test` with `Mode: generate` in the **same assistant turn** — both are forked skills (each declares `context: fork`), never wrap either in an `Agent` tool call. Safe because `plan.md`'s module map and its derived `## Denylist` guarantee disjoint file sets. Log both dispatch rows (`dev` and `test`, the latter with `name=ship:test (generate)`) before invoking the tools, per the dispatch-logging convention (step 1, item 8).
+When all three hold, dispatch `ship:develop` **and** `ship:test` with `Mode: generate` in the **same assistant turn** — both are forked skills (each declares `context: fork`), never wrap either in an `Agent` tool call. Safe because `plan.md`'s module map and its derived `## Denylist` guarantee disjoint file sets. Call `pipeline.sh dispatch` for both rows (`dev` and `test`, the latter with `name=ship:test (generate)`) before invoking the tools, per the dispatch-logging convention (step 1, item 8).
 
 **Dispatch — `ship:develop`** (always, when `dev` is enabled). Pass the following context inline:
 
@@ -255,7 +249,7 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 `ship:test` in `Mode: generate` reads `plan.md`'s Test Contract, derives its own denylist from the module file sets, writes test files, and produces `.context/ship-run/<task-id>/generated-tests.md` — never touches a file owned by a `ship:develop` module. It does not run any test command and does not write `test-failures.md` in this mode.
 
-**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `${CLAUDE_SKILL_DIR}/patterns/run-context.md` → "Read/write conventions". You (the orchestrator) are the sole writer of `phase-status.md`: run `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" 1 .context/ship-run/<task-id>/phase-status-develop.md` (current surgical re-run number instead of `1` if this is a re-run), also passing `.context/ship-run/<task-id>/phase-status-test-generate.md` if the overlap ran, and append its stdout to `.context/ship-run/<task-id>/phase-status.md`.
+**Consolidate phase-status (MANDATORY, before proceeding)**: `ship:develop` and (when dispatched) `ship:test Mode: generate` each wrote their own row to a private scratch file rather than the shared `phase-status.md` — see `${CLAUDE_SKILL_DIR}/patterns/run-context.md` → "Read/write conventions". You (the orchestrator) are the sole writer of `phase-status.md`: run `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> 1 dev test` (current surgical re-run number instead of `1` if this is a re-run; drop `test` from the argument list when the overlap did not run) — it consolidates and appends the row(s) to `phase-status.md` in one step.
 
 **Line count check**: after `ship:develop` returns, run `git diff --stat`. If it exceeds 400 lines, warn (don't block): "This task produced ~X lines (target: <400). Consider splitting it."
 
@@ -289,7 +283,7 @@ Use the task's acceptance criteria to guide test generation. Generate tests scop
 
 ### 2.6. Develop evidence gate (MANDATORY)
 
-> **Prove develop produced code — never trust its self-report.** `ship:develop` can narrate a plan and return a success-looking status without dispatching any worker, leaving the working tree untouched. This gate verifies real mutation from working-tree snapshots; never accept develop as `pass` on its word alone.
+> Act on this gate's script output — it verifies real mutation from working-tree snapshots, not on `ship:develop`'s self-reported status.
 
 > **Phase check**: Run this gate only if the `dev` phase actually ran (it is `enabled` in the effective phase set). If `dev` was disabled, skip this gate entirely.
 
