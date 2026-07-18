@@ -194,61 +194,7 @@ Report to the caller: the list of test files created per layer (from the manifes
 
 ## 4. Mode: execute
 
-Execution-only: never generates anything, always consumes a manifest from a prior `generate` run.
-
-### 4.1 Read the manifest
-
-Read `.context/ship-run/<task-id>/generated-tests.md`. Group its entries by layer. If the file is absent or header-only for every enabled layer, there is nothing to execute — report that generation must run first and stop.
-
-### 4.2 Fan out to named agents (parallel) — MANDATORY ACTION
-
-For each layer that both has files listed in the manifest and is enabled in Test Scope, dispatch the corresponding worker:
-
-| Layer | subagent_type |
-|-------|---------------|
-| unit | ship:ship-test-unit |
-| integration | ship:ship-test-integration |
-| e2e | ship:ship-test-e2e |
-
-Prompt structure:
-```
-Task ID: <task-id>
-Mode: execute
-Artifact language: <language>
-
-## Test Files
-<the list of test files for this layer from generated-tests.md>
-```
-
-The worker runs the suite against exactly those files (no generation), applying the existing fix-up-to-2-iterations cycle on failures.
-
-Skip layers with no entries in the manifest or disabled in Test Scope (log accordingly, same messaging as the generate/full fan-out).
-
-### 4.3 Hygiene gate — fix-iteration sweep (MANDATORY if any worker fixed a file)
-
-A fix iteration in §4.2 can edit test files, reintroducing comments or spec IDs. If any worker reported edits during its fix cycle, run the hygiene scan scoped to exactly those edited files (not the whole manifest):
-
-```bash
-bash "${CLAUDE_SKILL_DIR}/hooks/hygiene-scan.sh" <edited-file-1> <edited-file-2> ... 2>&1
-```
-
-If the output contains hits, remediate the same way as §3.3: dispatch a cleanup worker per flagged file via the Agent tool with `Mode: clean`, using the matching type, then re-run the scoped scan. If hits remain after a second cycle, record them and surface `warn`.
-
-If no worker performed a fix edit in this run, skip this step entirely.
-
-### 4.4 Consolidate and write test-failures.md
-
-After agents complete, write `.context/ship-run/<task-id>/test-failures.md` (skip in standalone mode):
-- Failures present → list them: `- <file> (<N> failures)`
-- Zero failures → header only: `# Test Failures`
-
-Write (overwrite, do not append) `.context/ship-run/<task-id>/phase-status-test.md` if the scratch dir exists — never write directly to the shared `phase-status.md`:
-```
-| test | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
-```
-Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
-
-Report to the user: passed and failed counts per layer.
+`Mode: execute` is no longer invoked automatically by the pipeline orchestrator — the deterministic `test-exec.sh` step now runs the test suite directly. This mode survives only as an explicit, user-requested fallback for the rare case where that deterministic step cannot resolve the test command and the user asks for assisted execution instead of fixing `stack.md`/config manually. When invoked this way, read `.context/ship-run/<task-id>/generated-tests.md` if present (grouping entries by layer) or operate standalone otherwise, then dispatch the matching `ship-test-*` worker(s) — `ship:ship-test-unit`, `ship:ship-test-integration`, `ship:ship-test-e2e` — to run exactly those files.
 
 ---
 
@@ -268,16 +214,26 @@ Reuses §3.3 verbatim — same scan, same remediation loop (dispatch `Mode: clea
 
 ### 5.3 Consolidate and write test-failures.md
 
-Reuses §4.4 verbatim — write `.context/ship-run/<task-id>/test-failures.md`, write the `phase-status-test.md` row, and report tests created, passed, and failed per layer.
+After agents complete, write `.context/ship-run/<task-id>/test-failures.md` (skip in standalone mode):
+- Failures present → list them: `- <file> (<N> failures)`
+- Zero failures → header only: `# Test Failures`
+
+Write (overwrite, do not append) `.context/ship-run/<task-id>/phase-status-test.md` if the scratch dir exists — never write directly to the shared `phase-status.md`:
+```
+| test | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
+```
+Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when it consolidates this row into `phase-status.md`.
+
+Report to the user: tests created, passed, and failed per layer.
 
 ---
 
 ## 6. Self-check before returning (MANDATORY)
 
 Before you end your turn, verify out loud:
-1. For every layer marked `enabled` in Test Scope (and, in `execute` mode, present in the manifest), did you actually issue a `ship-test-*` Agent tool call? If you skipped an eligible layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now.
+1. For every layer marked `enabled` in Test Scope (and, in `execute` mode, present in the manifest when one exists), did you actually issue a `ship-test-*` Agent tool call? If you skipped an eligible layer without dispatching, or you reach the end having narrated a test plan with **zero** Agent tool calls, you are not done — dispatch the missing workers now.
 2. In `generate` and `full` modes: did the hygiene gate actually run, and did you remediate any hits it found? Reporting success with an unrun gate — or with known comment/spec-ID hits still in test files — is a defect.
 3. In `generate` mode: did you write `generated-tests.md`, avoid writing `test-failures.md`, and write the `phase-status-test-generate.md` row (§3.5) with the correct gate?
-4. In `execute` mode: if any fix iteration edited a test file, did the scoped hygiene sweep (§4.3) run over those files? Did you write `test-failures.md` in the canonical format?
+4. In `execute` mode: remember this is now a user-requested fallback, not an automatic pipeline step — confirm the user actually asked for assisted execution before dispatching.
 
 Returning in any unfinished state is a defect.
