@@ -1,6 +1,6 @@
 ---
 name: ship:run
-description: "Full development pipeline for a task: develop → test → quality (perf/security/review/analyze in parallel, one gate) → homolog. 1 task by default, or N / whole project on request."
+description: "Full development pipeline for a task: develop → verify (test ∥ quality, one gate) → homolog. 1 task by default, or N / whole project on request."
 argument-hint: "<task-id | linear-issue-id | --project project-name>"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
@@ -9,25 +9,23 @@ model: "sonnet"
 
 # Ship Run — Development Pipeline
 
-Drive a task through implementation → testing → quality → user acceptance, maximizing parallel agents.
+Drive a task through implementation → verification → user acceptance, maximizing parallel agents.
 
 **Linear:** everything lives in Linear. **Local:** everything lives in `ship/changes/<feature>/`.
 
 **Input received:** $ARGUMENTS
 
----
+> **STRICT RULE:** never invoke `ship:audit:*` from this pipeline — audits are project-wide, user-triggered separately; `ship:run` is diff-scoped only.
 
-> **Path resolution safety.** `${CLAUDE_SKILL_DIR}/...` paths resolve via the harness. On failure, do NOT search the filesystem — log `⚠ ${CLAUDE_SKILL_DIR} did not resolve — skipping <path>` and skip that step only.
+> `${CLAUDE_SKILL_DIR}/...` failure: log, skip — never search the filesystem.
 
 ## Prerequisites
 
-1. `ship/config.md` must exist — else tell the user to run `/ship:init` and STOP.
-2. Storage mode: @@ship/patterns/storage-mode.md.
-3. Linear needs an issue ID; Local needs `ship/changes/` feature folders (else run `/ship:spec`).
+`ship/config.md` must exist (else `/ship:init` + STOP); storage mode @@ship/patterns/storage-mode.md; Linear needs an issue ID, Local needs `ship/changes/` folders (else `/ship:spec`).
 
 ## Detect input mode
 
-Parse `$ARGUMENTS`: a Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task. **Default: 1 at a time** — ask to continue after each.
+Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task: sort by Linear milestone order then issue date (never infer dependencies — pass explicit IDs to force order), sequential (tasks modify code), ask to continue after each, summarize at the end.
 
 ---
 
@@ -35,205 +33,117 @@ Parse `$ARGUMENTS`: a Linear ID or local `TASK-001` → single task (default). `
 
 ### 0.4–0.7. Initialize the run context
 
-> See @@ship/patterns/run-context.md for canonical files/lifecycle, @@ship/patterns/diff-classifier.md for classification.
+> @@ship/patterns/run-context.md, @@ship/patterns/diff-classifier.md.
 
-One call does resume-check, scratch-dir init, snapshots, baseline diff+class. `<task-id>` matches `[a-zA-Z0-9_-]` only.
-
-```bash
-bash "@@ship/hooks/pipeline.sh" init <task-id>
-```
-
-- **Exit 0** (fresh): creates `stack.md`, provisional `diff.md`, `phase-status.md`/`dispatch-log.md` headers, snapshots, `diff-class.txt`. Log: `Run context: .context/ship-run/<task-id>/ (stack + diff cached)` and `Diff class (baseline): <diff_class>`.
-- **Exit 3** (resume — prior run found, `RESUME` report with dispatch/completion state): report it, ask **resume** (`--mode resume` — preserves logs, re-captures diff/class, jumps past the last completed phase) or **restart** (`--mode fresh`).
-- **Exit 1** (error): surface stderr, stop.
+`bash "@@ship/hooks/pipeline.sh" init <task-id>` — resume-check, scratch-dir init, snapshots (incl. `pre-develop-files.txt`), baseline diff+class; `<task-id>` matches `[a-zA-Z0-9_-]` only. Exit 0 fresh; Exit 3 report `RESUME`, ask `--mode resume`/`fresh`; Exit 1 surface stderr, stop.
 
 ### 1. Load task context
 
-**Linear:** `get_issue`, `get_project`, `list_documents`+`get_document` (Proposal/Design). **Local:** @@ship/patterns/load-artifacts.md.
+Linear: `get_issue`/`get_project`/`list_documents`+`get_document`. Local: @@ship/patterns/load-artifacts.md.
 
-Both modes:
-1. Read `ship/config.md` (@@ship/patterns/stack-detection.md).
-2. Build the **effective phase set**: `Pipeline Profile → profile` (default `standard`) sets defaults per @@ship/patterns/profiles.md (unrecognized → `standard` + warn); explicit `Pipeline Phases` entries override. Log: `Profile: <name> → fases ativas: <list> | puladas por profile: <list>`, with `| override: <phase>: <state>` per override.
-3. Extract `Artifact language` as `artifact_language` — inject into every phase dispatch below (phases don't reload @@ship/patterns/language.md).
-4. Log `Scenario Depth: <depth>` (default `full`), visibility-only.
-5. **Dispatch logging** — immediately before invoking any phase tool (steps 2–4):
-   ```bash
-   bash "@@ship/hooks/pipeline.sh" dispatch .context/ship-run/<task-id> <phase> <Skill|Agent> <name> <model>
-   ```
-   `<phase>` ∈ {`plan`,`dev`,`test`,`perf`,`security`,`review`,`analyze`}; `<tool>` = `Agent` for `subagent_type` dispatches, `Skill` for forked skills; `<name>` = subagent/skill name; `<model>` from its frontmatter. Re-runs call again (always appends). Skipped: `tool=-`, `name=skipped`, `model=-`.
+Read `ship/config.md` (@@ship/patterns/stack-detection.md); effective phase set = profile default (@@ship/patterns/profiles.md) + `Pipeline Phases` overrides. Extract `Artifact language` for every dispatch below.
 
-> **MANDATORY — Linear: move the issue to its started state now.** Resolve the name per @@ship/patterns/linear-status.md (never hardcode `"In Progress"`), then `save_issue` with `state: <target-state>`. Confirm before continuing.
+Before invoking ANY phase tool below — plan/dev/test/perf/security/review/analyze, no exceptions: `bash "@@ship/hooks/pipeline.sh" dispatch .context/ship-run/<task-id> <phase> <Skill|Agent> <name> <model>` (skipped → `-`/`skipped`/`-`; re-runs append again).
 
-**Persist spec + design to scratch (once):** write `spec.md` + `design.md` (full, unsliced) — `plan`/`develop`/`analyze` read these instead of re-inlining. `spec.md`: (1) this task's full description; (2) full text of only the requirement sections its AC belong to; (3) a scope index for the rest — `<req-id> — <title> — covered by <issue-id>` per line (em-dash, never a heading, so analyze ignores it). Local mode slices `proposal.md` the same way.
+> Linear MANDATORY: move issue to started state (@@ship/patterns/linear-status.md, never hardcode); confirm first.
 
-### 1.9. PHASE: Plan (Test-Aware Planning)
+Persist `spec.md`+`design.md` to scratch once (@@ship/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + only the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`, em-dash, never a heading, so analyze ignores it).
 
-> Runs when `dev` is enabled AND warranted.
+### 1.9. PHASE: Plan
 
-**Skip the planner** when the issue predicts a single module: (a) has `## Files`; (b) ≤3 code files there (filter per @@ship/patterns/diff-classifier.md, excluding `plugins/**` rebuild lines); (c) Notes say `Dependencies: None`; (d) all Scenarios share one test-layer tag. All four hold → skip, log `Planner pulado (issue prevê módulo único: N arquivo(s))`, dispatch-log a skipped row, go straight to `ship:develop` (single-module fallback).
+> Runs only if `dev` enabled and warranted.
 
-Otherwise use the **baseline** class from step 0: empty (greenfield) or `normal`/`large` → **run the planner**; `trivial`/`minor` on existing work → **skip** (log `Diff <class> (baseline) — planner pulado`).
+Skip when the issue predicts one module (`## Files` ≤3 code files per @@ship/patterns/diff-classifier.md excl. `plugins/**` rebuild lines, `Dependencies: None`, one test-layer tag) → log, straight to `ship:develop`. Else: greenfield/`normal`/`large` baseline runs planner, `trivial`/`minor` on existing work skips.
 
-You are the orchestrator, not the planner — trust `plan.md`.
-
-Invoke `ship:plan` via **Skill tool** (`context: fork` + `model: sonnet` — never `Agent`). Inline: task/title, `Artifact language`, scratch dir, storage mode, pointer to read `spec.md`/`design.md` from scratch.
-
-**Plan validation (deterministic, only if `plan.md` exists):**
-```bash
-bash "@@ship/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md
-```
-Exit 0 → log `Plan validado ✓`, proceed. Exit 2 → do NOT dispatch develop/test; surface stderr, re-run `ship:plan` with that error or ask the user.
+Invoke `ship:plan` via Skill (`context: fork`, `model: sonnet`, never Agent) — inline task/title, language, scratch dir, storage mode, spec/design pointer. Validate: `bash "@@ship/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md`. Exit 0 proceed; Exit 2 → skip develop/test, re-plan or ask user.
 
 ### 2. PHASE: Development
 
-> Skip entirely if `dev` disabled (Phase 3 then runs `Mode: full`).
+> Skip if `dev` disabled (Verification's test-exec still runs).
 
-**Overlap** (dispatch `ship:develop` + `ship:test Mode: generate` in the SAME turn, both forked skills — never `Agent`) applies only when `dev`+`test` enabled AND `plan.md` exists (its denylist keeps file sets disjoint). Log both via `pipeline.sh dispatch` (`dev`, and `test` as `ship:test (generate)`) first.
+Overlap: `ship:develop` + `ship:test Mode: generate` same turn (both forked Skills) when `dev`+`test` enabled and `plan.md` exists (denylist keeps file sets disjoint). Log both via `pipeline.sh dispatch` first.
 
-`ship:develop` — inline: task/title, `Artifact language`, scratch dir, storage mode, pointer to `spec.md`/`design.md`. Reads `plan.md` for the module map; without one, single-module (overlap already false).
+`ship:develop`: task/title, language, scratch dir, storage mode, spec/design pointer — reads `plan.md` module map, else single-module. `ship:test Mode: generate` (overlap only): same inline data + `Mode: generate` — reads the Test Contract, writes tests + `generated-tests.md`, doesn't run them.
 
-`ship:test Mode: generate` (only under overlap) — same inline shape + `Mode: generate`, "use AC to guide generation, scoped to this task, don't run yet." Reads `plan.md`'s Test Contract, derives its own denylist, writes test files + `generated-tests.md` — no `test-failures.md`.
+Consolidate phase-status (MANDATORY, before proceeding) — you are the sole writer of `phase-status.md`: `bash "@@ship/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev test` (drop `test` if the overlap didn't run). Line-count: `git diff --stat`, warn past 400.
 
-**Consolidate phase-status (MANDATORY, before proceeding)** — each dispatched agent wrote its own `phase-status-<phase>.md` scratch row (see @@ship/patterns/run-context.md → "Read/write conventions"); you are the sole writer of `phase-status.md`:
-```bash
-bash "@@ship/hooks/pipeline.sh" complete .context/ship-run/<task-id> 1 dev test
-```
-(current re-run number instead of `1`; drop `test` if the overlap didn't run.)
+### 2.5. Refresh diff + classification (MANDATORY if `dev` ran)
 
-**Line-count check:** `git diff --stat` after develop — warn past 400 lines, don't block.
-
-### 2.5. Refresh diff + classification (authoritative)
-
-> Only if `dev` ran — develop writes to the tree without committing, so the baseline diff misses it. Authoritative input for Phase 4/5.
+> develop writes to the tree without committing, so the baseline diff misses it.
 
 ```bash
 bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
 bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
 ```
-Log `Diff reclassificado pós-develop: <class> (<reason>)`.
 
-### 2.6. Develop evidence gate (MANDATORY)
+### 2.6. Develop evidence gate (MANDATORY if `dev` ran)
 
-> Only if `dev` ran. Trust the script's verified mutation, not develop's self-report.
-
+Trust the script's verified mutation, not develop's self-report:
 ```bash
 bash "@@ship/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-develop-files.txt
-bash "@@ship/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-develop-files.txt \
-         .context/ship-run/<task-id>/post-develop-files.txt
+bash "@@ship/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-develop-files.txt .context/ship-run/<task-id>/post-develop-files.txt
 ```
+Non-empty → ✓. Empty + baseline non-empty (re-run) → `warn`, continue. Empty + baseline empty (no worker dispatched) → **STOP**, `fail`.
 
-- **Non-empty** (files changed): log `Develop evidence: <N> arquivo(s) modificado(s) ✓`, continue.
-- **Empty**, baseline `diff.md` non-empty (pre-existing work): legitimate re-run — row gate=`warn`, notes=`develop sem mudanças — implementação pré-existente assumida`, warn, continue.
-- **Empty**, baseline also empty (silent failure — no worker dispatched): **STOP.** Row gate=`fail`, notes=`develop não produziu código — orquestrador não despachou workers`. Report; do not proceed to testing/quality.
+Untested-files (non-blocking): `bash "@@ship/hooks/evidence-gate.sh" .context/ship-run/<task-id>/develop-touched-files.txt`; found → `warn`, never `fail`.
 
-**Untested-files report (non-blocking, only when Non-empty):**
+### 3-4. STAGE: Verification (test-exec ∥ quality)
+
+`test` enabled, no `generated-tests.md` yet → dispatch `ship:test Mode: generate` (no denylist) first.
+
+Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
+
+**(a) Test execution:**
 ```bash
-bash "@@ship/hooks/evidence-gate.sh" .context/ship-run/<task-id>/develop-touched-files.txt
+timeout 300 bash "@@ship/hooks/test-exec.sh" .context/ship-run/<task-id> [--config <config-path>]
 ```
-Log its `untested` JSON list. `test` enabled AND `untested` non-empty → append `warn` row — never `fail`.
+Exit 0 green → pass, zero agents. Exit 1 red → ONE fix Agent (`model: sonnet`, `test-failures.md`), track `$TEST_FIX_ITERATION` (≠ `$FIX_ITERATION`), re-run, `>2` → **STOP** ("Suíte vermelha. Intervenção manual necessária."). Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
 
-### 3. PHASE: Testing
+Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` → re-dispatch quality phases marked `rerun`.
 
-> Skip if `test` disabled.
+**(b) Quality:** `perf`/`security`/`review`/`analyze` per effective set; all disabled → skip to Phase 5 (trivial PASS). Pre-quality snapshot already captured (step 0). Adjust per @@ship/patterns/diff-classifier.md: `trivial` → all skipped (still log `analyze` PASS); `minor` → one combined security agent, `analyze` still runs; `normal`/`large` → none.
 
-Invoke `ship:test` via **Skill tool** (forked, never `Agent`), mode depends on Phase 2:
-- Overlap `Mode: generate` succeeded (`generated-tests.md` written) → **`execute`**: reads it, runs those files, writes `test-failures.md`.
-- Overlap ran but generate failed/no manifest → warn, **`full`** (generate+execute).
-- No overlap (`dev`/`test` disabled or no `plan.md`) → **`full`** directly.
-
-Inline for both: task/title, `Artifact language`, scratch dir, storage mode; `full` adds "use AC to guide generation, scoped to this task"; `execute` adds `Mode: execute` only.
-
-If tests fail after fix attempts: STOP, inform the user, ask about an auto-fix.
-
-### 4. PHASES: Quality Checks (PARALLEL)
-
-> Check `perf`/`security`/`review`/`analyze` individually against the effective phase set. All disabled → skip to Phase 5 (trivial PASS). Some disabled → launch only the enabled ones.
-
-Pre-quality snapshot already captured (`pre-quality-snapshot.sha`, step 0).
-
-```bash
-DIFF_CLASS=$(cat .context/ship-run/<task-id>/diff-class.txt)
-```
-Apply @@ship/patterns/diff-classifier.md → "Behavior per Class" on top of the effective set: **`trivial`** → all four skipped (still log the `analyze` PASS row), go to Phase 5; **`minor`** → only 1 combined security agent runs, `analyze` still runs; **`normal`/`large`** → no adjustment.
-
-Dispatch all enabled phases in a SINGLE turn (concurrent); `pipeline.sh dispatch` before each. All read `diff.md` themselves (never `git diff`); scratch dir + `Artifact language` on every dispatch:
-- **`perf`**: **Agent tool**, `subagent_type: ship:ship-perf`. + task, storage mode, project type, stack, `Severity Overrides`.
-- **`security`**: **Agent tool**, `subagent_type: ship:ship-security`. Same + `Security Focus`.
-- **`review`**: **Skill tool**. + "analyze this task's diff only, write findings to `review-findings.md`" (scratch dir only — never `ship/changes/` in Linear mode).
-- **`analyze`** (per diff-class adjustment above): **Skill tool**, never `Agent`. + read `spec.md`/`design.md`/`diff.md` from scratch; run the deterministic correlation engine (no sub-agents); compute its own severities (aggregated gate is `pipeline.sh gate`, Phase 5); scope-index entries ignored by format; monorepo → restrict to diff-detected workspaces; persist output once Phase 5's decision is known (Linear: `save_comment` + `drift-findings.json`; Local: `drift-report.md`).
+Dispatch enabled phases in ONE turn, concurrent, single aggregated gate in Phase 5; `pipeline.sh dispatch` before each; scratch dir + language every dispatch; all read `diff.md`, never `git diff`.
+- `perf`/`security` → Agent `ship:ship-perf`/`ship:ship-security` + task, storage mode, project/stack, `Severity Overrides` (+`Security Focus` for security).
+- `review` → Skill, writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
+- `analyze` → Skill, never Agent — reads `spec.md`/`design.md`/`diff.md` from scratch, own severities feed the gate; persists after.
 
 ### 5. GATE CHECK
 
-**Consolidate phase-status (MANDATORY, before evaluating the gate)** — each quality agent wrote its own `phase-status-<phase>.md`; you are the sole writer of `phase-status.md`:
-```bash
-bash "@@ship/hooks/status-consolidate.sh" 1 <scratch-file>...
-```
-(pass each enabled phase's `phase-status-<phase>.md`, and the current run number instead of `1`), append its stdout to `phase-status.md`.
+Consolidate phase-status (MANDATORY, before evaluating the gate): `bash "@@ship/hooks/status-consolidate.sh" <N> <scratch-file>...`, append stdout to `phase-status.md`.
 
-**Evaluate the gate** — reads `phase-status.md`, applies `Severity Overrides` + `Gate Behavior → on_fail/on_warn` from `ship/config.md` itself:
-```bash
-bash "@@ship/hooks/pipeline.sh" gate .context/ship-run/<task-id>
-```
-Parse `decision`/`action` from stdout (exit mirrors decision). Fires once against the aggregated decision.
+Evaluate: `bash "@@ship/hooks/pipeline.sh" gate .context/ship-run/<task-id>`. Parse `decision`/`action`; fires once. Decision rule (critical/high→FAIL, medium→WARN, low/none→PASS): @@ship/patterns/gates.md.
 
-- **`FAIL`**: present findings; create tracking (Linear: sub-issues via `save_issue`; Local: `tracking.md`); act on `action` — `ask` (offer fix), `fix` (snapshot pre-fix, fix Agent with `model: sonnet`, then Surgical Re-run), `defer` (proceed).
-- **`WARN`**: present warnings; act on `action` — `ask` (offer fix/proceed), `fix` (same as FAIL), `pass` (proceed).
-- **`PASS`**: continue automatically.
+FAIL: present findings, tracking (Linear sub-issues / local `tracking.md`); `ask` offer fix / `fix` snapshot+fix Agent+Surgical Re-run / `defer` proceed. WARN: same, `pass` replaces `defer`. PASS: continue.
 
 #### Surgical Re-run Procedure
 
-> Track `$FIX_ITERATION` (start 1); `> 3` → abort ("Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."). Read @@ship/patterns/gates.md first for rationale/edge cases.
+> Track `$FIX_ITERATION` (start 1); `> 3` → abort ("Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."). Mechanics/edge cases: @@ship/patterns/gates.md.
 
-**Pre-fix snapshot** (immediately before the fix Agent): `bash "@@ship/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-fix-files.txt`.
+Pre-fix snapshot (before the fix Agent): `bash "@@ship/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-fix-files.txt`. After: same `snapshot`+`diff` pattern as 2.6 against `pre-fix-files.txt`/`post-fix-files.txt`. Empty diff → gates.md Edge case 1 (`warn` rows, skip to acceptance).
 
-After the fix agent returns:
-```bash
-bash "@@ship/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-fix-files.txt
-bash "@@ship/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-fix-files.txt \
-         .context/ship-run/<task-id>/post-fix-files.txt
-```
-Empty result → @@ship/patterns/gates.md Edge case 1: log `⚠ Fix não produziu mudanças. Re-run ignorado.`, `warn` rows (`fix sem mudanças — revisão manual necessária`), skip to acceptance.
+`on_fail_rerun` default `surgical`: `all` re-runs every enabled phase; `surgical` uses `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` — `out_of_scope` → re-run all (Edge case 4), else per-phase `rerun` selects.
 
-Read `on_fail_rerun` (`ship/config.md → Gate Behavior`, default `surgical`). `all` → re-run every originally-enabled phase. `surgical` (default):
-```bash
-bash "@@ship/hooks/rerun-scope.sh" .context/ship-run/<task-id>/post-fix-changed-files.txt \
-     .context/ship-run/<task-id>/drift-findings.json
-```
-JSON: `out_of_scope: true` → gates.md Edge case 4 (re-run all enabled phases, log `Fix tocou arquivo(s) fora do scope original`); `empty: true` → confirms the empty case; else read `phases.<phase>.rerun`/`.reason` per phase, logging gates.md's `Fix tocou:`/`Re-run cirúrgico:`/`Re-run pulado:` format.
-
-**Re-invoke only the selected phases** (same pattern as Phase 4, parallel if multiple; `analyze` follows gates.md's broad-scope rule unless `analyze.rerun=false`). Each writes its `phase-status-<phase>.md`; after all return, consolidate again:
-```bash
-bash "@@ship/hooks/status-consolidate.sh" <N> <scratch-file>...
-```
-append its stdout to `phase-status.md` and add `notes=re-run cirúrgico`.
-
-**After re-run:** `bash "@@ship/hooks/pipeline.sh" gate .context/ship-run/<task-id>` again, same `decision`/`action` handling, incrementing `$FIX_ITERATION`.
+Re-invoke selected phases (same pattern as (b)); each writes its `phase-status-<phase>.md`, then consolidate again: `bash "@@ship/hooks/status-consolidate.sh" <N> <scratch-file>...`, append stdout, add `notes=re-run cirúrgico`. Re-run `pipeline.sh gate`, increment `$FIX_ITERATION`.
 
 ### 6. PHASE: User Acceptance
 
 > Skip if `homolog` disabled.
 
-Invoke `ship:homolog` via **Skill tool** — NOT forked, runs in this same context, never `Agent`. Inline: consolidate findings into a quality report, present it, wait for approval, `Artifact language`.
+Invoke `ship:homolog` via Skill — not forked, same context, never Agent. Inline: consolidate findings into a quality report, present, wait for approval, language.
 
-> **MANDATORY STOP** if homolog asks a question — stop, don't continue to Phase 7 or mark complete. Proceed only on explicit approval; on requested adjustments, apply and re-invoke `ship:homolog`.
+> MANDATORY STOP if homolog asks a question. Proceed only on approval; on adjustments, apply and re-invoke.
 
 ### 7. MANDATORY STOP — await user confirmation for PR
 
-1. **Verify Linear lifecycle** (safety-net): resolve the completed-state per @@ship/patterns/linear-status.md (never hardcode `"Done"`); confirm `state.type == "completed"` (fix via `save_issue`) and the quality-report comment exists (`save_comment`) — never `get_issue_status`. **Local:** write `report-<task-id>.md`, mark `done` in `tasks.md`. **Both:** clean up temp files.
-2. Inform the user — multi-task: ask to continue or stop; single task: "**Task complete!** Run `/ship:pr` when ready."
-3. **STOP** — never invoke `/ship:pr` automatically.
+Verify Linear lifecycle: resolve completed-state (@@ship/patterns/linear-status.md, never hardcode), confirm `state.type == "completed"` + quality-report comment exist. Local: write `report-<task-id>.md`, mark `done` in `tasks.md`. Both: clean up temp files.
+
+Inform user — multi-task: ask to continue/stop; single: "**Task complete!** Run `/ship:pr` when ready." STOP — never auto-invoke `/ship:pr`.
 
 ---
 
-## Multi-task mode
-
-Sort by Linear milestone order, then issue creation date (never infer dependencies — pass explicit IDs to force order). One task at a time, asking before continuing; summarize at the end. **Never parallel** — tasks modify code.
-
 ## Orchestrator Rules
 
-- 1 task at a time unless requested otherwise.
-- Quality checks always run in parallel; never `run_in_background: true` or backgrounded Bash (@@ship/patterns/parallelism.md) — "parallel" means synchronous calls in the same turn, always awaited.
-- FAIL gates are non-negotiable; disabled phases get a one-line skip notice.
-- Inject `artifact_language` into every phase prompt; don't reload @@ship/patterns/language.md.
-- Shared scratch dir: @@ship/patterns/run-context.md. Linear = zero local artifacts; Local = full `ship/changes/` workspace.
-- Never create the PR automatically — the user runs `/ship:pr`.
+- 1 task at a time unless requested; quality checks always parallel — synchronous, same turn, never backgrounded (@@ship/patterns/parallelism.md); FAIL gates non-negotiable.
+- Shared scratch dir: @@ship/patterns/run-context.md (Linear = zero local artifacts; Local = full `ship/changes/`).
+- Never auto-create the PR — the user runs `/ship:pr`.
