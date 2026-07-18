@@ -42,6 +42,9 @@ jobs:
       - name: Check status scripts wired post-run
         run: ./scripts/check-status-scripts-wired.sh
 
+      - name: Check no manual bookkeeping prose in run orchestrator
+        run: ./scripts/check-no-bookkeeping.sh
+
   hook-tests:
     name: Hook Tests — src/hooks/tests/*.test.sh
     runs-on: ubuntu-latest

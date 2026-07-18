@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runAssertion, planSchema, noSpecIds, gateOutcome } = require('./assert');
+const { runAssertion, planSchema, noSpecIds, gateOutcome, gateSemantics } = require('./assert');
 
 const SLASH = String.fromCharCode(47);
 const SCENARIO_PREFIX = String.fromCharCode(83, 67);
@@ -247,6 +247,130 @@ test('gate observado fail com esperado WARN falha em gateOutcome', () => {
   }
 });
 
+test('finding high na fase security com config padrao resolve para decision FAIL', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+        config: { onFail: 'ask', onWarn: 'ask' },
+      },
+      expectedDecision: 'FAIL',
+      expectedAction: 'ask',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, true);
+    assert.equal(result.observed.decision, 'FAIL');
+    assert.equal(result.observed.action, 'ask');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finding medium com on_warn fix resolve para decision WARN e action fix', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'perf', critical: 0, high: 0, medium: 1, low: 0 }],
+        config: { onFail: 'ask', onWarn: 'fix' },
+      },
+      expectedDecision: 'WARN',
+      expectedAction: 'fix',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, true);
+    assert.equal(result.observed.decision, 'WARN');
+    assert.equal(result.observed.action, 'fix');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finding high na fase security com on_fail defer resolve para decision FAIL e action defer', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+        config: { onFail: 'defer', onWarn: 'ask' },
+      },
+      expectedDecision: 'FAIL',
+      expectedAction: 'defer',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, true);
+    assert.equal(result.observed.decision, 'FAIL');
+    assert.equal(result.observed.action, 'defer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('finding medium com on_warn pass resolve para decision WARN e action pass', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'perf', critical: 0, high: 0, medium: 1, low: 0 }],
+        config: { onFail: 'ask', onWarn: 'pass' },
+      },
+      expectedDecision: 'WARN',
+      expectedAction: 'pass',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, true);
+    assert.equal(result.observed.decision, 'WARN');
+    assert.equal(result.observed.action, 'pass');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('apenas findings low com config padrao resolve para decision PASS e action continue', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'review', critical: 0, high: 0, medium: 0, low: 3 }],
+        config: { onFail: 'ask', onWarn: 'ask' },
+      },
+      expectedDecision: 'PASS',
+      expectedAction: 'continue',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, true);
+    assert.equal(result.observed.decision, 'PASS');
+    assert.equal(result.observed.action, 'continue');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('gateSemantics falha quando o decision observado diverge do esperado', () => {
+  const dir = makeRepDir();
+  try {
+    const artifacts = repArtifactsFor(dir);
+    const caseMeta = {
+      gateFixture: {
+        rows: [{ phase: 'security', critical: 0, high: 1, medium: 0, low: 0 }],
+        config: { onFail: 'ask', onWarn: 'ask' },
+      },
+      expectedDecision: 'PASS',
+      expectedAction: 'continue',
+    };
+    const result = gateSemantics(artifacts, caseMeta);
+    assert.equal(result.pass, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('o resultado de qualquer assertion expoe exatamente as chaves assertion, pass, observed e expected', () => {
   const dir = makeRepDir();
   try {
@@ -259,6 +383,14 @@ test('o resultado de qualquer assertion expoe exatamente as chaves assertion, pa
       runAssertion('planSchema', artifacts, {}),
       runAssertion('noSpecIds', artifacts, {}),
       runAssertion('gateOutcome', artifacts, { expectedGate: 'PASS' }),
+      runAssertion('gateSemantics', artifacts, {
+        gateFixture: {
+          rows: [{ phase: 'review', critical: 0, high: 0, medium: 0, low: 1 }],
+          config: { onFail: 'ask', onWarn: 'ask' },
+        },
+        expectedDecision: 'PASS',
+        expectedAction: 'continue',
+      }),
     ];
 
     for (const result of results) {

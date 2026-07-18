@@ -3,8 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const KNOWN_ASSERTIONS = ['planSchema', 'noSpecIds', 'gateOutcome'];
+const KNOWN_ASSERTIONS = ['planSchema', 'noSpecIds', 'gateOutcome', 'gateSemantics'];
 const KNOWN_GATES = ['PASS', 'WARN', 'FAIL'];
+const KNOWN_GATE_ACTIONS = ['ask', 'fix', 'defer', 'pass', 'continue'];
 const REQUIRED_ARMS = ['treatment', 'control'];
 
 function loadCase(caseDir) {
@@ -50,6 +51,25 @@ function loadCase(caseDir) {
     throw new Error(`case.json inválido: campo "expectedGate" deve ser um de PASS, WARN, FAIL`);
   }
 
+  const requiresGateSemantics = parsed.assertions.includes('gateSemantics');
+  if (requiresGateSemantics) {
+    if (parsed.gateFixture === null || typeof parsed.gateFixture !== 'object') {
+      throw new Error(`case.json inválido: campo "gateFixture" deve ser um objeto quando a assertion "gateSemantics" está presente`);
+    }
+    if (!Array.isArray(parsed.gateFixture.rows) || parsed.gateFixture.rows.length === 0) {
+      throw new Error(`case.json inválido: campo "gateFixture.rows" deve ser um array não vazio`);
+    }
+    if (parsed.gateFixture.config === null || typeof parsed.gateFixture.config !== 'object') {
+      throw new Error(`case.json inválido: campo "gateFixture.config" deve ser um objeto`);
+    }
+    if (!KNOWN_GATES.includes(parsed.expectedDecision)) {
+      throw new Error(`case.json inválido: campo "expectedDecision" deve ser um de PASS, WARN, FAIL`);
+    }
+    if (!KNOWN_GATE_ACTIONS.includes(parsed.expectedAction)) {
+      throw new Error(`case.json inválido: campo "expectedAction" deve ser um de ${KNOWN_GATE_ACTIONS.join(', ')}`);
+    }
+  }
+
   return {
     caseDir: absoluteCaseDir,
     skill: parsed.skill,
@@ -58,6 +78,9 @@ function loadCase(caseDir) {
     assertions: parsed.assertions,
     reps: parsed.reps,
     expectedGate: requiresGateOutcome ? parsed.expectedGate : parsed.expectedGate ?? null,
+    gateFixture: requiresGateSemantics ? parsed.gateFixture : parsed.gateFixture ?? null,
+    expectedDecision: requiresGateSemantics ? parsed.expectedDecision : parsed.expectedDecision ?? null,
+    expectedAction: requiresGateSemantics ? parsed.expectedAction : parsed.expectedAction ?? null,
   };
 }
 
