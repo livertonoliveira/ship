@@ -19,25 +19,15 @@ Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel
 
 ## 1. Load context
 
-Parse `$ARGUMENTS`: `task-id` = first token. No task-id (standalone) → derive from branch name or `standalone`.
-
-Parse `Mode:` — `generate`/`execute`/`full`, default `full`.
-
-Read `ship/config.md`: `## Test Scope` + `Artifact language` (absent → all layers enabled).
-
-Read `stack.md` (fallback `ship/config.md`).
+Parse `$ARGUMENTS`: `task-id` = first token (standalone → derive from branch name or `standalone`). Parse `Mode:` — `generate`/`execute`/`full`, default `full`. Read `ship/config.md`: `## Test Scope` + `Artifact language` (absent → all layers enabled); read `stack.md` (fallback `ship/config.md`).
 
 **Read the plan:** `plan.md`'s `## Test Contract` — each `@SC-XX -> <layer> -> <test file>` entry (`arrange/act/assert`) is the concrete slot `ship:plan` mapped, the same interpretation `ship:develop` built from. Pass each layer's slots to its worker (step 3) so code and tests derive from one source. Absent → fall back to raw scenarios.
 
-**If `## Scenarios` wasn't injected inline** — parse the task's Gherkin: Linear reads the issue body via MCP (unavailable → fall back local, warn); Local (or MCP unavailable) reads `proposal.md`'s `## Acceptance Criteria`.
-
-Group scenarios by `@layer` tag — never re-classify. Log layers enabled/disabled + mode.
+**If `## Scenarios` wasn't injected inline** — parse the task's Gherkin: Linear reads the issue body via MCP (unavailable → fall back local, warn); Local (or MCP unavailable) reads `proposal.md`'s `## Acceptance Criteria`. Group scenarios by `@layer` tag — never re-classify. Log layers enabled/disabled + mode.
 
 ## 2. Guard — all layers disabled
 
 Output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope`..." and stop. Applies to every mode.
-
----
 
 ## 3. Mode: generate
 
@@ -49,17 +39,7 @@ Generation-only: writes test files, never runs a test command, never writes `tes
 
 ### 3.2 Fan out to named agents (parallel) — MANDATORY ACTION
 
-Shared fan-out mechanics (§3.2a) + `generate`-specific fields.
-
-#### 3.2a Shared fan-out mechanics (used by `generate` and `full`)
-
-| Layer | subagent_type |
-|-------|---------------|
-| unit | ship:ship-test-unit |
-| integration | ship:ship-test-integration |
-| e2e | ship:ship-test-e2e |
-
-For each enabled layer, launch via the Agent tool using `subagent_type`. Skip disabled (log `Skipping [layer] tests (disabled in Test Scope)`).
+For each enabled layer, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Skip disabled (log `Skipping [layer] tests (disabled in Test Scope)`). These mechanics are reused by `full`.
 
 **Context slicing — always pass inline, never rely on the agent re-reading:**
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.
@@ -68,11 +48,7 @@ For each enabled layer, launch via the Agent tool using `subagent_type`. Skip di
 4. **De-identify before injecting** — strip spec-ID tags, keep behavioral steps. `@@ship/patterns/deidentify-context.md`.
 5. Agents receiving these sections inline MUST NOT fall back to standalone discovery.
 
-Some (not all) layers disabled → log: "Layers pulados por configuração: [...]. Para habilitá-los, edite `Test Scope`."
-
-#### 3.2b Mode-specific delta for `generate`
-
-Add `Mode: generate` after `Task ID:`; append `## Denylist` (paths this worker must never touch) after `## Source`. Instruct: generate only, no test command, no pass/fail report.
+Some (not all) layers disabled → log: "Layers pulados por configuração: [...]. Para habilitá-los, edite `Test Scope`." **Generate delta:** add `Mode: generate` after `Task ID:`; append `## Denylist` (paths this worker must never touch) after `## Source`; generate only, no test command, no pass/fail report.
 
 ### 3.3 Hygiene gate — final sweep (MANDATORY)
 
@@ -81,53 +57,25 @@ bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
 Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching type), pass exact `file:line` hits, re-run. Hits remain after 2nd cycle → record, surface `warn` — never PASS with known hits.
 
-### 3.4 Write the manifest
+### 3.4 Manifest + phase status
 
-`.context/ship-run/<task-id>/generated-tests.md`, grouped by layer, only actually-created files (header-only if none). Do NOT write `test-failures.md` in this mode.
-
-### 3.5 Write phase-status-test-generate.md
-
-Overwrite, never append (runs concurrently with `ship:develop`, a race on the shared file) `.context/ship-run/<task-id>/phase-status-test-generate.md` if the scratch dir exists:
+Write `.context/ship-run/<task-id>/generated-tests.md`, grouped by layer, only actually-created files (header-only if none); never write `test-failures.md` in this mode. Report test files created per layer + hygiene result. Overwrite (never append — races with concurrent `ship:develop` on the shared file) `.context/ship-run/<task-id>/phase-status-test-generate.md` if the scratch dir exists:
 ```
 | test-generate | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```
 `#<RUN>`: literal placeholder, orchestrator substitutes. `<gate>`: `pass` if hygiene clean, `warn` if hits remained after the 2nd cycle.
 
-### 3.6 Report
-
-Test files created per layer (from the manifest) + hygiene gate result.
-
----
-
 ## 4. Mode: execute
 
 No longer invoked automatically — the deterministic `test-exec.sh` step runs the suite directly. Survives only as an explicit, user-requested fallback when that step can't resolve the test command. Read `generated-tests.md` if present (group by layer) or standalone otherwise, dispatch the matching `ship-test-*` worker(s) to run exactly those files.
 
----
-
 ## 5. Mode: full (default)
 
-Generate then execute in one pass, no manifest round-trip.
-
-### 5.1 Fan out to named agents (parallel) — MANDATORY ACTION
-
-Reuses §3.2a (layer table, context-slicing, skip logging) — no delta. Worker does the full generate+execute cycle in one pass (no `Mode:` line, no manifest).
-
-### 5.2 Hygiene gate — final sweep (MANDATORY)
-
-Reuses §3.3 verbatim.
-
-### 5.3 Consolidate and write test-failures.md
-
-`.context/ship-run/<task-id>/test-failures.md` (skip standalone): failures → `- <file> (<N> failures)`; zero → header only.
-
-Overwrite `phase-status-test.md` if the scratch dir exists (never append to shared `phase-status.md`):
+Generate then execute in one pass, no manifest round-trip. Fan out per §3.2 (no `Mode:` line, no denylist) — the worker runs the full generate+execute cycle. Run the §3.3 hygiene gate. Then write `.context/ship-run/<task-id>/test-failures.md` (skip standalone): failures → `- <file> (<N> failures)`; zero → header only. Overwrite `phase-status-test.md` if the scratch dir exists (never append to shared `phase-status.md`):
 ```
 | test | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```
 Report: tests created, passed, failed per layer.
-
----
 
 ## 6. Self-check before returning (MANDATORY)
 
