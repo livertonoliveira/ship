@@ -23,6 +23,7 @@ A flat sub-1000-word ceiling keeps every prompt loadable at low context cost reg
 
 ## When the build fails on budget
 
+0. **Check the Anti-Bloat Rule first.** Verify the change does not violate the Anti-Bloat Rule in the root `CLAUDE.md` (`## Conventions` → `### Anti-Bloat Rule`). A ceiling increase motivated by defensive prose is rejected by definition — move the logic to a script/hook or remove the surface instead.
 1. **Try pruning first.** Remove no-ops, compress verbose paragraphs into leading-words, consolidate duplicated boilerplate by extracting it into `src/patterns/*.md` and referencing it via `@ship/...` — but remember refs still count their full expanded word cost against the file that references them, so extracting to a pattern only helps if the pattern is trimmed too, or if it lets multiple sections collapse into one shared anchor.
 2. **If a pattern file itself is the bulk of several files' word count**, trimming that one pattern is the highest-leverage fix — it reduces every file that references it in one edit.
 3. **Only after reasonable pruning is exhausted, escalate to the user.** The ceiling is a deliberate constraint, not a default — do not raise it without an explicit decision to do so, and justify the change in the PR description.
