@@ -8,6 +8,7 @@ usage() {
   echo "  dispatch  <scratch-dir> <phase> <tool> <name> <model>" >&2
   echo "  complete  <scratch-dir> <run-number> <phase>..." >&2
   echo "  gate      <scratch-dir> [--config <path>]" >&2
+  echo "  iter      <scratch-dir> <counter-name> [--max N]" >&2
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -95,6 +96,12 @@ cmd_init() {
 
   mkdir -p "$SCRATCH"
 
+  # Reset fix-loop counters on every re-invocation (fresh or resume): init never
+  # runs on a mid-run context compaction (across which the on-disk counter must
+  # survive), so clearing here can't truncate a live loop, but it does stop a
+  # stale count from a prior completed cycle aborting a new loop prematurely.
+  rm -f "$SCRATCH"/iteration-*.txt
+
   if [ "$MODE" = "fresh" ]; then
     if [ ! -f "$CONFIG" ]; then
       echo "pipeline.sh init: config not found: $CONFIG (run /ship:init first)" >&2
@@ -173,6 +180,59 @@ cmd_complete() {
   fi
 
   printf '%s\n' "$output" >> "$scratch_dir/phase-status.md"
+}
+
+iter_usage() {
+  echo "usage: pipeline.sh iter <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  increments a persisted counter (survives context resets); exits 2 once it exceeds --max" >&2
+}
+
+cmd_iter() {
+  local scratch="" name="" max=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max) max="$2"; shift 2 ;;
+      -h|--help) iter_usage; exit 0 ;;
+      -*) iter_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1";
+        elif [ -z "$name" ]; then name="$1";
+        else iter_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ] || [ -z "$name" ]; then
+    iter_usage
+    exit 1
+  fi
+  case "$name" in
+    *[!a-zA-Z0-9_-]*)
+      echo "pipeline.sh iter: invalid counter name (allowed: [a-zA-Z0-9_-]): $name" >&2
+      exit 1 ;;
+  esac
+  if [ -n "$max" ]; then
+    case "$max" in
+      *[!0-9]*|'')
+        echo "pipeline.sh iter: --max must be a positive integer: $max" >&2
+        exit 1 ;;
+    esac
+  fi
+
+  mkdir -p "$scratch"
+  local counter_file="$scratch/iteration-$name.txt"
+  local current=0
+  if [ -f "$counter_file" ]; then
+    current="$(cat "$counter_file")"
+  fi
+  local next=$((current + 1))
+  printf '%s\n' "$next" > "$counter_file"
+
+  printf 'count=%s\n' "$next"
+  if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
+    exit 2
+  fi
 }
 
 gate_usage() {
@@ -408,6 +468,8 @@ case "$SUBCOMMAND" in
     cmd_complete "$@" ;;
   gate)
     run_gate "$@" ;;
+  iter)
+    cmd_iter "$@" ;;
   *)
     usage
     exit 1 ;;
