@@ -110,10 +110,10 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 2 — Loop de re-runs (máximo 3 iterações)
 
-**Trigger:** `$FIX_ITERATION` counter exceeds 3 (i.e., the pipeline has already cycled through fix→re-run three times without resolving the gate).
+**Trigger:** `pipeline.sh iter <scratch-dir> fix --max 3` exits 2 — a persisted counter (`iteration-fix.txt`), not an in-context variable, so it survives a mid-run context compaction (which never re-runs init). It is reset only by `pipeline.sh init` itself — i.e., a genuinely new `/ship:run` invocation, fresh or resume — so a completed run's stale count never aborts a later loop.
 
 **Behavior:**
-- Abort the pipeline immediately.
+- Abort the pipeline immediately — do not dispatch the fix Agent.
 - Inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."
 - Do NOT proceed to acceptance — wait for user action.
 

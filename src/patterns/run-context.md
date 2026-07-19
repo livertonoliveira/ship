@@ -39,6 +39,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
 | `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
+| `iteration-fix.txt` / `iteration-test-fix.txt` | `pipeline.sh iter` | `pipeline.sh iter` | persisted loop counters, see gates.md Edge case 2 |
 
 ### Diff resolution (skill wrappers) {#diff-resolution}
 

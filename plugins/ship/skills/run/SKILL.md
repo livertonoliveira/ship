@@ -25,7 +25,7 @@ Drive a task through implementation → verification → user acceptance, maximi
 
 ## Detect input mode
 
-Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task: sort by Linear milestone order then issue date (never infer dependencies — pass explicit IDs to force order), sequential (tasks modify code), ask to continue after each, summarize at the end.
+Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task: sort by milestone order, issue date (never infer dependencies; explicit IDs force order), sequential (tasks modify code), ask to continue after each, summarize at end.
 
 ---
 
@@ -65,7 +65,7 @@ Overlap: `ship:develop` + `ship:test Mode: generate` same turn (forked Skills) w
 
 `ship:develop`: task/title, language, scratch dir, storage mode, spec/design pointer — reads `plan.md` module map, else single-module. `ship:test Mode: generate` (overlap only): `Mode: generate`, writes tests + `generated-tests.md`; denylist `plan.md` else `## Files`.
 
-Consolidate phase-status (MANDATORY, before proceeding) — you are the sole writer of `phase-status.md`: `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev test` (drop `test` if the overlap didn't run). Line-count: `git diff --stat`, warn past 400.
+Consolidate phase-status (MANDATORY, before proceeding) — sole writer of `phase-status.md`: `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev test` (drop `test` if the overlap didn't run). Line-count: `git diff --stat`, warn past 400.
 
 ### 2.5. Refresh diff + classification (MANDATORY if `dev` ran)
 
@@ -97,7 +97,7 @@ Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled
 ```bash
 timeout 300 bash "${CLAUDE_SKILL_DIR}/hooks/test-exec.sh" .context/ship-run/<task-id> [--config <config-path>]
 ```
-Exit 0 green → pass, zero agents. Exit 1 red → ONE fix Agent (`model: sonnet`, `test-failures.md`), track `$TEST_FIX_ITERATION` (≠ `$FIX_ITERATION`), re-run, `>2` → **STOP** ("Suíte vermelha. Intervenção manual necessária."). Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
+Exit 0 green → pass, zero agents. Exit 1 red → `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2`; limit hit → **STOP** ("Suíte vermelha. Intervenção manual necessária."); else ONE fix Agent (`model: sonnet`, `test-failures.md`), re-run. Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
 
 Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` → re-dispatch quality phases marked `rerun`.
 
@@ -118,19 +118,19 @@ FAIL: present findings, tracking (Linear sub-issues / local `tracking.md`); `ask
 
 #### Surgical Re-run Procedure
 
-> Track `$FIX_ITERATION` (start 1); `> 3` → abort ("Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."). Mechanics/edge cases: ${CLAUDE_SKILL_DIR}/patterns/gates.md.
+> `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" iter .context/ship-run/<task-id> fix --max 3`; limit hit → abort ("Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."). Edge cases: ${CLAUDE_SKILL_DIR}/patterns/gates.md.
 
 Pre-fix snapshot (before the fix Agent): `bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-fix-files.txt`. After: same `snapshot`+`diff` pattern as 2.6 against `pre-fix-files.txt`/`post-fix-files.txt`. Empty diff → gates.md Edge case 1 (`warn` rows, skip to acceptance).
 
 `on_fail_rerun` default `surgical`: `all` re-runs every enabled phase; `surgical` uses `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` — `out_of_scope` → re-run all (Edge case 4), else per-phase `rerun` selects.
 
-Re-invoke selected phases (same pattern as (b)); each writes its `phase-status-<phase>.md`, then consolidate again: `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...`, append stdout, add `notes=re-run cirúrgico`. Re-run `pipeline.sh gate`, increment `$FIX_ITERATION`.
+Re-invoke selected phases (same pattern as (b)); each writes its `phase-status-<phase>.md`, then consolidate again: `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...`, append stdout, add `notes=re-run cirúrgico`. Re-run `pipeline.sh gate`; another fix repeats the `iter` gate above.
 
 ### 6. PHASE: User Acceptance
 
 > Skip if `homolog` disabled.
 
-Invoke `ship:homolog` via Skill — not forked, same context, never Agent. Inline: consolidate findings into a quality report, present, wait for approval, language.
+Invoke `ship:homolog` via Skill — not forked, same context, never Agent. Inline: consolidate findings, present, await approval, language.
 
 > MANDATORY STOP if homolog asks a question. Proceed only on approval; on adjustments, apply and re-invoke.
 
