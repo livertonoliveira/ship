@@ -179,6 +179,30 @@ test_rerun_scope_wired_in_surgical_rerun_step() {
   fi
 }
 
+test_pipeline_iter_wired_in_surgical_rerun_step() {
+  local name="the surgical re-run procedure invokes pipeline.sh iter with the fix counter, max 3"
+  local section
+  section="$(sed -n '/#### Surgical Re-run Procedure/,/### 6. PHASE: User Acceptance/p' "$RUN_SKILL")"
+
+  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> fix --max 3'; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+}
+
+test_pipeline_iter_wired_in_test_exec_step() {
+  local name="the test-execution step invokes pipeline.sh iter with the test-fix counter, max 2"
+  local section
+  section="$(sed -n '/\*\*(a) Test execution:\*\*/,/Reconciliation/p' "$RUN_SKILL")"
+
+  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2'; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+}
+
 test_old_manual_run_substitution_prose_removed() {
   local name="the old manual RUN placeholder substitution prose no longer appears"
   if grep -qiE 'substitut(e|ing|ed|ua|uindo)[^.]*(#<RUN>|placeholder)' "$RUN_SKILL"; then
@@ -238,6 +262,8 @@ test_pipeline_gate_wired_in_gate_check_section
 test_pipeline_gate_call_removal_breaks_detection
 test_evidence_gate_wired_in_develop_section
 test_rerun_scope_wired_in_surgical_rerun_step
+test_pipeline_iter_wired_in_surgical_rerun_step
+test_pipeline_iter_wired_in_test_exec_step
 test_old_manual_run_substitution_prose_removed
 test_old_manual_intersection_prose_removed
 test_pipeline_init_self_contained
