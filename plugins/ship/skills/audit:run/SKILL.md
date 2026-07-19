@@ -93,7 +93,7 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 ## Usage in `ship:audit:run`
 
-After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) — do NOT re-read the report files. Use the **Agent** tool (`model: sonnet`), passing summaries inline, to apply the gate logic and return the consolidated report.
+After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) — do NOT re-read the report files. Apply the gate logic inline in this context; the summaries already returned here, so a separate consolidation agent only adds a serial round-trip. Never fan out an Agent to aggregate.
 
 **Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 

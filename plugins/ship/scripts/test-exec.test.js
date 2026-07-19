@@ -213,6 +213,31 @@ test('passing typecheck and lint keep a green suite at exit 0 with header-only r
   assert.equal(failuresContent.trim(), '# Test Failures');
 });
 
+test('typecheck and lint run concurrently, not serially', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const slow = (name) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, ['#!/usr/bin/env bash', 'sleep 1', 'exit 0', ''].join('\n'));
+    fs.chmodSync(file, 0o755);
+    return file;
+  };
+  const tsc = slow('slow-tsc.sh');
+  const lint = slow('slow-eslint.sh');
+  fs.appendFileSync(
+    path.join(dir, 'scratch', 'stack.md'),
+    `- Typecheck command: ${tsc}\n- Lint command: ${lint}\n`
+  );
+  const start = Date.now();
+  const res = run(dir, ['scratch']);
+  const elapsed = Date.now() - start;
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(elapsed < 1800, `two 1s checks took ${elapsed}ms — expected concurrent (<1800ms), not serial (~2000ms)`);
+});
+
 test('lint script from package.json is auto-detected when no command is configured', () => {
   const dir = setupProject({
     testRunner: 'node --test',

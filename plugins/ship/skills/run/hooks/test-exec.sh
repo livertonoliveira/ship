@@ -56,14 +56,14 @@ resolve_static_checks() {
   fi
 }
 
-run_static_check() {
+start_static_check() {
+  # Launches a static check in the background so typecheck and lint run
+  # concurrently (they are independent). Sets STARTED_OUT + STARTED_PID; the
+  # caller `wait`s on the PID to collect the real exit code.
   local cmd="$1"
-  CHECK_OUT="$(mktemp)"
-  CHECK_EXIT=0
-  set +e
-  bash -c "$cmd" > "$CHECK_OUT" 2>&1
-  CHECK_EXIT=$?
-  set -e
+  STARTED_OUT="$(mktemp)"
+  ( bash -c "$cmd" > "$STARTED_OUT" 2>&1 ) &
+  STARTED_PID=$!
 }
 
 build_test_command() {
@@ -201,16 +201,23 @@ main() {
   SUITE_SKIPPED=0
   resolve_static_checks "$scratch" "$config"
 
+  local tc_pid="" lint_pid=""
   if is_resolved "$TYPECHECK_CMD"; then
-    run_static_check "$TYPECHECK_CMD"
-    TYPECHECK_EXIT="$CHECK_EXIT"
-    TYPECHECK_OUT="$CHECK_OUT"
-    echo "typecheck ($TYPECHECK_CMD): $([ "$TYPECHECK_EXIT" -eq 0 ] && echo pass || echo fail)"
+    start_static_check "$TYPECHECK_CMD"
+    TYPECHECK_OUT="$STARTED_OUT"
+    tc_pid="$STARTED_PID"
   fi
   if is_resolved "$LINT_CMD"; then
-    run_static_check "$LINT_CMD"
-    LINT_EXIT="$CHECK_EXIT"
-    LINT_OUT="$CHECK_OUT"
+    start_static_check "$LINT_CMD"
+    LINT_OUT="$STARTED_OUT"
+    lint_pid="$STARTED_PID"
+  fi
+  if [ -n "$tc_pid" ]; then
+    set +e; wait "$tc_pid"; TYPECHECK_EXIT=$?; set -e
+    echo "typecheck ($TYPECHECK_CMD): $([ "$TYPECHECK_EXIT" -eq 0 ] && echo pass || echo fail)"
+  fi
+  if [ -n "$lint_pid" ]; then
+    set +e; wait "$lint_pid"; LINT_EXIT=$?; set -e
     echo "lint ($LINT_CMD): $([ "$LINT_EXIT" -eq 0 ] && echo pass || echo fail)"
   fi
 

@@ -42,7 +42,7 @@ Announce the plan, then invoke every applicable audit skill via the **Skill tool
 
 ### 3. Consolidate
 
-Extract the JSON summary from each tool result (see @ship/patterns/audit-summary-schema.md) — do NOT re-read the report files. Use the **Agent** tool (`model: sonnet`), passing summaries inline, to apply the gate logic and return the consolidated report.
+Extract the JSON summary from each tool result (see @ship/patterns/audit-summary-schema.md) — do NOT re-read the report files. Apply the gate logic inline in this context; the summaries already returned here, so a separate consolidation agent only adds a serial round-trip. Never fan out an Agent to aggregate.
 
 **Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 
