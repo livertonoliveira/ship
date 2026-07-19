@@ -1,8 +1,8 @@
-# Hygiene Gate — deterministic enforcement for comments & spec IDs
+# Hygiene Gate — deterministic enforcement for comments, spec IDs & secrets
 
-> Canonical enforcement of the zero-comments / zero-spec-IDs rule. The worker prompts forbid
-> comments and spec IDs, but a prompt is advice, not a guarantee — an LLM occasionally emits
-> them anyway.
+> Canonical enforcement of the zero-comments / zero-spec-IDs / zero-secrets rule. The worker
+> prompts forbid comments, spec IDs, and hardcoded secrets, but a prompt is advice, not a
+> guarantee — an LLM occasionally emits them anyway.
 >
 > **Three layers, distinct roles — do not collapse them:**
 >
@@ -11,35 +11,41 @@
 >    — what the worker never receives, it cannot echo. See `@ship/patterns/deidentify-context.md`.
 >    This removes the dominant leak path (inline pipeline generation) at the source. The two layers
 >    below are the net for what prevention cannot reach (standalone workers, a Linear key picked up
->    from the branch, and comments — which have no input to strip).
+>    from the branch, comments and secrets — which have no input to strip).
 > 1. **Detection (genuinely deterministic): the `PostToolUse` hook.** The plugin ships
 >    `hooks/hygiene-scan.sh`, wired as a `PostToolUse` hook on `Write|Edit`. It fires the moment
 >    a file is written, scans *that* file, and on a hit **exits 2** so Claude Code blocks the
 >    turn and feeds the `file:line` violations back to the model — which then renames the
->    identifier / removes the comment inline (the semantic fix a script cannot do safely). This
->    layer does **not** depend on any agent choosing to run it; it is the actual guarantee that
->    nothing passes. It catches violations per-file, at the source, while the model still holds
->    full context.
-> 2. **Final sweep (belt-and-suspenders): the SKILL step below.** Runs the same grep over the
->    whole working tree at phase end and dispatches a `Mode: clean` worker for anything left.
->    With the hook in place this should normally find nothing; it is a redundant safety net, **not**
->    the primary defense. Never treat this step as the thing standing between you and a leak — the
->    hook is.
+>    identifier / removes the comment / relocates the secret inline (the semantic fix a script
+>    cannot do safely). This layer does **not** depend on any agent choosing to run it; it is the
+>    actual guarantee that nothing passes. It catches violations per-file, at the source, while
+>    the model still holds full context. On any block, the hook also writes a marker file,
+>    `.context/ship-run/.hygiene-hit`, when `.context/ship-run` exists.
+> 2. **Final sweep (belt-and-suspenders): the SKILL step below.** Gated on that marker: if
+>    `.context/ship-run/.hygiene-hit` is absent, the hook never blocked anything this phase, so
+>    the sweep skips the whole-tree `--all` scan outright and logs a skip message instead of
+>    running it. If the marker is present, the sweep runs the same grep over the whole working
+>    tree at phase end, dispatches a `Mode: clean` worker for anything left, then deletes the
+>    marker once the sweep finishes (clean or `warn`). With the hook in place the marker is
+>    normally absent, so this step is a redundant safety net, **not** the primary defense — never
+>    treat it as the thing standing between you and a leak — the hook is.
 >
 > The grep is a **tripwire, not a judge**: it flags candidate files cheaply; the model (hook) or
-> the dispatched cleanup worker (sweep) decides what is a genuine comment / spec ID and strips
-> only those, leaving legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
+> the dispatched cleanup worker (sweep) decides what is a genuine comment / spec ID / secret and
+> strips only those, leaving legitimate tokens (e.g. `UTF-8`, `SHA-256` in a string) untouched.
 >
-> **Scope of the hook (two rules, two reaches):**
+> **Scope of the hook (three rules, three reaches):**
 > - **Spec IDs** (`REQ-/AC-/SC-/IMPL-/TEST-<n>` + the branch's Linear key) are flagged on **every**
 >   `Write`/`Edit` — they are always wrong in code, and the precise regex never false-positives on
 >   `UTF-8`/`SHA-256`/etc.
+> - **Secrets** are also flagged on **every** `Write`/`Edit`, same reach as spec IDs — a leaked
+>   credential is always wrong in code regardless of whether a Ship run is active.
 > - **Comments** are a Ship convention, not a universal rule, so they are flagged **only inside an
 >   active Ship run** (a `.context/ship-run/` marker dir at the repo root) and **only on lines added
 >   relative to `HEAD`** (untracked files count as fully added). Pre-existing comments in a file a
 >   worker merely edited are never flagged — stripping them broke typecheck and burned fix→re-review
 >   cycles. Outside a run, the hook does not police the user's hand-written comments. The whole-tree
->   `--all` sweep enables both rules, with the same added-lines scope for comments.
+>   `--all` sweep enables all three rules, with the same added-lines scope for comments.
 >
 > **Caveat:** the hook only catches `Write`/`Edit` going forward and only where the Ship plugin
 > is enabled. Spec IDs already committed in earlier runs are not swept retroactively — run
@@ -54,16 +60,27 @@ In **source and test files only** (artifacts are exempt — see exclusions):
    identifiers, test/describe names, string literals, or comments.
 2. **Comments of any kind** — line comments, block comments, JSDoc/TSDoc, docstrings, marker
    comments. Naming carries the meaning; there are no exceptions for "why" comments.
+3. **Secrets** — provider-specific credential patterns (AWS access keys, GitHub tokens, Slack
+   tokens, Stripe-style `sk_live_`/`rk_live_` keys, Google API keys, PEM private key headers, JWT-shaped
+   triples) plus a generic heuristic: a `secret`/`token`/`password`/`passwd`/`credential`/`api_key`-named
+   assignment whose literal is 16+ characters, isn't an env-var/interpolation reference or an
+   angle-bracket placeholder, isn't an obvious placeholder word (`xxx`, `changeme`, `example`, `dummy`,
+   `test`, `fake`, `your_*`, `insert_*`), and isn't a single repeated character.
 
 ## Exclusions (these are NOT scanned)
 
-Spec IDs are **legitimate** in artifacts and reports. Never scan:
+Spec IDs and comments are **legitimate** in artifacts and reports. Never scan:
 - `ship/**` (proposal/design/tasks/reports in local mode)
 - `**/*.md` (any markdown — specs, reports, docs)
 - `.context/**` (scratch dir, gitignored)
 - lockfiles: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`, `Cargo.lock`, `*.lock`
 
 Everything else changed in the working tree is treated as code/test and **is** scanned.
+
+The **secrets** pass reuses that same exclusion list plus one carve-out of its own: `.env` and
+`.env.*` files. That carve-out applies **only** to the secrets scan — a `.env` file is still fully
+scanned for spec IDs and comments; it just isn't grepped for credential patterns, since storing
+real secrets there is the expected, non-violating use of the file.
 
 ## Step 1 — Collect the candidate set (working-tree state)
 
