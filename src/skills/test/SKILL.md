@@ -52,10 +52,14 @@ Some (not all) layers disabled → log: "Layers pulados por configuração: [...
 
 ### 3.3 Hygiene gate — final sweep (MANDATORY)
 
+Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to 3.4.
+
+Present → run as before:
+
 ```bash
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
-Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching type), pass exact `file:line` hits, re-run. Hits remain after 2nd cycle → record, surface `warn` — never PASS with known hits.
+Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching type), pass exact `file:line` hits, re-run. Hits remain after 2nd cycle → record, surface `warn` — never PASS with known hits. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then 3.4.
 
 ### 3.4 Manifest + phase status
 
