@@ -251,6 +251,19 @@ config_field() {
   grep -m1 -E "^- $key:" "$config" 2>/dev/null | sed -E "s/^- $key:[[:space:]]*//" || true
 }
 
+dispatched_phases_in_log() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  awk -F'|' '
+    NR > 2 {
+      phase = $2; tool = $3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", phase)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", tool)
+      if (phase != "" && phase != "Phase" && phase !~ /^-+$/ && tool != "skipped") print phase
+    }
+  ' "$f" | sort -u
+}
+
 last_rows_by_phase() {
   local phase_status="$1"
   awk -F'|' '
@@ -351,6 +364,17 @@ run_gate() {
   fi
 
   local valid_phases="dev test analyze perf security review frontend-perf database backend"
+
+  local dispatched completed_phases scored_dispatched unfinished
+  dispatched="$(dispatched_phases_in_log "$scratch/dispatch-log.md")"
+  completed_phases="$(printf '%s\n' "$rows" | awk -F'\t' '{print $1}' | sort -u)"
+  scored_dispatched="$(comm -12 <(printf '%s\n' "$dispatched") <(printf '%s\n' "$valid_phases" | tr ' ' '\n' | sort -u))"
+  unfinished="$(comm -23 <(printf '%s\n' "$scored_dispatched") <(printf '%s\n' "$completed_phases") | sed '/^$/d')"
+  if [ -n "$unfinished" ]; then
+    echo "pipeline.sh gate: phase(s) dispatched but not completed — missing phase-status.md row(s): $(printf '%s' "$unfinished" | tr '\n' ',' | sed 's/,$//')" >&2
+    echo "pipeline.sh gate: wait for the dispatched phase to finish (or re-dispatch it) before evaluating the gate" >&2
+    exit 1
+  fi
 
   local -a override_phase=() override_from=() override_to=()
   local line phase from to rest is_valid_phase p norm_from norm_to
