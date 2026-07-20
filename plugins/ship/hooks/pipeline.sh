@@ -8,6 +8,7 @@ usage() {
   echo "  dispatch  <scratch-dir> <phase> <tool> <name> <model>" >&2
   echo "  complete  <scratch-dir> <run-number> <phase>..." >&2
   echo "  gate      <scratch-dir> [--config <path>]" >&2
+  echo "  rows      <scratch-dir>" >&2
   echo "  iter      <scratch-dir> <counter-name> [--max N]" >&2
 }
 
@@ -237,6 +238,43 @@ cmd_iter() {
 
 gate_usage() {
   echo "usage: pipeline.sh gate <scratch-dir> [--config <path>]" >&2
+}
+
+rows_usage() {
+  echo "usage: pipeline.sh rows <scratch-dir>" >&2
+  echo "  prints the most recent full phase-status.md row for each phase, in first-seen order" >&2
+}
+
+cmd_rows() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) rows_usage; exit 0 ;;
+      -*) rows_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else rows_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then rows_usage; exit 1; fi
+  local phase_status="$scratch/phase-status.md"
+  if [ ! -f "$phase_status" ]; then
+    echo "pipeline.sh rows: phase-status.md not found: $phase_status" >&2
+    exit 1
+  fi
+
+  awk -F'|' '
+    $0 ~ /^\|/ {
+      phase = $2
+      gsub(/^[ \t]+|[ \t]+$/, "", phase)
+      if (phase == "" || phase == "Phase" || phase ~ /^-+$/) next
+      if (!(phase in seen)) order[++n] = phase
+      seen[phase] = 1
+      line[phase] = $0
+    }
+    END { for (i = 1; i <= n; i++) print line[order[i]] }
+  ' "$phase_status"
 }
 
 trim() {
@@ -492,6 +530,8 @@ case "$SUBCOMMAND" in
     cmd_complete "$@" ;;
   gate)
     run_gate "$@" ;;
+  rows)
+    cmd_rows "$@" ;;
   iter)
     cmd_iter "$@" ;;
   *)

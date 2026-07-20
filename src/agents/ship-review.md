@@ -57,8 +57,6 @@ Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEA
 
 Severity: see `@ship/patterns/severity.md#code-review`.
 
-Before finalizing: apply `Severity Overrides` (injected context, else `ship/config.md`) — downgrade matching findings per rule (e.g. `high → warn`); none if absent.
-
 Format: `@ship/report-templates.md#finding-entry-base` and `@ship/report-templates.md#review-extension`, Code Review extension (`Principle` replaces `Category`, `Problem` replaces `Description`).
 
 ---
@@ -71,30 +69,29 @@ Write to `.context/ship-run/<task-id>/review-findings.md` (pipeline) or `ship/ch
 # Code Review Findings
 
 ## Summary
-- Critical: X
-- High: X
-- Medium: X
-- Low: X
-- **Gate: PASS | WARN | FAIL**
+- Critical: <critical> | High: <high> | Medium: <medium> | Low: <low>
+- **Gate: <gate>**
 
 ## Findings
 
 [findings here, ordered by severity]
 ```
 
-Gate rules: see `@ship/patterns/gates.md#gate-decision-rules`. Apply severity overrides before computing the gate. Compute the gate deterministically from the severity counts: any critical/high → FAIL; else any medium → WARN; else PASS. The Gate value in the Summary and the gate column written to phase-status-review.md (step 6) MUST be identical and MUST match these counts — never emit PASS while Medium > 0.
+The Summary counts and gate come from step 6's script output — never compute the gate or apply overrides in-context.
 
 ---
 
-## 6. Write phase status
+## 6. Gate + phase status (deterministic)
 
-Overwrite (don't append) your row in `.context/ship-run/<task-id>/phase-status-review.md` if the scratch dir exists — never write directly to shared `phase-status.md` (concurrent phases would race):
+Count your findings by severity, then run the findings gate — it applies `Severity Overrides`, computes the gate (`@ship/patterns/gates.md#gate-decision-rules`), and (with `--scratch`) overwrites your `phase-status-review.md` row:
 
+```bash
+bash "<findings-gate-script>" review \
+  --critical <n> --high <n> --medium <n> --low <n> \
+  --scratch .context/ship-run/<task-id>
 ```
-| review | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
-```
 
-`#<RUN>` is a literal placeholder — the orchestrator substitutes the real run number when consolidating into `phase-status.md`.
+`<findings-gate-script>` is the `Findings gate script:` path from the caller; drop `--scratch` standalone. Feed its `gate=`/`critical=`/… output into the Summary above.
 
 ---
 

@@ -93,17 +93,7 @@ Fields: `severity`(critical|high|medium|low) · `category`(IMPL|TEST|SCENARIO|DR
 
 ---.
 
-All-layers-disabled→gate=IMPL/DRIFT/ORPHAN only; critical/high→FAIL,medium→WARN,low/none→PASS(## Gate Decision Rules {#gate-decision-rules}
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.); apply `Severity Overrides` first.
+All-layers-disabled→only IMPL/DRIFT/ORPHAN categories apply. The gate (overrides + PASS/WARN/FAIL) is computed deterministically in §6, never in-context.
 
 ## 4. Terminology (TERM) — in-context
 
@@ -124,11 +114,15 @@ Lazy-load rendering rule when presenting the report to the user (same PASS/WARN/
 
 ## 6. Persist
 
-Write `drift-report.md`+`drift-findings.json` to scratch-dir; Linear also `save_comment`; Local also `ship/changes/<feature>/drift-report.md`. Overwrite your row in `phase-status-analyze.md`:
+Write `drift-report.md`+`drift-findings.json` to scratch-dir; Linear also `save_comment`; Local also `ship/changes/<feature>/drift-report.md`. Then run the findings gate — it applies `Severity Overrides`, computes the gate, and overwrites your `phase-status-analyze.md` row (Files = total gaps):
 
+```bash
+bash "<findings-gate-script>" analyze \
+  --critical <n> --high <n> --medium <n> --low <n> \
+  --files <total> --scratch .context/ship-run/<task-id>
 ```
-| analyze | #<RUN> | <ISO-8601 UTC> | <total> | <gate> | <critical> | <high> | <medium> | <low> | |
-```
+
+`<findings-gate-script>` is the caller's `Findings gate script:` path. Never tally overrides, decide the gate, or hand-format the row in-context.
 
 ## Rules
 

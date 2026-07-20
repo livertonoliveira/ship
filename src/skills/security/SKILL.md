@@ -34,11 +34,17 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 ## 3. Resolve diff
 
-See @ship/patterns/run-context.md#diff-resolution.
+Unless `$ARGUMENTS` already carries a `## Diff` section, ensure the scratch `diff.md` is populated:
+
+```bash
+bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md
+```
+
+(No-op when `diff.md` already holds a valid diff; captures fresh otherwise.) The agent reads it from the scratch dir and slices it there.
 
 ## 4. Invoke ship-security agent
 
-Use the Agent tool with `subagent_type: ship:ship-security`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-security`. Resolve the absolute paths of `@@ship/hooks/diff-slice.sh` and `@@ship/hooks/findings-gate.sh` and pass them inline. Pass all context inline in the prompt:
 
 ```
 Task: <task-id>
@@ -47,12 +53,11 @@ Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 Stack: <stack>
 Security Focus: <security-focus-category>
+Diff slice script: <absolute path resolved above>
+Findings gate script: <absolute path resolved above>
 
 ## Config
 Severity Overrides: <severity-overrides or "none">
-
-## Diff
-<inline: full diff content>
 ```
 
-The agent handles Security Focus validation, OWASP category mapping, diff slicing, 3 parallel sub-agents, consolidation, report writing, and phase status update.
+The agent reads the diff from the scratch dir and handles Security Focus validation, OWASP category mapping, deterministic diff slicing, 3 parallel sub-agents, the deterministic gate, report writing, and phase status update.

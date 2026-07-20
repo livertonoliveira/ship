@@ -111,10 +111,10 @@ Hits → dispatch `Mode: clean` with the exact `file:line` hits, re-run. Hits re
 
 ## 8. Write phase status
 
-Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-status-develop.md` (if the scratch dir exists) — never write directly to shared `phase-status.md` — this phase can run concurrently with `ship:test Mode: generate`, and a concurrent append would race. The caller consolidates the row, substituting the real run number for `#<RUN>`:
+Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-status-dev.md` (if the scratch dir exists) — never write directly to shared `phase-status.md` — this phase can run concurrently with `ship:test Mode: generate`, and a concurrent append would race. The caller consolidates the row, substituting the real run number for `#<RUN>`:
 
 ```
-| develop | #<RUN> | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
+| dev | #<RUN> | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
 ```
 
 ---
