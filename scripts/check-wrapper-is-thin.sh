@@ -5,6 +5,9 @@
 # inline methodology. Each wrapper in src/skills/<worker>/SKILL.md is checked
 # for two conditions:
 #
+# develop is intentionally excluded: it is a sequential inline implementer,
+# not a wrapper dispatching to a named Agent (see WORKER_SKILLS below).
+#
 #  1. Content line count (excluding YAML frontmatter and fenced code blocks)
 #     must not exceed 100 lines.
 #  2. The file must reference a named-agent invocation via `subagent_type: ship-*`.
@@ -18,7 +21,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILLS_BASE="${REPO_ROOT}/src/skills"
 
 WORKER_SKILLS=(
-  develop perf security review analyze test
+  perf security review analyze test
   "audit:backend" "audit:frontend" "audit:database" "audit:security" "audit:tests"
 )
 
