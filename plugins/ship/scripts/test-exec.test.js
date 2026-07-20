@@ -22,8 +22,8 @@ function setupProject({ testRunner, packageManager, testFileContent } = {}) {
   fs.mkdirSync(path.join(dir, 'ship'));
 
   const stackLines = ['# Stack', ''];
-  if (testRunner !== undefined) stackLines.push(`- Test runner: ${testRunner}`);
-  if (packageManager !== undefined) stackLines.push(`- Package manager: ${packageManager}`);
+  if (testRunner !== undefined) stackLines.push(`- Test Framework: ${testRunner}`);
+  if (packageManager !== undefined) stackLines.push(`- Package Manager: ${packageManager}`);
   fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), stackLines.join('\n') + '\n');
   fs.writeFileSync(path.join(dir, 'ship', 'config.md'), '# Config\n');
 
@@ -96,7 +96,7 @@ test('resolves the test command from ship/config.md when stack.md has none', () 
   const dir = setupProject({ testFileContent: PASSING_TEST });
   fs.writeFileSync(
     path.join(dir, 'ship', 'config.md'),
-    '# Config\n\n- Test runner: node --test\n- Package manager: npm\n'
+    '# Config\n\n- Test Framework: node --test\n- Package Manager: npm\n'
   );
   const res = run(dir, ['scratch', '--config', 'ship/config.md']);
   assert.equal(res.status, 0, res.stderr);
@@ -166,7 +166,7 @@ test('failing typecheck exits 1, reports a Typecheck section, and skips the suit
     exitCode: 2,
     output: "src/foo.ts(3,1): error TS2304: Cannot find name 'x'.",
   });
-  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Typecheck command: ${fake}\n`);
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Typecheck: ${fake}\n`);
   const res = run(dir, ['scratch']);
   assert.equal(res.status, 1);
   const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
@@ -187,7 +187,7 @@ test('failing lint with a green suite exits 1 and reports a Lint section', () =>
     exitCode: 1,
     output: 'src/foo.ts:12:3 error no-restricted-syntax',
   });
-  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Lint command: ${fake}\n`);
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Lint: ${fake}\n`);
   const res = run(dir, ['scratch']);
   assert.equal(res.status, 1);
   const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
@@ -205,7 +205,7 @@ test('passing typecheck and lint keep a green suite at exit 0 with header-only r
   const lint = writeFakeCheck(dir, 'fake-eslint.sh', { exitCode: 0, output: 'ok' });
   fs.appendFileSync(
     path.join(dir, 'scratch', 'stack.md'),
-    `- Typecheck command: ${tsc}\n- Lint command: ${lint}\n`
+    `- Typecheck: ${tsc}\n- Lint: ${lint}\n`
   );
   const res = run(dir, ['scratch']);
   assert.equal(res.status, 0, res.stderr);
@@ -229,7 +229,7 @@ test('typecheck and lint run concurrently, not serially', () => {
   const lint = slow('slow-eslint.sh');
   fs.appendFileSync(
     path.join(dir, 'scratch', 'stack.md'),
-    `- Typecheck command: ${tsc}\n- Lint command: ${lint}\n`
+    `- Typecheck: ${tsc}\n- Lint: ${lint}\n`
   );
   const start = Date.now();
   const res = run(dir, ['scratch']);
@@ -259,6 +259,40 @@ test('lint script from package.json is auto-detected when no command is configur
   assert.match(failuresContent, /detected-via-package-json/);
 });
 
+test('resolves Typecheck/Lint using the exact key names ship:init writes to ship/config.md', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  const tsc = writeFakeCheck(dir, 'fake-tsc.sh', {
+    exitCode: 2,
+    output: "src/foo.ts(3,1): error TS2304: Cannot find name 'x'.",
+  });
+  // Same key spelling as the "## Stack" template in src/skills/init/SKILL.md
+  // ("Typecheck", not "Typecheck command") — a prior key mismatch meant this
+  // config value was silently never read.
+  fs.writeFileSync(path.join(dir, 'ship', 'config.md'), `# Config\n\n- Typecheck: ${tsc}\n`);
+  const res = run(dir, ['scratch', '--config', 'ship/config.md']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /## Typecheck failed/);
+  assert.match(failuresContent, /error TS2304/);
+});
+
+test('"Typecheck: none" / "Lint: none" is treated as not configured, never executed as a literal command', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), '- Typecheck: none\n- Lint: none\n');
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 0, res.stderr);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.equal(failuresContent.trim(), '# Test Failures');
+});
+
 test('pytest-style FAILED summary lines are parsed into per-file failure counts', () => {
   const dir = setupProject({ testRunner: undefined, packageManager: undefined });
   const fakePytest = path.join(dir, 'fake-pytest.sh');
@@ -274,7 +308,7 @@ test('pytest-style FAILED summary lines are parsed into per-file failure counts'
     ].join('\n')
   );
   fs.chmodSync(fakePytest, 0o755);
-  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Test runner: ${fakePytest}\n`);
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Test Framework: ${fakePytest}\n`);
   const res = run(dir, ['scratch']);
   assert.equal(res.status, 1);
   const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');

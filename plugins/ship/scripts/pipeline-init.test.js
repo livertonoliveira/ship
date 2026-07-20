@@ -21,7 +21,7 @@ function setupRepo() {
   fs.mkdirSync(path.join(dir, 'ship'));
   fs.writeFileSync(
     path.join(dir, 'ship', 'config.md'),
-    '# Config\n\n- Language: TypeScript\n- Runtime: Node 20\n- Framework: none\n- Test runner: vitest\n- Package manager: npm\n'
+    '# Config\n\n- Runtime: Node 20\n- Framework: none\n- Package Manager: npm\n- Test Framework: vitest\n- Typecheck: tsc --noEmit\n- Lint: eslint .\n'
   );
   fs.writeFileSync(path.join(dir, '.gitignore'), '.context/\n');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
@@ -52,6 +52,11 @@ test('pipeline.sh init fresh creates every canonical scratch file and exits 0', 
     assert.ok(fs.existsSync(path.join(scratch, f)), `${f} missing`);
   }
   assert.match(res.stdout, /INIT fresh/);
+  const stack = fs.readFileSync(path.join(scratch, 'stack.md'), 'utf8');
+  assert.match(stack, /- Package Manager: npm/);
+  assert.match(stack, /- Test Framework: vitest/);
+  assert.match(stack, /- Typecheck: tsc --noEmit/);
+  assert.match(stack, /- Lint: eslint \./);
 });
 
 test('pipeline.sh init reports RESUME with exit 3 when dispatch rows exist', () => {

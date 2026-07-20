@@ -14,17 +14,19 @@ field_from() {
 
 is_resolved() {
   local v="$1"
-  [ -n "$v" ] && [ "$v" != "unknown" ]
+  # "none" is the config schema's explicit "not applicable" marker (see
+  # ship:init template) — treat it the same as absent, never run it as a command.
+  [ -n "$v" ] && [ "$v" != "unknown" ] && [ "$v" != "none" ]
 }
 
 resolve_runner() {
   local scratch="$1" config="$2"
-  RUNNER="$(field_from "$scratch/stack.md" 'Test runner')"
-  PKG="$(field_from "$scratch/stack.md" 'Package manager')"
+  RUNNER="$(field_from "$scratch/stack.md" 'Test Framework')"
+  PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
 
   if ! is_resolved "$RUNNER"; then
-    RUNNER="$(field_from "$config" 'Test runner')"
-    PKG="$(field_from "$config" 'Package manager')"
+    RUNNER="$(field_from "$config" 'Test Framework')"
+    PKG="$(field_from "$config" 'Package Manager')"
   fi
 }
 
@@ -39,8 +41,8 @@ resolve_static_checks() {
   local runner="npm"
   is_resolved "$PKG" && runner="$PKG"
 
-  TYPECHECK_CMD="$(field_from "$scratch/stack.md" 'Typecheck command')"
-  is_resolved "$TYPECHECK_CMD" || TYPECHECK_CMD="$(field_from "$config" 'Typecheck command')"
+  TYPECHECK_CMD="$(field_from "$scratch/stack.md" 'Typecheck')"
+  is_resolved "$TYPECHECK_CMD" || TYPECHECK_CMD="$(field_from "$config" 'Typecheck')"
   if ! is_resolved "$TYPECHECK_CMD"; then
     if pkg_script_exists typecheck; then
       TYPECHECK_CMD="$runner run typecheck"
@@ -49,8 +51,8 @@ resolve_static_checks() {
     fi
   fi
 
-  LINT_CMD="$(field_from "$scratch/stack.md" 'Lint command')"
-  is_resolved "$LINT_CMD" || LINT_CMD="$(field_from "$config" 'Lint command')"
+  LINT_CMD="$(field_from "$scratch/stack.md" 'Lint')"
+  is_resolved "$LINT_CMD" || LINT_CMD="$(field_from "$config" 'Lint')"
   if ! is_resolved "$LINT_CMD" && pkg_script_exists lint; then
     LINT_CMD="$runner run lint"
   fi

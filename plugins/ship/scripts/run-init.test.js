@@ -21,7 +21,7 @@ function setupRepo() {
   fs.mkdirSync(path.join(dir, 'ship'));
   fs.writeFileSync(
     path.join(dir, 'ship', 'config.md'),
-    '# Config\n\n- Language: TypeScript\n- Runtime: Node 20\n- Framework: none\n- Test runner: vitest\n- Package manager: npm\n'
+    '# Config\n\n- Runtime: Node 20\n- Framework: none\n- Package Manager: npm\n- Test Framework: vitest\n'
   );
   fs.writeFileSync(path.join(dir, '.gitignore'), '.context/\n');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
@@ -51,7 +51,7 @@ test('fresh init creates every canonical scratch file and classifies the diff', 
   ]) {
     assert.ok(fs.existsSync(path.join(scratch, f)), `${f} missing`);
   }
-  assert.match(fs.readFileSync(path.join(scratch, 'stack.md'), 'utf8'), /- Language: TypeScript/);
+  assert.match(fs.readFileSync(path.join(scratch, 'stack.md'), 'utf8'), /- Test Framework: vitest/);
   assert.match(res.stdout, /INIT fresh/);
   assert.match(res.stdout, /diff_class=trivial/);
 });
