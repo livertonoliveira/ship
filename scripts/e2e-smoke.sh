@@ -182,7 +182,7 @@ if node --test >/tmp/ship-e2e-test.log 2>&1; then ok "generated test suite passe
 
 # Phase coverage in the trace
 if [ -n "${SCR:-}" ] && [ -f "$SCR/phase-status.md" ]; then
-  expect=(develop test); [ "$SCOPE" = full ] && expect=(develop test perf security review analyze)
+  expect=(dev test); [ "$SCOPE" = full ] && expect=(dev test perf security review analyze)
   for ph in "${expect[@]}"; do
     grep -qiE "^\| *$ph " "$SCR/phase-status.md" && ok "phase ran: $ph" || bad "phase missing from trace: $ph"
   done

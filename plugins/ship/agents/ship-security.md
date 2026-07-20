@@ -43,21 +43,19 @@ Log `Security focus: <category> (<n>/10 OWASP categorias ativas)` and carry the 
 
 ## 3. Slice diff by category
 
-Partition the diff into 3 category-scoped slices (full `diff --git` + `@@ ... @@` hunk headers, ±3 context lines):
+Run the deterministic slicer — it partitions the diff into 3 category files by file path (A→injection, B→auth, C→data), copying any unmatched file into all three:
 
-| Sub-agent | File patterns (case-insensitive) |
-|---|---|
-| **A — Injection** | `*controller*, *route*, *resolver*, *handler*, *parser*, *validator*, *dto*, *schema*, *query*, *repository*, *repo*` |
-| **B — Auth** | `*guard*, *middleware*, *auth*, *session*, *jwt*, *permission*, *role*, *policy*, *cors*, *interceptor*` |
-| **C — Data/Config** | `*encrypt*, *crypto*, *log*, *config*, *setting*, *.env*, *cookie*, *header*, *secret*, *hash*, *password*` |
+```bash
+bash "<diff-slice-script>" .context/ship-run/<task-id>/diff.md --out-dir .context/ship-run/<task-id>
+```
 
-Unmatched hunks go into all three slices; pass each inline in the sub-agent's prompt — sub-agents must NOT read `diff.md` or run `git diff`.
+`<diff-slice-script>` is the `Diff slice script:` path from the caller (standalone: capture the diff first). It writes `slice-injection.md`, `slice-auth.md`, `slice-data.md`. Pass each sub-agent the path to its own slice file — sub-agents read only their slice, never `diff.md` or `git diff`.
 
 ---
 
 ## 4. Launch 3 sub-agents in parallel
 
-Launch all 3 via the **Agent tool** in one call, passing the active OWASP IDs (step 2). Each gets only its own diff slice inline, analyzes ONLY new/modified code, and returns a JSON array in this shared format:
+Launch all 3 via the **Agent tool** in one call, passing the active OWASP IDs (step 2) and the path to its own slice file (step 3). Each reads only its slice, analyzes ONLY new/modified code, and returns a JSON array in this shared format:
 
 ```json
 [{"severity":"critical|high|medium|low","category":"...","filePath":"...","line":0,"title":"...","owasp":"A03:2021 Injection","cwe":"CWE-89","vector":"...","impact":"...","proofOfConcept":"...","fix":"..."}]
@@ -83,9 +81,17 @@ Stack: Node (Helmet config, debug-mode gating) · Python (Django/Flask `DEBUG`) 
 
 ---
 
-## 5. Consolidate findings
+## 5. Gate + phase status (deterministic)
 
-Merge the 3 sub-agent results; apply severity overrides (injected context or `ship/config.md → Severity Overrides`) before computing the gate.
+Merge the 3 sub-agents' JSON arrays into one array at `.context/ship-run/<task-id>/security-findings.json`, then run the findings gate — it counts severities, applies `Severity Overrides`, computes the gate, and (with `--scratch`) overwrites your `phase-status-security.md` row:
+
+```bash
+bash "<findings-gate-script>" security \
+  --findings .context/ship-run/<task-id>/security-findings.json \
+  --scratch .context/ship-run/<task-id>
+```
+
+`<findings-gate-script>` is the `Findings gate script:` path from the caller; drop `--scratch` standalone. Never tally, apply overrides, decide the gate, or hand-format the row yourself.
 
 **Severity:** critical = unauthenticated remote exploit or unrestricted sensitive-data access · high = exploitable with auth/specific conditions, significant impact · medium = hard to exploit but relevant, or easy but limited · low = theoretical/defense-in-depth/best-practice.
 
@@ -93,33 +99,19 @@ Merge the 3 sub-agent results; apply severity overrides (injected context or `sh
 
 ## 6. Write report
 
-Write findings to `.context/ship-run/<task-id>/security-findings.md` (pipeline mode, canonical) or `ship/changes/<feature>/security-findings.md` (standalone). In Linear mode it's temporary — the orchestrator posts and cleans it up.
+Write findings to `.context/ship-run/<task-id>/security-findings.md` (pipeline mode, canonical) or `ship/changes/<feature>/security-findings.md` (standalone). In Linear mode it's temporary — the orchestrator posts and cleans it up. Feed the step-5 gate output into the Summary:
 
 ```markdown
 # Security Findings
 
 ## Summary
-- Critical: X | High: X | Medium: X | Low: X
-- **Gate: PASS | WARN | FAIL**
+- Critical: <critical> | High: <high> | Medium: <medium> | Low: <low>
+- **Gate: <gate>**
 
 ## Findings
 
 [ordered by severity — each with OWASP, CWE, Vector, Proof of Concept, Fix]
 ```
-
-**Gate:** `critical`/`high` → **FAIL** | `medium` → **WARN** | only `low`/none → **PASS**
-
----
-
-## 7. Write phase status
-
-Overwrite (never append) your row to `.context/ship-run/<task-id>/phase-status-security.md` (if present) — never write directly to `phase-status.md`, since concurrent `perf`/`review`/`analyze` writes would race:
-
-```
-| security | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
-```
-
-Leave `#<RUN>` literal — the orchestrator fills in the real run number when consolidating into `phase-status.md`.
 
 ---
 

@@ -66,11 +66,23 @@ Categories: `DB | ALGO | MEM | NET | BUNDLE | RENDER | ARCH`.
 
 **Severity:** critical — will visibly degrade prod (e.g. N+1 on every request, full scan on large table). high — likely under load (e.g. missing pagination on growing dataset). medium — suboptimal, no immediate risk (e.g. missing cache on moderate-traffic data). low — best-practice miss, marginal impact (e.g. sync logging on low-traffic endpoint).
 
-Before finalizing, read `Severity Overrides` from `ship/config.md` (if not injected inline) and downgrade matching findings (e.g. `high → warn`); skip if the field is absent.
+---
+
+## 5. Gate + phase status (deterministic)
+
+Count your findings by severity, then run the findings gate — it applies `Severity Overrides`, computes the gate, and (with `--scratch`) overwrites your `phase-status-perf.md` row. Never tally overrides, decide the gate, or hand-format the row yourself:
+
+```bash
+bash "<findings-gate-script>" perf \
+  --critical <n> --high <n> --medium <n> --low <n> \
+  --scratch .context/ship-run/<task-id>
+```
+
+`<findings-gate-script>` is the `Findings gate script:` path from the caller; drop `--scratch` when there is no scratch dir (standalone). Use its `gate=`/`critical=`/… output (post-override) for the Summary below.
 
 ---
 
-## 5. Write report
+## 6. Write report
 
 Write findings to `.context/ship-run/<task-id>/perf-findings.md` (with scratch dir; canonical path the orchestrator reads from) or `ship/changes/<feature>/perf-findings.md` (without). In Linear mode this is temporary — the orchestrator posts it and cleans up.
 
@@ -78,30 +90,13 @@ Write findings to `.context/ship-run/<task-id>/perf-findings.md` (with scratch d
 # Performance Findings
 
 ## Summary
-- Critical: X
-- High: X
-- Medium: X
-- Low: X
-- **Gate: PASS | WARN | FAIL**
+- Critical: <critical> | High: <high> | Medium: <medium> | Low: <low>
+- **Gate: <gate>**
 
 ## Findings
 
 [findings here, ordered by severity]
 ```
-
-**Gate rules:** critical/high → **FAIL** | medium → **WARN** | only low/none → **PASS**. Apply severity overrides before computing the gate.
-
----
-
-## 6. Write phase status
-
-Overwrite (never append) your row to `.context/ship-run/<task-id>/phase-status-perf.md` (if the scratch dir exists) — never write directly to shared `phase-status.md`, since this phase runs concurrently with `security`/`review`/`analyze` and a concurrent append would race:
-
-```
-| perf | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
-```
-
-Leave `#<RUN>` as a literal placeholder — the orchestrator substitutes the real run number when consolidating into `phase-status.md`.
 
 ---
 

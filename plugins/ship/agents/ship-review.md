@@ -62,8 +62,6 @@ Severity: see `## Code Review {#code-review}
 - **medium**: Code smell that should be addressed but does not block (e.g., duplicated logic, overly complex conditional)
 - **low**: Minor improvement opportunity (e.g., naming could be clearer, slightly long function)`.
 
-Before finalizing: apply `Severity Overrides` (injected context, else `ship/config.md`) — downgrade matching findings per rule (e.g. `high → warn`); none if absent.
-
 Format: `### Base Template {#finding-entry-base}
 
 ```markdown
@@ -93,18 +91,21 @@ Write to `.context/ship-run/<task-id>/review-findings.md` (pipeline) or `ship/ch
 # Code Review Findings
 
 ## Summary
-- Critical: X
-- High: X
-- Medium: X
-- Low: X
-- **Gate: PASS | WARN | FAIL**
+- Critical: <critical> | High: <high> | Medium: <medium> | Low: <low>
+- **Gate: <gate>**
 
 ## Findings
 
 [findings here, ordered by severity]
 ```
 
-Gate rules: see `## Gate Decision Rules {#gate-decision-rules}
+The Summary counts and gate come from step 6's script output — never compute the gate or apply overrides in-context.
+
+---
+
+## 6. Gate + phase status (deterministic)
+
+Count your findings by severity, then run the findings gate — it applies `Severity Overrides`, computes the gate (`## Gate Decision Rules {#gate-decision-rules}
 
 Gate decision rules applied after every quality phase:
 
@@ -114,19 +115,15 @@ Gate decision rules applied after every quality phase:
 
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.`. Apply severity overrides before computing the gate. Compute the gate deterministically from the severity counts: any critical/high → FAIL; else any medium → WARN; else PASS. The Gate value in the Summary and the gate column written to phase-status-review.md (step 6) MUST be identical and MUST match these counts — never emit PASS while Medium > 0.
+> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.`), and (with `--scratch`) overwrites your `phase-status-review.md` row:
 
----
-
-## 6. Write phase status
-
-Overwrite (don't append) your row in `.context/ship-run/<task-id>/phase-status-review.md` if the scratch dir exists — never write directly to shared `phase-status.md` (concurrent phases would race):
-
-```
-| review | #<RUN> | <ISO-8601 UTC> | - | <gate> | <critical> | <high> | <medium> | <low> | |
+```bash
+bash "<findings-gate-script>" review \
+  --critical <n> --high <n> --medium <n> --low <n> \
+  --scratch .context/ship-run/<task-id>
 ```
 
-`#<RUN>` is a literal placeholder — the orchestrator substitutes the real run number when consolidating into `phase-status.md`.
+`<findings-gate-script>` is the `Findings gate script:` path from the caller; drop `--scratch` standalone. Feed its `gate=`/`critical=`/… output into the Summary above.
 
 ---
 

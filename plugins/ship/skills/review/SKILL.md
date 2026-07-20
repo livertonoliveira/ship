@@ -32,15 +32,13 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 ## 3. Resolve diff
 
-See ### Diff resolution (skill wrappers) {#diff-resolution}
+Unless `$ARGUMENTS` already carries a `## Diff` section, ensure the scratch `diff.md` is populated:
 
-Phase skills that consume the diff (`perf`, `security`, `review`, `analyze`) resolve it in the same order:
+```bash
+bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md
+```
 
-**If `$ARGUMENTS` already contains a `## Diff` section** (injected inline by the orchestrator), use it directly — skip file reads and git commands.
-
-**Otherwise:**
-- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
-- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range per this pattern).
+(No-op when `diff.md` already holds a valid diff; captures fresh otherwise.)
 
 ## 4. Test-failure context (passthrough)
 
@@ -48,7 +46,7 @@ If `.context/ship-run/<task-id>/test-failures.md` exists, read it. If it lists a
 
 ## 5. Invoke ship-review agent
 
-Use the Agent tool with `subagent_type: ship:ship-review`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-review`. Resolve the absolute path of `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh` and pass it inline as `Findings gate script:`. Pass all context inline in the prompt:
 
 ```
 Task: <task-id>
@@ -56,15 +54,13 @@ Artifact language: <artifact_language>
 Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 Stack: <stack>
+Findings gate script: <absolute path resolved above>
 
 ## Config
 Severity Overrides: <severity-overrides or "none">
-
-## Diff
-<inline: full diff content>
 
 ## Test Failures
 <inline: modules with failing tests, or omit if none>
 ```
 
-The agent handles the full review, findings report, gate decision, and phase-status update. Return the agent's full output verbatim as your final message.
+The agent reads the diff from the scratch dir and handles the full review, findings report, the deterministic gate, and phase-status update. Return the agent's full output verbatim as your final message.

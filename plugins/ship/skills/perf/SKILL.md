@@ -32,19 +32,17 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 ## 3. Resolve diff
 
-See ### Diff resolution (skill wrappers) {#diff-resolution}
+Unless `$ARGUMENTS` already carries a `## Diff` section, ensure the scratch `diff.md` is populated:
 
-Phase skills that consume the diff (`perf`, `security`, `review`, `analyze`) resolve it in the same order:
+```bash
+bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md
+```
 
-**If `$ARGUMENTS` already contains a `## Diff` section** (injected inline by the orchestrator), use it directly — skip file reads and git commands.
-
-**Otherwise:**
-- If `.context/ship-run/<task-id>/diff.md` exists and is non-empty → read diff from it (preferred)
-- Otherwise → run `git diff origin/main...HEAD` to obtain the diff (canonical range per this pattern).
+(No-op when `diff.md` already holds a valid diff; captures fresh otherwise.) The agent reads it from the scratch dir.
 
 ## 4. Invoke ship-perf agent
 
-Use the Agent tool with `subagent_type: ship:ship-perf`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-perf`. Resolve the absolute path of `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh` and pass it inline as `Findings gate script:`. Pass all context inline in the prompt:
 
 ```
 Task: <task-id>
@@ -53,12 +51,10 @@ Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 Project Type: <project-type>
 Stack: <stack>
+Findings gate script: <absolute path resolved above>
 
 ## Config
 Severity Overrides: <severity-overrides or "none">
-
-## Diff
-<inline: full diff content>
 ```
 
-The agent handles strategy selection, parallel sub-agents, consolidation, report writing, and phase status update.
+The agent reads the diff from the scratch dir and handles strategy selection, parallel sub-agents, the deterministic gate, report writing, and phase status update.

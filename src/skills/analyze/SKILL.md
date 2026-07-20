@@ -38,7 +38,7 @@ Resolve scratch dir: `.context/ship-run/<task-id>/`
 
 **Otherwise:**
 
-Diff: see @ship/patterns/run-context.md#diff-resolution.
+Diff: ensure the scratch `diff.md` is populated — `bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md` (no-op when already valid; captures fresh otherwise).
 
 Spec:
 - Linear mode → loaded by the agent from the Linear issue + Proposal/Design documents (issue body carries the full Gherkin `## Scenarios`).
@@ -46,7 +46,7 @@ Spec:
 
 ## 4. Invoke ship-analyze agent
 
-Use the Agent tool with `subagent_type: ship:ship-analyze`. Resolve the absolute path of the deterministic correlation engine bundled with this skill — `@@ship/hooks/analyze-correlate.sh` — and pass it inline as `Correlate script:`. Pass all context inline in the prompt:
+Use the Agent tool with `subagent_type: ship:ship-analyze`. Resolve the absolute paths of the bundled hooks — `@@ship/hooks/analyze-correlate.sh` (correlation engine) and `@@ship/hooks/findings-gate.sh` (deterministic gate) — and pass them inline. Pass all context inline in the prompt:
 
 ```
 Task: <task-id or feature-name>
@@ -55,6 +55,7 @@ Scratch dir: .context/ship-run/<task-id>/
 Storage mode: <linear|local>
 Test Scope: unit=<enabled|disabled>,integration=<enabled|disabled>,e2e=<enabled|disabled>
 Correlate script: <absolute path resolved above>
+Findings gate script: <absolute path resolved above>
 
 ## Config
 Severity Overrides: <severity-overrides or "none">

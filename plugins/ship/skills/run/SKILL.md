@@ -47,13 +47,13 @@ Before invoking ANY phase tool below — plan/dev/test/perf/security/review/anal
 
 > Linear MANDATORY: move issue to started state (${CLAUDE_SKILL_DIR}/patterns/linear-status.md, never hardcode) — automatically, no confirmation.
 
-Persist `spec.md`+`design.md` to scratch once (${CLAUDE_SKILL_DIR}/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + only the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`, em-dash, never a heading, so analyze ignores it).
+Persist `spec.md`+`design.md` to scratch once (${CLAUDE_SKILL_DIR}/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`; em-dash not heading, so analyze skips it).
 
 ### 1.9. PHASE: Plan
 
 > Runs only if `dev` enabled and warranted.
 
-Skip when the issue predicts one module (`## Files` ≤3 code files per ${CLAUDE_SKILL_DIR}/patterns/diff-classifier.md excl. `plugins/**` rebuild lines, `Dependencies: None`, one test-layer tag) → log, straight to `ship:develop`. Else: greenfield/`normal`/`large` baseline runs planner, `trivial`/`minor` on existing work skips.
+Skip when the issue predicts one module (`## Files` ≤3 code files per ${CLAUDE_SKILL_DIR}/patterns/diff-classifier.md excl. `plugins/**` rebuild lines, `Dependencies: None`, one test-layer tag) → log skip, `ship:develop`. Else: greenfield/`normal`/`large` baseline runs planner, `trivial`/`minor` on existing work skips.
 
 Invoke `ship:plan` via Skill (`context: fork`, `model: sonnet`, never Agent) — inline task/title, language, scratch dir, storage mode, spec/design pointer. Validate: `bash "${CLAUDE_SKILL_DIR}/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md`. Exit 0 proceed; Exit 2 → skip develop/test, re-plan or ask user.
 
@@ -89,7 +89,7 @@ Untested-files (non-blocking): `bash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh
 
 ### 3-4. STAGE: Verification (test-exec ∥ quality)
 
-`test` enabled, no `generated-tests.md` yet → dispatch `ship:test Mode: generate` (no denylist) first.
+`test` enabled, no `generated-tests.md` yet → dispatch `ship:test Mode: generate` first.
 
 Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
 
@@ -101,12 +101,12 @@ Exit 0 green → pass, zero agents. Exit 1 red → `bash "${CLAUDE_SKILL_DIR}/ho
 
 Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` → re-dispatch quality phases marked `rerun`.
 
-**(b) Quality:** `perf`/`security`/`review`/`analyze` per effective set; all disabled → skip to Phase 5 (trivial PASS). Pre-quality snapshot already captured (step 0). Adjust per ${CLAUDE_SKILL_DIR}/patterns/diff-classifier.md: `trivial` → all skipped (still log `analyze` PASS); `minor` → one combined security agent, `analyze` still runs; `normal`/`large` → none.
+**(b) Quality:** class→agent-set scope (deterministic, never in prose) — `bash "${CLAUDE_SKILL_DIR}/hooks/quality-scope.sh" <class> --phases "<enabled quality phases>" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`log=`. Pre-quality snapshot captured (step 0).
 
-Dispatch enabled phases in ONE turn, concurrent, single aggregated gate in Phase 5; `pipeline.sh dispatch` before each; scratch dir + language every dispatch; all read `diff.md`, never `git diff`.
-- `perf`/`security` → Agent `ship:ship-perf`/`ship:ship-security` + task, storage mode, project/stack, `Severity Overrides` (+`Security Focus` for security).
-- `review` → Skill, writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
-- `analyze` → Skill, never Agent — reads `spec.md`/`design.md`/`diff.md` from scratch, own severities feed the gate; persists after.
+Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Findings gate script:` `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never `git diff`.
+- `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
+- `security` + `Security Focus`, `Diff slice script:` `${CLAUDE_SKILL_DIR}/hooks/diff-slice.sh`.
+- `analyze` + `Test Scope`, `Correlate script:` `${CLAUDE_SKILL_DIR}/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).
 
 ### 5. GATE CHECK
 
