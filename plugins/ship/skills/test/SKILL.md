@@ -19,7 +19,7 @@ Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel
 
 ## 1. Load context
 
-Parse `$ARGUMENTS`: `task-id` = first token (standalone → derive from branch name or `standalone`). Parse `Mode:` — `generate`/`execute`/`full`, default `full`. Read `ship/config.md`: `## Test Scope` + `Artifact language` (absent → all layers enabled); read `stack.md` (fallback `ship/config.md`).
+Parse `$ARGUMENTS`: `task-id` = first token (standalone → derive from branch name or `standalone`). Parse `Mode:` — `generate`/`execute`/`full`, default `full`. Layers = `bash "${CLAUDE_SKILL_DIR}/hooks/test-scope.sh" --config ship/config.md` (`run=`/`skip=`, deterministic — never compute in prose). Read `Artifact language`; read `stack.md` (fallback `ship/config.md`).
 
 **Read the plan:** `plan.md`'s `## Test Contract` — each `@SC-XX -> <layer> -> <test file>` entry (`arrange/act/assert`) is the concrete slot `ship:plan` mapped, the same interpretation `ship:develop` built from. Pass each layer's slots to its worker (step 3) so code and tests derive from one source. Absent → fall back to raw scenarios.
 
@@ -27,7 +27,7 @@ Parse `$ARGUMENTS`: `task-id` = first token (standalone → derive from branch n
 
 ## 2. Guard — all layers disabled
 
-Output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope`..." and stop. Applies to every mode.
+`run=` empty → output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope`..." and stop. Applies to every mode.
 
 ## 3. Mode: generate
 
@@ -39,7 +39,7 @@ Generation-only: writes test files, never runs a test command, never writes `tes
 
 ### 3.2 Fan out to named agents (parallel) — MANDATORY ACTION
 
-For each enabled layer, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Skip disabled (log `Skipping [layer] tests (disabled in Test Scope)`). These mechanics are reused by `full`.
+For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`). These mechanics are reused by `full`.
 
 **Context slicing — always pass inline, never rely on the agent re-reading:**
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.
@@ -83,7 +83,7 @@ Report: tests created, passed, failed per layer.
 
 ## 6. Self-check before returning (MANDATORY)
 
-1. Every `enabled` layer (and, in `execute`, present in the manifest) — issued a `ship-test-*` Agent call? Skipped one, or narrated with zero calls? Dispatch the missing workers now.
+1. Every `run=` layer (and, in `execute`, present in manifest) — issued a `ship-test-*` Agent call? Skipped one, or narrated with zero calls? Dispatch the missing workers now.
 2. `generate`/`full`: hygiene gate actually ran and hits remediated? Unrun gate or known hits present = defect.
 3. `generate`: wrote `generated-tests.md`, avoided `test-failures.md`, wrote the `phase-status-test-generate.md` row with the correct gate?
 4. `execute`: user-requested fallback, not automatic — confirm the user asked before dispatching.

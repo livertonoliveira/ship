@@ -90,3 +90,100 @@ test('unknown class fails fast', () => {
   assert.equal(res.status, 1);
   assert.match(res.stderr, /unknown class/);
 });
+
+function writeConfig(dir, body) {
+  const p = path.join(dir, 'config.md');
+  fs.writeFileSync(p, body);
+  return p;
+}
+
+test('a phase disabled via Pipeline Phases never runs, even if listed in --phases', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: standard',
+    '',
+    '## Pipeline Phases',
+    '- perf: enabled',
+    '- security: disabled',
+    '- review: enabled',
+  ].join('\n'));
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'perf review analyze');
+  assert.equal(o.skip, '');
+});
+
+test('profile default governs a phase with no explicit Pipeline Phases override', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: standard',
+  ].join('\n'));
+  // standard profile: perf/security off by default, review on — see profiles.md
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'review analyze');
+  assert.equal(o.skip, '');
+});
+
+test('strict profile enables perf/security by default', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: strict',
+  ].join('\n'));
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'perf security review analyze');
+  assert.equal(o.skip, '');
+});
+
+test('Security Focus categories: none forces security off, even when Pipeline Phases enables it', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: strict',
+    '',
+    '## Pipeline Phases',
+    '- security: enabled',
+    '',
+    '## Security Focus',
+    '- categories: none',
+  ].join('\n'));
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'perf review analyze');
+  assert.equal(o.skip, '');
+});
+
+test('Security Focus categories other than none do not affect security enablement', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: strict',
+    '',
+    '## Security Focus',
+    '- categories: web-api',
+  ].join('\n'));
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'perf security review analyze');
+});
+
+test('Pipeline Phases override wins over profile default', () => {
+  const dir = scratch();
+  const config = writeConfig(dir, [
+    '## Pipeline Profile',
+    '- profile: lite',
+    '',
+    '## Pipeline Phases',
+    '- test: enabled',
+    '- security: enabled',
+  ].join('\n'));
+  // lite profile: perf/security/review all off by default, but security is overridden on
+  const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
+  const o = parse(res.stdout);
+  assert.equal(o.run, 'security analyze');
+  assert.equal(o.skip, '');
+});

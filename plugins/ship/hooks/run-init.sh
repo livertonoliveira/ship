@@ -85,7 +85,7 @@ if [ "$MODE" = "fresh" ]; then
   }
   {
     printf '# Stack\n\n'
-    for f in Language Runtime Framework 'Test runner' 'Package manager'; do
+    for f in Runtime Framework 'Package Manager' 'Test Framework' Typecheck Lint; do
       v="$(field "$f")"
       printf -- '- %s: %s\n' "$f" "${v:-unknown}"
     done
