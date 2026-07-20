@@ -47,8 +47,8 @@ tier split (there is none).
 
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
-| `ship:run`            | Orchestrator — judgment dispatch: diff refresh, surgical re-run scoping, gate eval. Spawns Sonnet leaves for code/test generation. |
-| `ship:develop`        | Orchestrator — slices/de-identifies per-module context, fans out `ship-develop-implement` leaves, integrates, typechecks. |
+| `ship:run`            | Orchestrator — judgment dispatch: diff refresh, surgical re-run scoping, gate eval. Spawns Sonnet leaves for test generation and quality analysis. |
+| `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
 | `ship:audit:run`      | Orchestrator — fans out `audit:*` skills, then a consolidation agent aggregates their reports. |
@@ -61,7 +61,7 @@ tier split (there is none).
 | `ship:audit:*`        | Project-wide audits. |
 | `ship:homolog`        | Interactive acceptance gate — **not forked**; runs inline in the caller's context so approval and the Done transition share one context. |
 | `ship:pr`             | PR body expansion + conflict resolution + strict-mode gate eval. |
-| `ship-develop-implement`, `ship-test-{unit,integration,e2e}` | Leaf workers — code / test generation. |
+| `ship-test-{unit,integration,e2e}` | Leaf workers — test generation. |
 | `ship-audit-*`, `ship-analyze`, `ship-review`, ... | Named worker agents dispatched by the wrappers/orchestrators. |
 
 ---

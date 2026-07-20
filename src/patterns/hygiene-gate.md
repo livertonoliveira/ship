@@ -25,7 +25,8 @@
 >    `.context/ship-run/.hygiene-hit` is absent, the hook never blocked anything this phase, so
 >    the sweep skips the whole-tree `--all` scan outright and logs a skip message instead of
 >    running it. If the marker is present, the sweep runs the same grep over the whole working
->    tree at phase end, dispatches a `Mode: clean` worker for anything left, then deletes the
+>    tree at phase end, remediates anything left (develop cleans inline; test dispatches a
+>    `Mode: clean` worker), then deletes the
 >    marker once the sweep finishes (clean or `warn`). With the hook in place the marker is
 >    normally absent, so this step is a redundant safety net, **not** the primary defense — never
 >    treat it as the thing standing between you and a leak — the hook is.
@@ -145,11 +146,12 @@ If Step 3 or Step 4 found nothing → gate **PASS**, continue the phase.
 
 If anything was found:
 
-1. **Dispatch a cleanup worker** via the Agent tool, `Mode: clean`, one call covering all flagged
-   files. Use the **same worker type** that produced them:
-   - `ship:develop` → `ship:ship-develop-implement`
-   - `ship:test` → the matching `ship:ship-test-*` worker for each flagged test file
-2. The cleanup prompt lists the exact `file:line` hits and instructs: remove every genuine comment;
+1. **Remediate with the same writer that produced the files:**
+   - `ship:develop` cleans the flagged files **itself** with Edit (it writes source directly; no
+     worker dispatch).
+   - `ship:test` dispatches the matching `ship:ship-test-*` worker via the Agent tool,
+     `Mode: clean`, one call covering all flagged test files.
+2. The cleanup instruction lists the exact `file:line` hits and instructs: remove every genuine comment;
    strip or rename every spec ID / Linear key (rename the identifier to describe the behavior — do
    not annotate); leave legitimate tokens that merely resemble a pattern (e.g. `UTF-8` in a string)
    untouched; change nothing else.

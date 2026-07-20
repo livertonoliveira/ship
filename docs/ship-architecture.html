@@ -207,8 +207,8 @@ const NODES = [
     sub:'Fase 1.8 — lê cenários @SC-XX, gera plan.md único',
     desc:'Fonte única de verdade consumida tanto por develop quanto por test, reduzindo drift entre implementação e testes. plan.md é validado por plan-validate.sh antes de ser consumido.'},
   {id:'develop', group:'pipeline', title:'/ship:develop', model:'sonnet', fork:true, path:'src/skills/develop/SKILL.md',
-    sub:'Fase 2 — orquestrador SEM Edit/Write, dispara 1 agente por módulo',
-    desc:'Orquestrador puro (sem ferramentas de escrita). Faz fan-out de uma chamada Agent por módulo planejado para o worker leaf ship-develop-implement (que tem Edit/Write).'},
+    sub:'Fase 2 — implementador direto, módulos em sequência num só contexto',
+    desc:'Implementa todos os módulos do plan.md ele mesmo (Edit/Write), em ordem de dependência, sem leaf workers — convenções consistentes e zero custo de partida por agente.'},
   {id:'test', group:'pipeline', title:'/ship:test', model:'sonnet', fork:true, path:'src/skills/test/SKILL.md',
     sub:'Fase 3 — lê Test Scope do config, despacha por camada habilitada',
     desc:'Também sem Edit/Write direto. Só dispara os workers das camadas habilitadas em "Test Scope" do config.md.'},
@@ -245,8 +245,6 @@ const NODES = [
     desc:'Correlação Jaccard entre AC/REQ da spec e testes existentes, cobrindo TODAS as camadas (diferente de /ship:analyze, que só cobre as camadas habilitadas no Test Scope).'},
 
   // ---- workers (leaf agents) ----
-  {id:'ship-develop-implement', group:'workers', title:'ship-develop-implement', model:'sonnet', path:'src/agents/ship-develop-implement.md',
-    desc:'Implementa um único módulo planejado (leaf worker). Tools: Read,Glob,Grep,Bash,Edit,Write.'},
   {id:'ship-test-unit', group:'workers', title:'ship-test-unit', model:'sonnet', path:'src/agents/ship-test-unit.md',
     desc:'Gera+roda testes unitários (leaf worker). Tools: Read,Glob,Grep,Bash,Edit,Write.'},
   {id:'ship-test-integration', group:'workers', title:'ship-test-integration', model:'sonnet', path:'src/agents/ship-test-integration.md',
@@ -333,7 +331,6 @@ const EDGES = [
   ['audit-backend','ship-audit-backend','route'], ['audit-database','ship-audit-database','route'],
   ['audit-frontend','ship-audit-frontend','route'], ['audit-security','ship-audit-security','route'], ['audit-tests','ship-audit-tests','route'],
   // fan-out delegation (sonnet -> sonnet leaf worker, not a model change but a dispatch)
-  ['develop','ship-develop-implement','delegate'],
   ['test','ship-test-unit','delegate'], ['test','ship-test-integration','delegate'], ['test','ship-test-e2e','delegate'],
   // audit suite
   ['audit-run','audit-backend','seq'], ['audit-run','audit-database','seq'], ['audit-run','audit-frontend','seq'],

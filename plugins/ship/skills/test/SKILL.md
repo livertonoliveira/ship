@@ -63,7 +63,7 @@ Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching typ
 
 ### 3.4 Manifest + phase status
 
-Write `.context/ship-run/<task-id>/generated-tests.md` — one line per actually-created file as `- <path> (<layer>)`, the exact form `test-exec.sh` parses (prose or any other shape silently fails to run); grouped by layer, header-only if none; never write `test-failures.md` in this mode. Report test files created per layer + hygiene result. Overwrite (never append — races with concurrent `ship:develop` on the shared file) `.context/ship-run/<task-id>/phase-status-test-generate.md` if the scratch dir exists:
+Write `.context/ship-run/<task-id>/generated-tests.md` — one line per actually-created file as `- <path> (<layer>)`, the exact form `test-exec.sh` parses (prose or any other shape silently fails to run); grouped by layer, header-only if none; never write `test-failures.md` in this mode. Report test files created per layer + hygiene result. Overwrite (never append) `.context/ship-run/<task-id>/phase-status-test-generate.md` if the scratch dir exists:
 ```
 | test-generate | #<RUN> | <ISO-8601 UTC> | - | <gate> | 0 | 0 | 0 | 0 | |
 ```

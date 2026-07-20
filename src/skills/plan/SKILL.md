@@ -35,14 +35,14 @@ Check for a `## Files` section in the spec (`create|modify \`<path>\` — <inten
 - Survey scope = map's paths/anchors + immediate neighborhood only (`Glob`/`Grep`), not an open-ended sweep.
 - Reconcile: moved → correct path; gone, no successor → drop/replace; missed-but-required → add. Each change → one line in `## Map Divergences` (step 6); no changes → section absent.
 
-**Map absent (older spec, free-form prompt):** shallow `Glob`/`Grep` of touched areas for folder structure, sibling modules, registration points (module files, route tables, barrel exports). Do NOT deep-read files — that's the leaf workers' job. No warning, no blocking.
+**Map absent (older spec, free-form prompt):** shallow `Glob`/`Grep` of touched areas for folder structure, sibling modules, registration points (module files, route tables, barrel exports). Do NOT deep-read files — that's `ship:develop`'s job. No warning, no blocking.
 
 ## 3. Decompose into modules
 
 Map present → group its file sets into modules per the rules below, reusing the grouping. Map absent → derive file sets from scratch.
 
-- No mutual dependency → parallel batch. A depends on B → B sequential before A.
-- Each module owns a **disjoint** file set — no two modules share a file (makes the develop fan-out race-free).
+- No mutual dependency → any order. A depends on B → B before A.
+- Each module owns a **disjoint** file set — no two modules share a file (keeps ownership unambiguous for develop and the test denylist).
 - Doubt → prefer fewer, coarser modules over an incorrect split.
 
 ## 4. Map scenarios to a test contract
@@ -63,12 +63,12 @@ Outcome with **no** matching `@SC-XX`: add a derived test slot to the Test Contr
 
 ## 5. Prescription boundary
 
-Stay on **what/where**, never **how** — prescribing signatures here, without the workers' deep per-file read, fights existing conventions:
+Stay on **what/where**, never **how** — prescribing signatures here, without develop's deep per-file read, fights existing conventions:
 
-| You DECIDE | Left to workers |
+| You DECIDE | Left to develop |
 |------------|--------------------------|
 | Module boundaries + disjoint file sets | Exact function signatures |
-| Dependencies (parallel vs sequential) | Internal data structures |
+| Dependencies (implementation order) | Internal data structures |
 | `@SC-XX` → module and → test slot | Error/log/import idioms |
 | Integration/registration points | Line-level implementation |
 
@@ -108,13 +108,13 @@ Write `.context/ship-run/<task-id>/plan.md`, exact format:
 ## Map Divergences
 - src/modules/billing/billing.service.ts → src/services/billing.service.ts — moved
 
-## Parallelism
-- Parallel batch: M1, M3
-- Sequential: M2 after M1
+## Order
+- M1, M3 (independent — any order)
+- M2 after M1
 ```
 
 `## Map Divergences` appears only when step 2 ran map-validation mode. Standalone, no scratch dir → print the plan instead of writing it.
 
 ## 7. Report
 
-Summarize to the caller in the artifact language: module count, parallel batches, scenarios mapped per layer. Non-empty `## Coverage Gaps` → list each AC outcome that got a derived test slot, for the user to backfill. Don't echo the full `plan.md`. `plan.md` contents/identifiers are always English regardless of artifact language.
+Summarize to the caller in the artifact language: module count, implementation order, scenarios mapped per layer. Non-empty `## Coverage Gaps` → list each AC outcome that got a derived test slot, for the user to backfill. Don't echo the full `plan.md`. `plan.md` contents/identifiers are always English regardless of artifact language.

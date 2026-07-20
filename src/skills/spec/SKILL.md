@@ -19,7 +19,7 @@ Turns a Linear issue or free text into a spec + granular tasks (<400 lines each)
 
 `linear.app` URL or `^[A-Z]+-\d+$` → Linear issue ID; else free text. See @ship/patterns/storage-mode.md.
 
-### 2. Gather context — 2 parallel agents
+### 2. Gather context — yourself, sequentially (no agents)
 
 **A (source):** Linear → @ship/patterns/load-artifacts.md + `list_comments` → requirements/AC/constraints/motivation; free text → decompose, flag ambiguities.
 **B (codebase):** `ship/config.md` + affected modules/patterns/deps, risk, scope, labels.

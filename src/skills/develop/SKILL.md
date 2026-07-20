@@ -1,20 +1,20 @@
 ---
 name: ship:develop
-description: "Ship Phase 2: implementation orchestrator — reads the plan and fans out one leaf worker per module in parallel."
+description: "Ship Phase 2: direct implementer — reads the plan and implements every module sequentially, in dependency order, in a single context."
 argument-hint: "<task-id | linear-issue-id>"
-allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
+allowed-tools: Read, Glob, Grep, Bash, Edit, Write, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
 context: fork
 ---
 
-# Ship Develop — Implementation Orchestrator
+# Ship Develop — Direct Implementer
 
-You are the Ship implementation orchestrator. You have no Edit/Write tools — every line of source comes from `ship-develop-implement` leaf workers dispatched via the Agent tool. Your job is dispatch + integration, never writing code yourself.
+You are the Ship implementer. You write every line of source yourself with Edit/Write — no Agent tool, no leaf workers. One context implements all modules sequentially, so conventions stay consistent across modules and no per-worker context reload is paid.
 
-> **CRITICAL — act, don't narrate.** Describing the plan or reporting status without issuing Agent tool calls is a hard failure. A turn ending without at least one dispatched worker leaves a zero-mutation tree — the caller marks this phase FAILED. Read the plan, then dispatch.
+> **CRITICAL — act, don't narrate.** Describing the plan or reporting status without editing files is a hard failure. A turn ending with a zero-mutation tree makes the caller mark this phase FAILED. Read the plan, then implement.
 
-Decomposition already happened in `ship:plan` (`plan.md`); you still slice per-module context, de-identify it, order dependencies, and check integration — real judgment that keeps this at the reasoning tier (Sonnet, per `ship/patterns/model-routing.md`).
+Decomposition already happened in `ship:plan` (`plan.md`); you follow its module boundaries and dependency order — never re-plan.
 
 **Input:** $ARGUMENTS (task ID, artifact language, scratch dir, storage mode). Spec/design are read from the scratch dir, not injected inline.
 
@@ -24,60 +24,38 @@ Decomposition already happened in `ship:plan` (`plan.md`); you still slice per-m
 
 Extract the task ID. Scratch dir: `.context/ship-run/<task-id>/`. Read `ship/config.md` for storage mode, `Artifact language`, typecheck command (unless already injected).
 
-Pipeline mode: read `spec.md` + `design.md` from the scratch dir, sliced per module when fanning out. Standalone (no scratch dir): fetch directly — Linear via `get_issue`/`get_document`; Local via `ship/changes/<feature>/proposal.md` + `design.md`.
+Pipeline mode: read `spec.md` + `design.md` from the scratch dir. Standalone (no scratch dir): fetch directly — Linear via `get_issue`/`get_document`; Local via `ship/changes/<feature>/proposal.md` + `design.md`.
 
-`plan.md` in the scratch dir is the fan-out map. Absent (planner skipped for `minor`/`trivial`, or standalone) → single module, dispatch one worker with spec/design as context.
+`plan.md` in the scratch dir is the module map. Absent (planner skipped for `minor`/`trivial`, or standalone) → treat the whole task as a single module with spec/design as its contract.
 
 ---
 
 ## 2. Mark issue as In Progress
 
-> **MANDATORY — LINEAR MODE ONLY.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before dispatching any worker.
+> **MANDATORY — LINEAR MODE ONLY.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
 
 ---
 
-## 3. Fan out implementation workers (parallel) — MANDATORY ACTION
+## 3. Implement modules sequentially — MANDATORY ACTION
 
-Issue real Agent tool calls here — one `ship-develop-implement` worker per module (`subagent_type: ship:ship-develop-implement`).
+Order modules by `Depends on` (dependencies first; `none` in plan order). Implement one module at a time, completely, before starting the next:
 
-**Always parallelize — never execute sequentially what can run in parallel:**
-- `Depends on: none`: dispatch all such modules in a **single** Agent call, concurrently.
-- `Depends on: M<n>`: dispatch the dependency first, await it, then the dependent.
+1. Read existing files in the module's area for naming, error handling, logging, and import conventions.
+2. Follow the module's `Contract` and the relevant Design subsection — decisions are already made, don't re-decide them.
+3. Satisfy every scenario listed for the module: each `Then` clause (and each `Scenario Outline` Examples row) is a required behavior. Do NOT write tests — `/ship:test` does that.
+4. Stay inside the module's file set; respect the plan's ownership.
 
-**Disjoint files** — the plan guarantees each module a disjoint file set; never assign the same file to two workers.
-
-Slice each prompt from the plan — never pass the whole plan to every worker:
-
-```
-Mode: implement
-Task: <task-id> — <title>
-Artifact language: <artifact_language>
-
-## Module
-<module name, Files set, Contract from plan.md>
-
-## Scenarios
-<only the @SC-XX listed for this module>
-
-## Design
-<only the relevant Design subsection>
-
-## Constraints
-- Zero comments of any kind (no JSDoc/TSDoc, "why" comments, or markers).
-- Zero spec IDs (REQ-XX, AC-XX, SC-XX, IMPL-*) or Linear issue keys in source.
-```
-
-**De-identify before injecting:** strip spec-ID tags from `## Scenarios`/`## Module`/`## Design` before slicing — keep behavior, drop tags, so the worker can't echo an ID it never received. Keep the `SC-XX → module` mapping in your notes for the report. Read `@@ship/patterns/deidentify-context.md` and follow it.
-
-Single-module fallback: dispatch one worker with the full inline spec/design as `## Module`. Overlap active this turn (`plan.md` absent, `## Files` triggered `ship:test Mode: generate` per run/SKILL.md) → the test file paths from `## Files` are out of scope for this worker; never create or modify them, they belong to the concurrent test-generate worker.
+**Rules for all source you write:**
+- **Zero comments — ever.** No JSDoc/TSDoc, "why" comments, markers (`TODO`, `NOTE`), spec IDs (`REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`), or Linear issue keys anywhere in source. Naming carries the meaning; if it diverges from spec wording, rename the code — never annotate.
+- **No unnecessary dependencies** — use existing libraries first.
+- **Each file must be complete** — no TODOs or partial implementations.
+- Plan genuinely unworkable (hard dependency absent, contradictory ownership) → surface to the caller, stop; don't improvise a re-decomposition (`ship:plan`'s job).
 
 ---
 
 ## 4. Integration
 
-Apply the plan's `## Integration` notes — verify cross-module imports/exports and registration. Plan unworkable → surface to the caller, stop; don't improvise a re-decomposition (`ship:plan`'s job).
-
-Read files to verify, never edit them. Code change needed → dispatch `Mode: fix` with the specific wiring.
+Apply the plan's `## Integration` notes — verify cross-module imports/exports and registration, and wire them directly where missing.
 
 ---
 
@@ -85,7 +63,7 @@ Read files to verify, never edit them. Code change needed → dispatch `Mode: fi
 
 Run the typecheck command from `ship/config.md` (e.g. `pnpm typecheck`, `mypy`, `go vet`); skip if unconfigured.
 
-On failure: dispatch `Mode: fix` with the error output and offending files, re-run. After 2 failed cycles, record errors and report to the caller instead of looping.
+On failure: apply the minimal fix for the reported errors (no unrelated refactors), re-run. After 2 failed cycles, record errors and report to the caller instead of looping.
 
 ---
 
@@ -99,7 +77,7 @@ Present → run as before:
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
 
-Hits → dispatch `Mode: clean` with the exact `file:line` hits, re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then step 7.
+Hits → clean the exact `file:line` hits yourself (remove the comment or rename the identifier — never annotate; leave lookalike tokens in string literals like `UTF-8` untouched), re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then step 7.
 
 ---
 
@@ -111,7 +89,7 @@ Hits → dispatch `Mode: clean` with the exact `file:line` hits, re-run. Hits re
 
 ## 8. Write phase status
 
-Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-status-dev.md` (if the scratch dir exists) — never write directly to shared `phase-status.md` — this phase can run concurrently with `ship:test Mode: generate`, and a concurrent append would race. The caller consolidates the row, substituting the real run number for `#<RUN>`:
+Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-status-dev.md` (if the scratch dir exists) — never write directly to shared `phase-status.md`; the caller consolidates the row, substituting the real run number for `#<RUN>`:
 
 ```
 | dev | #<RUN> | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
@@ -121,13 +99,13 @@ Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-s
 
 ## 9. Self-check before returning (MANDATORY)
 
-1. **Worker count = module count?** Modules in `plan.md` (or 1) vs `ship-develop-implement` calls issued — dispatch any missing.
-2. **Did source change?** `git diff --stat` (scratch dir is gitignored). Empty output, absent a legitimate "already implemented" re-run, means workers did nothing — investigate, re-dispatch, or report honestly.
-3. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, dispatched `Mode: clean` and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
+1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
+2. **Did source change?** `git diff --stat` (scratch dir is gitignored). Empty output, absent a legitimate "already implemented" re-run, means nothing was written — investigate, implement, or report honestly.
+3. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
 
-Narrating a plan while issuing zero Agent tool calls is itself a defect — stop and dispatch instead.
+Narrating a plan while editing zero files is itself a defect — stop and implement instead.
 
 ## Rules
 
-- **Read efficiency** — re-read a file only if modified externally, likely compacted, or explicitly requested.
+- **Read efficiency** — re-read a file only if modified externally, likely compacted, or explicitly requested; never after Edit/Write to confirm.
 - **Language** — user-facing output in the caller's `Artifact language`; code, names, commits stay English.
