@@ -1,6 +1,6 @@
 # Worker Status Pattern
 
-Completion-state rules applied to every leaf worker dispatched by an orchestrator (`ship:develop`, `ship:run`, and any other command that fans out to Agents).
+Completion-state rules applied to every leaf worker dispatched by an orchestrator (`ship:test`, `ship:run`, and any other command that fans out to Agents).
 
 This is a **completion axis** — it answers "did the worker finish, and how?" — and is orthogonal to the **quality axis** documented in `gates.md` (PASS/WARN/FAIL, derived from `critical`/`high`/`medium` findings). A worker can report `Status: DONE` while its output still triggers `Gate: FAIL` in a later quality phase — the two axes are evaluated independently and never conflated.
 
@@ -30,7 +30,7 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
 
-**Behavior:** orchestrator re-dispatches the worker with the missing context supplied, bounded by the existing retry ceilings for the calling command (`ship:develop`: 2 cycles; `ship:run`: 3 iterations). If the ceiling is reached without resolution, treat as `BLOCKED`.
+**Behavior:** orchestrator re-dispatches the worker with the missing context supplied, bounded by the existing retry ceilings for the calling command (`ship:test`: 2 cycles; `ship:run`: 3 iterations). If the ceiling is reached without resolution, treat as `BLOCKED`.
 
 ### BLOCKED
 

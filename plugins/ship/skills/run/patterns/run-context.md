@@ -113,9 +113,9 @@ A test slot that collides with the denylist is never added here — the worker s
 
 ### `phase-status.md` format
 
-Rows are written **exclusively by the orchestrator** — never directly by a phase agent. This is deliberate: `develop`+`test-generate` dispatch concurrently in Phase 2, and `perf`+`security`+`review`+`analyze` dispatch concurrently in Phase 4 (and again on each surgical re-run round). If those agents each did their own read-modify-write append against the same shared file, two concurrent writers can both read the file before either writes back, and the second write silently discards the first agent's row (lost update) — `homolog` then treats the missing row as an automatic FAIL (`homolog/SKILL.md` → phase-with-no-row rule) even though that phase actually passed.
+Rows are written **exclusively by the orchestrator** — never directly by a phase agent. This is deliberate: `perf`+`security`+`review`+`analyze` dispatch concurrently in Phase 4 (and again on each surgical re-run round). If those agents each did their own read-modify-write append against the same shared file, two concurrent writers can both read the file before either writes back, and the second write silently discards the first agent's row (lost update) — `homolog` then treats the missing row as an automatic FAIL (`homolog/SKILL.md` → phase-with-no-row rule) even though that phase actually passed.
 
-To avoid this, each phase agent writes its own row to a **private per-phase scratch file** (`phase-status-<phase>.md` — see above) instead of touching the shared file. Only the orchestrator, which runs single-threaded and consolidates immediately after each concurrent-dispatch barrier returns (end of Phase 2, end of Phase 4, end of each surgical re-run round), reads those per-phase files and appends their rows into the canonical `phase-status.md`, substituting the literal `#<RUN>` placeholder with the real run number it already tracks (`#1` for the first pass, `#<N>` for surgical re-run round N via `$FIX_ITERATION`). Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
+To avoid this, each phase agent writes its own row to a **private per-phase scratch file** (`phase-status-<phase>.md` — see above) instead of touching the shared file. Only the orchestrator, which runs single-threaded and consolidates immediately after each phase (or concurrent-dispatch barrier) returns (end of Phase 2, end of Phase 4, end of each surgical re-run round), reads those per-phase files and appends their rows into the canonical `phase-status.md`, substituting the literal `#<RUN>` placeholder with the real run number it already tracks (`#1` for the first pass, `#<N>` for surgical re-run round N via `$FIX_ITERATION`). Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
 
 ```markdown
 # Phase Status
@@ -191,8 +191,8 @@ Written and read by the deterministic correlation engine (`src/hooks/analyze-cor
   (develop and test read `plan.md`). The only write allowed is **writing (overwriting) its own
   row** to its private `.context/ship-run/<task-id>/phase-status-<phase>.md` upon phase
   completion — never a direct write to the shared `phase-status.md`, since multiple phase agents
-  write concurrently in the same turn (Phase 2's develop/test-generate overlap; Phase 4's
-  perf/security/review/analyze fan-out) and a shared-file append from concurrent agents loses rows.
+  write concurrently in the same turn (Phase 4's perf/security/review/analyze fan-out) and a
+  shared-file append from concurrent agents loses rows.
 - **`analyze`**: read only from existing files, plus writes its own `drift-report.md` /
   `drift-findings.json` outputs (persisted per storage mode as part of its own dispatch in
   Phase 4) and writes its row to `phase-status-analyze.md`, same as the other phase agents.
@@ -200,9 +200,9 @@ Written and read by the deterministic correlation engine (`src/hooks/analyze-cor
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
   back and writes `test-failures.md`. `generated-tests.md` follows the same "test agent writes,
-  no agent deletes another's files" convention already stated below. When `Mode: generate` runs
-  during the develop overlap (Phase 2), it writes concurrently with `ship:develop` — safe because
-  `plan.md`'s module map and the denylist derived from it keep the two writers' file sets disjoint.
+  no agent deletes another's files" convention already stated below. `Mode: generate` runs only
+  after `ship:develop` has completed; the denylist derived from `plan.md` still keeps its workers
+  from touching develop-owned source files.
 - **No agent** may delete or overwrite files written by another agent.
 
 ---
@@ -212,10 +212,8 @@ Written and read by the deterministic correlation engine (`src/hooks/analyze-cor
 | Moment | Action |
 |--------|--------|
 | Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
-| During develop (same turn, when `dev` + `test` enabled and `plan.md` exists) | `ship:test Mode: generate` runs in parallel with `ship:develop` — writes test files and `generated-tests.md`, never `test-failures.md` |
-| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) — the refresh naturally includes any test files `Mode: generate` wrote during the overlap, since both dispatches write to the same working tree |
-| After the evidence gate passes | `ship:test Mode: execute` reads `generated-tests.md` and writes `test-failures.md`. If the evidence gate fails, the pipeline stops before this step and `Mode: execute` never runs. If the overlapped `Mode: generate` failed or produced no manifest, `ship:test Mode: full` runs here instead (generate + execute in one pass) |
-| During pipeline (no overlap case: `dev` disabled, `test` disabled, or no `plan.md`) | `ship:test Mode: full` runs once, after develop (or in develop's place if `dev` is disabled) |
+| After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
+| After the evidence gate passes | `ship:test Mode: generate` runs (writes test files and `generated-tests.md`, never `test-failures.md`), then the deterministic test-exec step runs the suite. If the evidence gate fails, the pipeline stops before this step |
 | During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |

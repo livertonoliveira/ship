@@ -9,7 +9,7 @@ model: "sonnet"
 
 # Ship Run — Development Pipeline
 
-Drive a task through implementation → verification → user acceptance, maximizing parallel agents.
+Drive a task through implementation → verification → user acceptance. Phases run sequentially; only test-layer and quality fan-outs are parallel.
 
 **Linear:** everything lives in Linear. **Local:** everything lives in `ship/changes/<feature>/`.
 
@@ -61,11 +61,9 @@ Invoke `ship:plan` via Skill (`context: fork`, `model: sonnet`, never Agent) —
 
 > Skip if `dev` disabled (Verification's test-exec still runs).
 
-Overlap: `ship:develop` + `ship:test Mode: generate` same turn (forked Skills) when `dev`+`test` enabled and `plan.md` exists, or planner skipped (§1.9) with populated `## Files` (disjoint either way). Log both via `pipeline.sh dispatch` first.
+Log `pipeline.sh dispatch` for `dev` first, then invoke `ship:develop` via Skill (`context: fork`, never Agent), alone — no other phase runs this turn. Inline: task/title, language, scratch dir, storage mode, spec/design pointer — it reads `plan.md`'s module map (else single-module) and implements every module itself, sequentially.
 
-`ship:develop`: task/title, language, scratch dir, storage mode, spec/design pointer — reads `plan.md` module map, else single-module. `ship:test Mode: generate` (overlap only): `Mode: generate`, writes tests + `generated-tests.md`; denylist `plan.md` else `## Files`.
-
-Consolidate phase-status (MANDATORY, before proceeding) — sole writer of `phase-status.md`: `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev test` (drop `test` if the overlap didn't run). Line-count: `git diff --stat`, warn past 400.
+Consolidate phase-status (MANDATORY, before proceeding) — sole writer of `phase-status.md`: `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev`. Line-count: `git diff --stat`, warn past 400.
 
 ### 2.5. Refresh diff + classification (MANDATORY if `dev` ran)
 
@@ -89,7 +87,7 @@ Untested-files (non-blocking): `bash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh
 
 ### 3-4. STAGE: Verification (test-exec ∥ quality)
 
-`test` enabled, no `generated-tests.md` yet → dispatch `ship:test Mode: generate` first.
+`test` enabled → dispatch `ship:test Mode: generate` first and await it (its test-layer fan-out is parallel internally); skip if `generated-tests.md` already exists (re-run).
 
 Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
 

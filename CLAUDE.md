@@ -10,7 +10,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:spec` | Deep specification: requirements, design, granular tasks (<400 lines), Linear project/milestones/issues |
 | `/ship:run` | Development pipeline for a task: plan → develop → test → quality → homologation |
 | `/ship:plan` | Test-aware planning: decompose the task into modules and map scenarios to a test contract (single source of truth for develop + test) |
-| `/ship:develop` | Implementation orchestrator: reads the plan, fans out one leaf worker per module |
+| `/ship:develop` | Direct implementer: reads the plan and implements all modules sequentially in one context |
 | `/ship:test` | Generate and run tests (unit, integration, e2e) |
 | `/ship:perf` | Performance analysis of the diff |
 | `/ship:security` | OWASP security scan of the diff |
@@ -66,8 +66,8 @@ ship/
 - Code, variable names, commits, branch names: always in English
 
 ### Parallelism
-- Always use the Agent tool to parallelize work
-- Never execute sequentially what can be parallel
+- Parallel fan-out is allowed only where independent read-only analysis or disjoint test layers pay for the per-agent startup cost: the quality phases (`/ship:perf`, `/ship:security`, `/ship:review`, `/ship:analyze`), the test layers in `/ship:test`, and the `/ship:audit:*` commands
+- Everything else runs sequentially in a single context — `/ship:develop` implements all modules itself, in dependency order, with no leaf workers
 - Each parallel agent writes to separate files (no race conditions)
 
 ### Gates

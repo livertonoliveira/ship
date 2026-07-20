@@ -23,7 +23,6 @@ const RUN_FOOTPRINT_FILES = [
   'agents/ship-security.md',
   'agents/ship-review.md',
   'agents/ship-analyze.md',
-  'agents/ship-develop-implement.md',
   'agents/ship-test-unit.md',
 ];
 
