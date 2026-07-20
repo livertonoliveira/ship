@@ -81,8 +81,8 @@ cat > ship/config.md <<CFG
 - Language: JavaScript
 - Runtime: Node.js
 - Framework: none
-- Test runner: node --test
-- Package manager: npm
+- Test Framework: node --test
+- Package Manager: npm
 
 ## Gate Behavior
 # defer/pass so a non-deterministic gate never blocks the headless run;
