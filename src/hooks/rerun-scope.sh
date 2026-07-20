@@ -3,12 +3,22 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: rerun-scope.sh [<changed-files-file>] [<analyze-findings-json>]" >&2
+  echo "usage: rerun-scope.sh [<changed-files-file>] [<analyze-findings-json>] [--config <path>]" >&2
   echo "  reads changed files (one path per line) from the given file," >&2
   echo "  or from stdin if no argument is given" >&2
   echo "  optional 2nd arg: drift-findings.json from the previous analyze run;" >&2
   echo "  when every finding category is spec-side (DUP/TERM/AMBIG/SUBSPEC/PRINCIPLE)," >&2
   echo "  analyze is not re-run (a code fix cannot change spec-side findings)" >&2
+  echo "  --config: when Gate Behavior -> on_fail_rerun is 'all', force every phase" >&2
+  echo "  to rerun=true and skip scope mapping entirely (unless the fix was empty)" >&2
+}
+
+on_fail_rerun_mode() {
+  local config="$1"
+  [ -f "$config" ] || { printf 'surgical'; return; }
+  local v
+  v="$(grep -m1 -E '^-[[:space:]]*on_fail_rerun:' "$config" 2>/dev/null | sed -E 's/^-[[:space:]]*on_fail_rerun:[[:space:]]*//' | awk '{print $1}' || true)"
+  printf '%s' "${v:-surgical}"
 }
 
 json_escape() {
@@ -85,13 +95,22 @@ analyze_findings_spec_side_only() {
 }
 
 main() {
-  local input="${1:-}"
-  local analyze_findings="${2:-}"
+  local input="" analyze_findings="" config="" positional=0
 
-  if [ $# -gt 2 ]; then
-    usage
-    exit 1
-  fi
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --config) config="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        case "$positional" in
+          0) input="$1" ;;
+          1) analyze_findings="$1" ;;
+          *) usage; exit 1 ;;
+        esac
+        positional=$((positional + 1))
+        shift ;;
+    esac
+  done
 
   if [ -n "$input" ] && [ ! -f "$input" ]; then
     echo "rerun-scope.sh: input file not found: $input" >&2
@@ -158,6 +177,14 @@ main() {
     else
       analyze_rerun="true"
       analyze_reason="analyze scope is broad (full diff)"
+    fi
+
+    if [ -n "$config" ] && [ "$(on_fail_rerun_mode "$config")" = "all" ]; then
+      local all_reason="on_fail_rerun: all — scope mapping skipped, full re-run forced by config"
+      perf_rerun="true"; perf_reason="$all_reason"
+      security_rerun="true"; security_reason="$all_reason"
+      review_rerun="true"; review_reason="$all_reason"
+      analyze_rerun="true"; analyze_reason="$all_reason"
     fi
   fi
 

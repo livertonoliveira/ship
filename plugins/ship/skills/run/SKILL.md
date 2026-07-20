@@ -99,11 +99,11 @@ timeout 300 bash "${CLAUDE_SKILL_DIR}/hooks/test-exec.sh" .context/ship-run/<tas
 ```
 Exit 0 green → pass, zero agents. Exit 1 red → `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2`; limit hit → **STOP** ("Suíte vermelha. Intervenção manual necessária."); else ONE fix Agent (`model: sonnet`, `test-failures.md`), re-run. Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
 
-Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` → re-dispatch quality phases marked `rerun`.
+Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
 
 **(b) Quality:** class→agent-set scope (deterministic) — `bash "${CLAUDE_SKILL_DIR}/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`log=`. Pre-quality snapshot captured (step 0).
 
-Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Findings gate script:` `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never `git diff`.
+Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Findings gate script:` `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
 - `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
 - `security` + `Security Focus`, `Diff slice script:` `${CLAUDE_SKILL_DIR}/hooks/diff-slice.sh`.
 - `analyze` + `Test Scope`, `Correlate script:` `${CLAUDE_SKILL_DIR}/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).
@@ -122,7 +122,7 @@ FAIL: present findings, tracking (Linear sub-issues / local `tracking.md`); `ask
 
 Pre-fix snapshot (before the fix Agent): `bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/pre-fix-files.txt`. After: same `snapshot`+`diff` pattern as 2.6 against `pre-fix-files.txt`/`post-fix-files.txt`. Empty diff → gates.md Edge case 1 (`warn` rows, skip to acceptance).
 
-`on_fail_rerun` default `surgical`: `all` re-runs every enabled phase; `surgical` uses `bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json>` — `out_of_scope` → re-run all (Edge case 4), else per-phase `rerun` selects.
+`bash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` reads `on_fail_rerun` itself: `all` forces every `rerun=true`; default `surgical` — `out_of_scope` → re-run all (Edge case 4), else per-phase `rerun` selects.
 
 Re-invoke selected phases (same pattern as (b)); each writes its `phase-status-<phase>.md`, then consolidate again: `bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" <N> <scratch-file>...`, append stdout, add `notes=re-run cirúrgico`. Re-run `pipeline.sh gate`; another fix repeats the `iter` gate above.
 
