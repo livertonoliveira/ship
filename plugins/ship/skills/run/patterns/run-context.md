@@ -2,10 +2,11 @@
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
 between phase agents (develop, test, perf, security, review, analyze). `develop`
-and `ship:test Mode: generate` dispatch in the same Phase 2 turn when `plan.md`
-exists — see `run/SKILL.md` → Phase 2/3. `perf`, `security`, `review`, and
-`analyze` all dispatch in the same Phase 4 parallel turn and feed a single
-aggregated gate in Phase 5 — see `run/SKILL.md` → Phase 4/5.
+dispatches alone (Phase 2). Verification then runs in two turns: **Turn A**
+dispatches `ship:test Mode: generate` + `perf`/`security`/`review` concurrently
+(all need only the diff), and **Turn B** runs `test-exec` ∥ `analyze` (both need
+the generated tests). All quality phases feed a single aggregated gate in
+Phase 5 — see `run/SKILL.md` → Phase 3-4/5.
 
 ---
 

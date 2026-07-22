@@ -74,11 +74,13 @@ bash "@@ship/hooks/pipeline.sh" post-develop .context/ship-run/<task-id>
 ```
 Parse `evidence`: `ok` → ✓ continue. `warn` (re-run, no new mutation) → note, continue. `fail` (nothing written) → **STOP**. `untested` >0 → `warn`, non-blocking, never `fail`. `diff_class` is refreshed in `diff-class.txt` for the quality scope.
 
-### 3-4. STAGE: Verification (test-exec ∥ quality)
+### 3-4. STAGE: Verification (quality ∥ test-gen, then test-exec ∥ analyze)
 
-`test` enabled → dispatch `ship:test Mode: generate` first and await it (its test-layer fan-out is parallel internally); skip if `generated-tests.md` already exists (re-run).
+Quality scope once (deterministic): `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows, prints `run=`/`depth=`/`log=`. Pre-quality snapshot captured (step 0).
 
-Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
+**Turn A — dispatch concurrently, nothing waits** (all read `diff.md`/`plan.md`; `pipeline.sh dispatch` before each): `ship:test Mode: generate` (its test-layer fan-out is parallel internally; skip if `generated-tests.md` exists — re-run) **plus** the `run=` phases among `perf`/`security`/`review`. `test` disabled → drop test-gen; empty `run=` → drop those.
+
+**Turn B — after A** (both need the generated tests): (a) test-exec ∥ (b) `analyze` if in `run=`.
 
 **(a) Test execution:**
 ```bash
@@ -86,11 +88,9 @@ timeout 300 bash "@@ship/hooks/test-exec.sh" .context/ship-run/<task-id> [--conf
 ```
 Exit 0 green → pass, zero agents. Exit 1 red → `bash "@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2`; limit hit → **STOP** ("Suíte vermelha. Intervenção manual necessária."); else ONE fix Agent (`model: sonnet`, `test-failures.md`), re-run. Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
 
-Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
+Reconciliation (fix touched source, suite went green): snapshot (as 2.5) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
 
-**(b) Quality:** class→agent-set scope (deterministic) — `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`depth=`/`log=`. Pre-quality snapshot captured (step 0).
-
-Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Fan-out: <depth>` (perf/security/review — flat = no sub-agents), `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
+**Common inline** (every quality Agent — `ship:ship-perf`/`-security`/`-review`/`-analyze` direct, never Skill wrappers): task, language, storage mode, scratch, `Severity Overrides`, `Fan-out: <depth>` (perf/security/review — flat = no sub-agents), `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
 - `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
 - `security` + `Security Focus`, `Diff slice script:` `@@ship/hooks/diff-slice.sh`.
 - `analyze` + `Test Scope`, `Correlate script:` `@@ship/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).
