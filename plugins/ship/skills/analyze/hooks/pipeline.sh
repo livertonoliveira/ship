@@ -758,9 +758,42 @@ plan_predict_single_module() {
   [ "${layers:-0}" -le 1 ]
 }
 
+# Module file list: plan.md `- Files:` lines when a plan exists, spec.md
+# `## Files` bullets otherwise. Feeds both the denylist (never write) and the
+# SUT slice (read first) of the worker brief.
+next_module_files() {
+  local plan="$1" spec="$2"
+  if [ -f "$plan" ]; then
+    grep -E '^- Files:' "$plan" | sed -E 's/^- Files:[[:space:]]*//' | tr ',' '\n' \
+      | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/`//g' | grep -v '^$' || true
+  elif [ -f "$spec" ]; then
+    awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /{sub(/^- */,"");print}' "$spec" 2>/dev/null \
+      | sed 's/`//g' || true
+  fi
+}
+
+# Nearest existing test file to the first SUT path (longest shared directory
+# prefix, git ls-files order breaks ties) — cited in the brief as a style
+# reference so workers skip standalone pattern discovery.
+next_test_pattern_ref() {
+  local target="$1"
+  [ -n "$target" ] || return 0
+  git ls-files -- '*.spec.*' '*.test.*' '*_test.*' '*_spec.rb' 'test_*.py' 2>/dev/null \
+    | awk -v target="$target" '
+      BEGIN { n = split(target, t, "/"); best = -1 }
+      {
+        m = split($0, c, "/")
+        score = 0
+        for (i = 1; i <= n && i <= m; i++) { if (t[i] == c[i]) score++; else break }
+        if (score > best) { best = score; pick = $0 }
+      }
+      END { if (pick != "") print pick }
+    '
+}
+
 # Per-layer worker brief: contract slots + de-identified scenarios + denylist +
-# source pointer, derived deterministically from plan.md/spec.md. Replaces the
-# ship:test orchestrator's inline context slicing.
+# SUT slice (source files + style reference), derived deterministically from
+# plan.md/spec.md. Replaces the ship:test orchestrator's inline context slicing.
 next_test_brief() {
   local scratch="$1" layer="$2"
   local plan="$scratch/plan.md" spec="$scratch/spec.md" out="$scratch/test-brief-$layer.md"
@@ -791,14 +824,20 @@ next_test_brief() {
     else
       printf 'No tagged scenarios found — derive behaviors from the Acceptance Criteria in %s.\n' "$spec"
     fi
+    local files first ref
+    files="$(next_module_files "$plan" "$spec")"
     printf '\n## Denylist\n\n'
-    if [ -f "$plan" ]; then
-      grep -E '^- Files:' "$plan" | sed -E 's/^- Files:[[:space:]]*//' | tr ',' '\n' \
-        | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' | sed 's/^/- /' || true
-    else
-      awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /' "$spec" 2>/dev/null || true
+    [ -n "$files" ] && printf '%s\n' "$files" | sed 's/^/- /'
+    printf '\n## Source\n\n'
+    if [ -n "$files" ]; then
+      printf 'Source files under test — read these first; do not explore the codebase before reading them:\n\n'
+      printf '%s\n' "$files" | sed 's/^/- /'
+      printf '\n'
     fi
-    printf '\n## Source\n\nRead the full diff from %s/diff.md; read surrounding project code as needed.\n' "$scratch"
+    first="$(printf '%s\n' "$files" | head -1)"
+    ref="$(next_test_pattern_ref "$first")"
+    [ -n "$ref" ] && printf 'Style reference: mirror the structure and conventions of `%s` — skip standalone pattern discovery.\n\n' "$ref"
+    printf 'Full diff: %s/diff.md. Read other project code only where the files above leave a gap.\n' "$scratch"
   } > "$out"
 }
 

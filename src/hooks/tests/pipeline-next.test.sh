@@ -186,15 +186,18 @@ test_post_develop_no_mutation_stops() {
 }
 
 test_verify_a_dispatches_worker_with_brief() {
-  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist)"
+  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist, SUT slice)"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
 - e2e: disabled' ''
+  mkdir -p "$dir/src"
+  echo 'it(1)' > "$dir/src/existing.test.js"
+  (cd "$dir" && git add -A && git commit -qm tests && git update-ref refs/remotes/origin/main HEAD) >/dev/null
   next "$dir" TASK-1 >/dev/null
   single_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   next "$dir" TASK-1 >/dev/null
-  mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
+  echo 'module.exports=1' > "$dir/src/b.js"
   local out brief
   out="$(next "$dir" TASK-1)"
   brief="$dir/.context/ship-run/TASK-1/test-brief-unit.md"
@@ -204,6 +207,8 @@ test_verify_a_dispatches_worker_with_brief() {
     && grep -q 'Scenario: greets' "$brief" \
     && ! grep -q "$SCEN_ID" "$brief" \
     && grep -q 'src/b.js' "$brief" \
+    && grep -q 'read these first' "$brief" \
+    && grep -q 'src/existing.test.js' "$brief" \
     && grep -q '| test | Agent | ship-test-unit |' "$dir/.context/ship-run/TASK-1/dispatch-log.md"; then
     log_pass "$name"
   else
