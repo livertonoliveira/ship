@@ -16,6 +16,22 @@ usage() {
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
+# install fails with the resolved path instead of a raw "No such file" mid-run
+# (or an agent guessing "missing" from reading a call site it never confirmed).
+REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh"
+
+require_hooks() {
+  local missing="" h
+  for h in $REQUIRED_HOOKS; do
+    [ -f "$HOOK_DIR/$h" ] || missing="$missing $h"
+  done
+  if [ -n "$missing" ]; then
+    echo "pipeline.sh: MISSING HOOK(S)$missing at HOOK_DIR=$HOOK_DIR (resolved from \$0=$0)" >&2
+    exit 1
+  fi
+}
+
 KNOWN_PHASES="plan dev test perf security review analyze"
 
 is_known_phase() {
@@ -65,6 +81,8 @@ cmd_init() {
     check|fresh|resume) ;;
     *) init_usage; exit 1 ;;
   esac
+
+  require_hooks
 
   local SCRATCH=".context/ship-run/$TASK_ID"
   local DISPATCH_LOG="$SCRATCH/dispatch-log.md"
