@@ -143,6 +143,30 @@ test('detects orphan changed files with zero match against every requirement', (
   assert.deepEqual(out.orphans.map((o) => o.file), ['src/zorp/quux.ts']);
 });
 
+test('changed test files are never flagged as requirement orphans', () => {
+  const dir = setup();
+  const diffWithTests = `${DIFF}diff --git a/src/xoxo/xoxo.test.ts b/src/xoxo/xoxo.test.ts
+--- a/src/xoxo/xoxo.test.ts
++++ b/src/xoxo/xoxo.test.ts
+@@ -0,0 +1,1 @@
++it('xoxo mock', () => { const searchPublic = jest.fn() })
+diff --git a/src/wibble/__tests__/wibble.ts b/src/wibble/__tests__/wibble.ts
+--- a/src/wibble/__tests__/wibble.ts
++++ b/src/wibble/__tests__/wibble.ts
+@@ -0,0 +1,1 @@
++const wibble = mock
+diff --git a/e2e/flow.e2e-spec.ts b/e2e/flow.e2e-spec.ts
+--- a/e2e/flow.e2e-spec.ts
++++ b/e2e/flow.e2e-spec.ts
+@@ -0,0 +1,1 @@
++const flow = wobble
+`;
+  fs.writeFileSync(path.join(dir, 'diff.md'), diffWithTests);
+  const out = run(dir);
+  // Only the non-test orphan survives; the three changed test files are excluded.
+  assert.deepEqual(out.orphans.map((o) => o.file), ['src/zorp/quux.ts']);
+});
+
 test('detects duplicate requirement pairs at similarity >= 0.8', () => {
   const dir = setup();
   const out = run(dir);

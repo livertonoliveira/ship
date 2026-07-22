@@ -398,6 +398,16 @@ OUTPUT="$(awk \
     if (f ~ /\.generated\./ || f ~ /^dist\// || f ~ /\/dist\// || f ~ /^build\// || f ~ /\/build\//) return 1
     return 0
   }
+  # Mirrors the test-discovery globs (find patterns + layer_of): a changed test
+  # file is correlated via the AC/SC->test passes, never as a requirement orphan.
+  function is_test(f) {
+    if (f ~ /\.test\./ || f ~ /\.spec\./) return 1
+    if (f ~ /_test\.py$/ || f ~ /_test\.go$/) return 1
+    if (f ~ /__tests__/) return 1
+    if (f ~ /\.e2e\./ || f ~ /\.e2e-spec\./) return 1
+    if (f ~ /(^|\/)(e2e|cypress|playwright)\//) return 1
+    return 0
+  }
   function scope_enabled(l) {
     if (l == "unit") return unit_scope == "enabled"
     if (l == "integration") return integration_scope == "enabled"
@@ -569,6 +579,7 @@ OUTPUT="$(awk \
     if (nfile > 0 && nreq > 0) {
       for (fi = 1; fi <= nfile; fi++) {
         if (ignored(file_path[fi])) continue
+        if (is_test(file_path[fi])) continue
         best = 0
         for (r = 1; r <= nreq; r++) {
           s = jaccard(file_tok[fi], req_tok[r])
