@@ -13,123 +13,107 @@ fail=0
 ok()  { printf '\033[32m✓\033[0m %s\n' "$1"; }
 bad() { printf '\033[31m✗\033[0m %s\n' "$1"; fail=1; }
 
-HASH="$(printf '\043')"
-HEADING_PLAN="${HASH}${HASH}${HASH} 1.95. PHASE: Plan Validation"
-HEADING_DEV="${HASH}${HASH}${HASH} 2. PHASE: Development"
-
 setup_fixture() {
   local dir="$1"
-  mkdir -p "$dir/scripts" "$dir/src/skills/run" "$dir/plugins/ship/skills/run"
+  mkdir -p "$dir/scripts" "$dir/src/skills/run" "$dir/plugins/ship/skills/run" \
+    "$dir/src/hooks" "$dir/plugins/ship/hooks"
   cp "$GUARD" "$dir/scripts/check-plan-validate-wired.sh"
   chmod +x "$dir/scripts/check-plan-validate-wired.sh"
 }
 
-write_src_skill() {
+write_skills() {
   local dir="$1" body="$2"
   printf '%s\n' "$body" > "$dir/src/skills/run/SKILL.md"
-}
-
-write_compiled_skill() {
-  local dir="$1" body="$2"
   printf '%s\n' "$body" > "$dir/plugins/ship/skills/run/SKILL.md"
 }
 
-valid_src_body() {
-  printf '%s\n\n```bash\nbash "@@ship/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md\n```\n\n%s\n\nDo the thing.' \
-    "$HEADING_PLAN" "$HEADING_DEV"
+write_pipelines() {
+  local dir="$1" body="$2"
+  printf '%s\n' "$body" > "$dir/src/hooks/pipeline.sh"
+  printf '%s\n' "$body" > "$dir/plugins/ship/hooks/pipeline.sh"
 }
 
-valid_compiled_body() {
-  printf '%s\n\n```bash\nbash "${CLAUDE_SKILL_DIR}/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md\n```\n\n%s\n\nDo the thing.' \
-    "$HEADING_PLAN" "$HEADING_DEV"
+driver_skill_body() {
+  printf 'Run: bash "@@ship/hooks/pipeline.sh" next <task-id> and do what it says.'
 }
 
-body_without_invocation() {
-  printf '%s\n\nNothing here.\n\n%s\n\nDo the thing.' "$HEADING_PLAN" "$HEADING_DEV"
+pipeline_body_validate_before_develop() {
+  printf 'bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md"\ncmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet\nnext_body_add "- Skill ship:develop (forked)"\n'
 }
 
-body_invocation_after_development() {
-  printf '%s\n\nDo the thing.\n\n%s\n\n```bash\nbash "@@ship/hooks/plan-validate.sh" .context/ship-run/<task-id>/plan.md\n```' \
-    "$HEADING_DEV" "$HEADING_PLAN"
+pipeline_body_validate_after_develop() {
+  printf 'next_body_add "- Skill ship:develop (forked)"\nbash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md"\n'
+}
+
+pipeline_body_without_validate() {
+  printf 'next_body_add "- Skill ship:develop (forked)"\n'
+}
+
+run_guard() {
+  local dir="$1"
+  set +e
+  GUARD_OUT="$(cd "$dir" && ./scripts/check-plan-validate-wired.sh 2>&1)"
+  GUARD_STATUS=$?
+  set -e
 }
 
 test_guard_passes_on_happy_path() {
   local dir="$FIXTURE_DIR/pass"
   setup_fixture "$dir"
-  write_src_skill "$dir" "$(valid_src_body)"
-  write_compiled_skill "$dir" "$(valid_compiled_body)"
+  write_skills "$dir" "$(driver_skill_body)"
+  write_pipelines "$dir" "$(pipeline_body_validate_before_develop)"
+  run_guard "$dir"
 
-  local out status
-  set +e
-  out="$(cd "$dir" && ./scripts/check-plan-validate-wired.sh 2>&1)"
-  status=$?
-  set -e
-
-  if [[ "$status" -eq 0 ]] && grep -q "OK" <<<"$out"; then
-    ok "guard exits 0 and prints OK when both files invoke plan-validate before Development"
+  if [[ "$GUARD_STATUS" -eq 0 ]] && grep -q "OK" <<<"$GUARD_OUT"; then
+    ok "guard exits 0 when the SKILL drives pipeline.sh and validation precedes the develop dispatch"
   else
-    bad "guard did not pass on a clean fixture (status=$status)"
-    printf '%s\n' "$out" | sed 's/^/    /'
+    bad "guard did not pass on a clean fixture (status=$GUARD_STATUS)"
+    printf '%s\n' "$GUARD_OUT" | sed 's/^/    /'
   fi
 }
 
-test_guard_fails_when_src_missing_invocation() {
-  local dir="$FIXTURE_DIR/src-missing"
+test_guard_fails_when_pipeline_lacks_validate() {
+  local dir="$FIXTURE_DIR/no-validate"
   setup_fixture "$dir"
-  write_src_skill "$dir" "$(body_without_invocation)"
-  write_compiled_skill "$dir" "$(valid_compiled_body)"
+  write_skills "$dir" "$(driver_skill_body)"
+  write_pipelines "$dir" "$(pipeline_body_without_validate)"
+  run_guard "$dir"
 
-  local out status
-  set +e
-  out="$(cd "$dir" && ./scripts/check-plan-validate-wired.sh 2>&1)"
-  status=$?
-  set -e
-
-  if [[ "$status" -eq 1 ]] && grep -q "VIOLATION" <<<"$out" && grep -q "src/skills/run/SKILL.md" <<<"$out"; then
-    ok "guard exits 1 and names src/skills/run/SKILL.md when invocation is missing there"
+  if [[ "$GUARD_STATUS" -eq 1 ]] && grep -q "VIOLATION" <<<"$GUARD_OUT" && grep -q "plan-validate.sh" <<<"$GUARD_OUT"; then
+    ok "guard exits 1 when neither the SKILL nor pipeline.sh invokes plan-validate.sh"
   else
-    bad "guard did not fail naming src/skills/run/SKILL.md (status=$status)"
-    printf '%s\n' "$out" | sed 's/^/    /'
+    bad "guard did not fail on a pipeline without plan-validate (status=$GUARD_STATUS)"
+    printf '%s\n' "$GUARD_OUT" | sed 's/^/    /'
   fi
 }
 
-test_guard_fails_when_compiled_missing_invocation() {
-  local dir="$FIXTURE_DIR/compiled-missing"
-  setup_fixture "$dir"
-  write_src_skill "$dir" "$(valid_src_body)"
-  write_compiled_skill "$dir" "$(body_without_invocation)"
-
-  local out status
-  set +e
-  out="$(cd "$dir" && ./scripts/check-plan-validate-wired.sh 2>&1)"
-  status=$?
-  set -e
-
-  if [[ "$status" -eq 1 ]] && grep -q "VIOLATION" <<<"$out" && grep -q "plugins/ship/skills/run/SKILL.md" <<<"$out"; then
-    ok "guard exits 1 and names plugins/ship/skills/run/SKILL.md when invocation is missing there"
-  else
-    bad "guard did not fail naming plugins/ship/skills/run/SKILL.md (status=$status)"
-    printf '%s\n' "$out" | sed 's/^/    /'
-  fi
-}
-
-test_guard_fails_when_invocation_after_development_heading() {
+test_guard_fails_when_validate_after_develop_dispatch() {
   local dir="$FIXTURE_DIR/wrong-order"
   setup_fixture "$dir"
-  write_src_skill "$dir" "$(body_invocation_after_development)"
-  write_compiled_skill "$dir" "$(valid_compiled_body)"
+  write_skills "$dir" "$(driver_skill_body)"
+  write_pipelines "$dir" "$(pipeline_body_validate_after_develop)"
+  run_guard "$dir"
 
-  local out status
-  set +e
-  out="$(cd "$dir" && ./scripts/check-plan-validate-wired.sh 2>&1)"
-  status=$?
-  set -e
-
-  if [[ "$status" -eq 1 ]] && grep -q "VIOLATION" <<<"$out" && grep -qi "not before" <<<"$out"; then
-    ok "guard exits 1 when invocation is placed after the Development heading"
+  if [[ "$GUARD_STATUS" -eq 1 ]] && grep -qi "not before" <<<"$GUARD_OUT"; then
+    ok "guard exits 1 when validation follows the ship:develop dispatch in the state machine"
   else
-    bad "guard did not fail when invocation follows the Development heading (status=$status)"
-    printf '%s\n' "$out" | sed 's/^/    /'
+    bad "guard did not fail on wrong ordering (status=$GUARD_STATUS)"
+    printf '%s\n' "$GUARD_OUT" | sed 's/^/    /'
+  fi
+}
+
+test_guard_fails_when_skill_lacks_pipeline_reference() {
+  local dir="$FIXTURE_DIR/skill-unwired"
+  setup_fixture "$dir"
+  write_skills "$dir" "This skill mentions no hooks at all."
+  write_pipelines "$dir" "$(pipeline_body_validate_before_develop)"
+  run_guard "$dir"
+
+  if [[ "$GUARD_STATUS" -eq 1 ]] && grep -q "VIOLATION" <<<"$GUARD_OUT" && grep -q "SKILL.md" <<<"$GUARD_OUT"; then
+    ok "guard exits 1 when the SKILL neither invokes plan-validate.sh nor drives pipeline.sh"
+  else
+    bad "guard did not fail on an unwired SKILL (status=$GUARD_STATUS)"
+    printf '%s\n' "$GUARD_OUT" | sed 's/^/    /'
   fi
 }
 
@@ -216,9 +200,9 @@ echo "check-plan-validate-wired.sh — unit tests"
 echo
 
 test_guard_passes_on_happy_path
-test_guard_fails_when_src_missing_invocation
-test_guard_fails_when_compiled_missing_invocation
-test_guard_fails_when_invocation_after_development_heading
+test_guard_fails_when_pipeline_lacks_validate
+test_guard_fails_when_validate_after_develop_dispatch
+test_guard_fails_when_skill_lacks_pipeline_reference
 test_build_produces_no_drift_in_plugins_ship
 test_compiled_run_skill_within_line_budget
 test_guard_wired_in_ci

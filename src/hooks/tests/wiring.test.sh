@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RUN_SKILL="$REPO_ROOT/src/skills/run/SKILL.md"
+PIPELINE_SH="$REPO_ROOT/src/hooks/pipeline.sh"
 
 pass_count=0
 fail_count=0
@@ -19,185 +20,56 @@ log_fail() {
   echo "FAIL: $1"
 }
 
-test_status_consolidate_wired_in_two_sites() {
-  local name="run SKILL.md invokes status-consolidate.sh in the two remaining designated sites"
-  local count
-  count="$(grep -c '@@ship/hooks/status-consolidate.sh' "$RUN_SKILL" || true)"
-
-  if [ "$count" -eq 2 ]; then
-    log_pass "$name"
-  else
-    log_fail "$name (found $count occurrence(s), expected 2)"
-  fi
-}
-
-test_pipeline_complete_wired_in_develop_consolidation_site() {
-  local name="run SKILL.md invokes pipeline.sh complete in the develop-consolidation site"
-  if grep -q '@@ship/hooks/pipeline.sh" complete' "$RUN_SKILL"; then
+test_run_skill_drives_pipeline_next() {
+  local name="run SKILL.md drives the pipeline exclusively via pipeline.sh next"
+  if grep -q '@@ship/hooks/pipeline.sh" next' "$RUN_SKILL"; then
     log_pass "$name"
   else
     log_fail "$name"
   fi
 }
 
-test_status_consolidate_near_develop_consolidation() {
-  local name="the develop-phase consolidation section references pipeline.sh complete"
-  if grep -A5 'Consolidate phase-status (MANDATORY, before proceeding)' "$RUN_SKILL" | grep -q '@@ship/hooks/pipeline.sh" complete'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_status_consolidate_near_gate_check() {
-  local name="the gate-check consolidation section references status-consolidate.sh"
-  if grep -A5 'Consolidate phase-status (MANDATORY, before evaluating the gate)' "$RUN_SKILL" | grep -q '@@ship/hooks/status-consolidate.sh'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_status_consolidate_near_surgical_rerun() {
-  local name="the surgical re-run step references status-consolidate.sh"
-  if grep -B2 -A2 'add `notes=re-run cirúrgico`' "$RUN_SKILL" | grep -q '@@ship/hooks/status-consolidate.sh'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_run_context_init_wired_in_init_section() {
-  local name="the run-context init section invokes pipeline.sh init"
-  local section
-  section="$(sed -n '/### 0.4–0.7\. Initialize the run context/,/### 1\. Load task context/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" init'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_run_context_init_call_removal_breaks_detection() {
-  local name="removing the pipeline.sh init call from a scratch copy breaks the init-section assertion"
-  local section stripped
-  section="$(sed -n '/### 0.4–0.7\. Initialize the run context/,/### 1\. Load task context/p' "$RUN_SKILL")"
-  stripped="$(printf '%s' "$section" | grep -v '@@ship/hooks/pipeline.sh" init')"
-
-  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" init'; then
+test_run_skill_next_removal_breaks_detection() {
+  local name="removing the pipeline.sh next call from a scratch copy breaks the driver assertion"
+  local stripped
+  stripped="$(grep -v '@@ship/hooks/pipeline.sh" next' "$RUN_SKILL")"
+  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" next'; then
     log_fail "$name (stripped copy still matched)"
   else
     log_pass "$name"
   fi
 }
 
-test_phase2_development_wired_in_pipeline_dispatch() {
-  local name="the Phase 2 development section invokes pipeline.sh dispatch for the dev phase"
-  local section
-  section="$(sed -n '/### 2\. PHASE: Development/,/### 2.5\. Refresh diff/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q 'pipeline.sh dispatch' && printf '%s' "$section" | grep -q '`dev`'; then
+test_run_skill_has_no_phase_choreography() {
+  local name="run SKILL.md contains no direct phase-hook choreography (all sequencing lives in pipeline.sh)"
+  local leftovers
+  leftovers="$(grep -nE '@@ship/hooks/(quality-scope|test-exec|plan-validate|rerun-scope|status-consolidate|evidence-gate|snapshot-files|analyze-precheck)\.sh' "$RUN_SKILL" || true)"
+  if [ -z "$leftovers" ]; then
     log_pass "$name"
   else
-    log_fail "$name"
+    log_fail "$name (found: $leftovers)"
   fi
 }
 
-test_phase2_development_pipeline_dispatch_removal_breaks_detection() {
-  local name="removing the pipeline.sh dispatch reference from a scratch copy breaks the Phase 2 assertion"
-  local section stripped
-  section="$(sed -n '/### 2\. PHASE: Development/,/### 2.5\. Refresh diff/p' "$RUN_SKILL")"
-  stripped="$(printf '%s' "$section" | grep -v 'pipeline.sh dispatch')"
-
-  if printf '%s' "$stripped" | grep -q 'pipeline.sh dispatch'; then
-    log_fail "$name (stripped copy still matched)"
-  else
-    log_pass "$name"
-  fi
+test_pipeline_next_wires_phase_hooks() {
+  local name_prefix="pipeline.sh next wires"
+  local script
+  for script in plan-validate.sh quality-scope.sh test-scope.sh test-exec.sh \
+    analyze-precheck.sh rerun-scope.sh status-consolidate.sh evidence-gate.sh \
+    snapshot-files.sh findings-gate.sh plan-scope.sh; do
+    if grep -q "\"\$HOOK_DIR/$script\"" "$PIPELINE_SH"; then
+      log_pass "$name_prefix $script"
+    else
+      log_fail "$name_prefix $script (no \"\$HOOK_DIR/$script\" call site)"
+    fi
+  done
 }
 
-test_pipeline_complete_call_removal_breaks_detection() {
-  local name="removing the pipeline.sh complete call from a scratch copy breaks the develop-consolidation assertion"
-  local section stripped
-  section="$(grep -A5 'Consolidate phase-status (MANDATORY, before proceeding)' "$RUN_SKILL")"
-  stripped="$(printf '%s' "$section" | grep -v '@@ship/hooks/pipeline.sh" complete')"
-
-  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" complete'; then
-    log_fail "$name (stripped copy still matched)"
-  else
-    log_pass "$name"
-  fi
-}
-
-test_pipeline_gate_wired_in_gate_check_section() {
-  local name="the GATE CHECK section invokes pipeline.sh gate"
-  local section
-  section="$(sed -n '/### 5\. GATE CHECK/,/#### Surgical Re-run Procedure/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" gate'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_pipeline_gate_call_removal_breaks_detection() {
-  local name="removing the pipeline.sh gate call from a scratch copy breaks the GATE CHECK assertion"
-  local section stripped
-  section="$(sed -n '/### 5\. GATE CHECK/,/#### Surgical Re-run Procedure/p' "$RUN_SKILL")"
-  stripped="$(printf '%s' "$section" | grep -v '@@ship/hooks/pipeline.sh" gate')"
-
-  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" gate'; then
-    log_fail "$name (stripped copy still matched)"
-  else
-    log_pass "$name"
-  fi
-}
-
-test_evidence_gate_wired_via_post_develop() {
-  local name="the post-develop consolidation section drives evidence-gate.sh via pipeline.sh post-develop"
-  local section
-  section="$(sed -n '/### 2.5. Post-develop consolidation/,/### 3-4. STAGE: Verification/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" post-develop' \
-    && grep -q '"$HOOK_DIR/evidence-gate.sh"' "$REPO_ROOT/src/hooks/pipeline.sh"; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_rerun_scope_wired_in_surgical_rerun_step() {
-  local name="the surgical re-run procedure invokes rerun-scope.sh"
-  local section
-  section="$(sed -n '/#### Surgical Re-run Procedure/,/### 6. PHASE: User Acceptance/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/rerun-scope.sh'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_pipeline_iter_wired_in_surgical_rerun_step() {
-  local name="the surgical re-run procedure invokes pipeline.sh iter with the fix counter, max 3"
-  local section
-  section="$(sed -n '/#### Surgical Re-run Procedure/,/### 6. PHASE: User Acceptance/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> fix --max 3'; then
-    log_pass "$name"
-  else
-    log_fail "$name"
-  fi
-}
-
-test_pipeline_iter_wired_in_test_exec_step() {
-  local name="the test-execution step invokes pipeline.sh iter with the test-fix counter, max 2"
-  local section
-  section="$(sed -n '/\*\*(a) Test execution:\*\*/,/Reconciliation/p' "$RUN_SKILL")"
-
-  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2'; then
+test_pipeline_next_state_machine_present() {
+  local name="pipeline.sh exposes the next subcommand and its emission protocol"
+  if grep -q 'cmd_next' "$PIPELINE_SH" \
+    && grep -q "next)" "$PIPELINE_SH" \
+    && grep -qE "printf 'state=%s" "$PIPELINE_SH"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -224,14 +96,12 @@ test_old_manual_intersection_prose_removed() {
 
 test_pipeline_init_self_contained() {
   local name="pipeline.sh's init subcommand is self-contained (no exec/dependency on a sibling run-init.sh)"
-  local pipeline_sh="$REPO_ROOT/src/hooks/pipeline.sh"
-
-  if grep -q 'run-init.sh' "$pipeline_sh"; then
+  if grep -q 'run-init.sh' "$PIPELINE_SH"; then
     log_fail "$name (pipeline.sh still references run-init.sh)"
     return
   fi
 
-  if grep -q 'cmd_init' "$pipeline_sh"; then
+  if grep -q 'cmd_init' "$PIPELINE_SH"; then
     log_pass "$name"
   else
     log_fail "$name (no cmd_init function found)"
@@ -249,22 +119,11 @@ test_build_no_drift() {
   fi
 }
 
-test_status_consolidate_wired_in_two_sites
-test_pipeline_complete_wired_in_develop_consolidation_site
-test_status_consolidate_near_develop_consolidation
-test_status_consolidate_near_gate_check
-test_status_consolidate_near_surgical_rerun
-test_run_context_init_wired_in_init_section
-test_run_context_init_call_removal_breaks_detection
-test_phase2_development_wired_in_pipeline_dispatch
-test_phase2_development_pipeline_dispatch_removal_breaks_detection
-test_pipeline_complete_call_removal_breaks_detection
-test_pipeline_gate_wired_in_gate_check_section
-test_pipeline_gate_call_removal_breaks_detection
-test_evidence_gate_wired_via_post_develop
-test_rerun_scope_wired_in_surgical_rerun_step
-test_pipeline_iter_wired_in_surgical_rerun_step
-test_pipeline_iter_wired_in_test_exec_step
+test_run_skill_drives_pipeline_next
+test_run_skill_next_removal_breaks_detection
+test_run_skill_has_no_phase_choreography
+test_pipeline_next_wires_phase_hooks
+test_pipeline_next_state_machine_present
 test_old_manual_run_substitution_prose_removed
 test_old_manual_intersection_prose_removed
 test_pipeline_init_self_contained
