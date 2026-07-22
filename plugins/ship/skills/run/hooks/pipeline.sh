@@ -4,12 +4,14 @@ set -euo pipefail
 
 usage() {
   echo "usage: pipeline.sh <subcommand> [args...]" >&2
-  echo "  init      <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
-  echo "  dispatch  <scratch-dir> <phase> <tool> <name> <model>" >&2
-  echo "  complete  <scratch-dir> <run-number> <phase>..." >&2
-  echo "  gate      <scratch-dir> [--config <path>]" >&2
-  echo "  rows      <scratch-dir>" >&2
-  echo "  iter      <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  init            <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
+  echo "  dispatch        <scratch-dir> <phase> <tool> <name> <model>" >&2
+  echo "  complete        <scratch-dir> <run-number> <phase>..." >&2
+  echo "  gate            <scratch-dir> [--config <path>]" >&2
+  echo "  rows            <scratch-dir>" >&2
+  echo "  iter            <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  report-timings  <scratch-dir>" >&2
+  echo "  post-develop    <scratch-dir>" >&2
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -153,10 +155,16 @@ cmd_dispatch() {
     exit 1
   fi
 
-  local ts
+  local ts epoch
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  epoch="$(date -u +%s)"
 
   printf '| %s | %s | %s | %s | %s |\n' "$phase" "$tool" "$name" "$model" "$ts" >> "$scratch_dir/dispatch-log.md"
+  # Wall-clock instrumentation: one row per dispatch. report-timings pairs
+  # consecutive rows into per-phase durations — the breakdown that turns "the
+  # pipeline felt slow" into "phase X took N seconds". Skipped dispatches
+  # (tool=skipped) are recorded too so a zero-duration skip is visible.
+  printf '%s\t%s\t%s\t%s\n' "$epoch" "$phase" "$tool" "$name" >> "$scratch_dir/timings.tsv"
   echo "▶ Fase: $phase | tool=$tool | name=$name | model=$model"
 }
 
@@ -234,6 +242,117 @@ cmd_iter() {
   if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
     exit 2
   fi
+}
+
+post_develop_usage() {
+  echo "usage: pipeline.sh post-develop <scratch-dir>" >&2
+  echo "  Runs the full post-develop sequence in one call: refresh diff.md, re-classify," >&2
+  echo "  snapshot the tree, diff it against the pre-develop snapshot for mutation evidence," >&2
+  echo "  and check untested touched files. Replaces five separate orchestrator invocations." >&2
+  echo "  Prints: diff_class=<class>  evidence=ok|warn|fail  untested=<n>" >&2
+}
+
+cmd_post_develop() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) post_develop_usage; exit 0 ;;
+      -*) post_develop_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else post_develop_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  if [ -z "$scratch" ]; then post_develop_usage; exit 1; fi
+
+  local pre="$scratch/pre-develop-files.txt"
+  if [ ! -f "$pre" ]; then
+    echo "pipeline.sh post-develop: pre-develop snapshot not found: $pre (run 'init' first)" >&2
+    exit 1
+  fi
+
+  # 1. develop writes to the tree without committing, so refresh the diff + class.
+  bash "$HOOK_DIR/capture-diff.sh" "$scratch/diff.md"
+  local class
+  class="$(bash "$HOOK_DIR/diff-classify.sh" "$scratch/diff.md" "$scratch/diff-class.txt")"
+
+  # 2. Mutation evidence: snapshot the tree, diff against the pre-develop snapshot.
+  #    A non-empty set is develop's verified footprint — trusted over its self-report.
+  bash "$HOOK_DIR/snapshot-files.sh" snapshot "$scratch/post-develop-files.txt"
+  bash "$HOOK_DIR/snapshot-files.sh" diff "$pre" "$scratch/post-develop-files.txt" \
+    > "$scratch/develop-touched-files.txt"
+
+  local evidence
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    evidence="ok"
+  elif [ -s "$scratch/diff.md" ] && grep -q '^diff --git ' "$scratch/diff.md"; then
+    # No new mutation this turn but the tree already carries work → re-run, not a no-op.
+    evidence="warn"
+  else
+    # No mutation and an empty diff → develop never ran. Caller must STOP.
+    evidence="fail"
+  fi
+
+  # 3. Untested touched files (non-blocking): count source files with no sibling test.
+  local untested=0
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    untested="$(bash "$HOOK_DIR/evidence-gate.sh" "$scratch/develop-touched-files.txt" \
+      | grep -oE '"untested":\[[^]]*\]' | sed 's/"untested"://' \
+      | grep -oE '"[^"]*"' | grep -c '"' || true)"
+    untested="${untested:-0}"
+  fi
+
+  printf 'diff_class=%s\n' "$class"
+  printf 'evidence=%s\n' "$evidence"
+  printf 'untested=%s\n' "$untested"
+}
+
+report_timings_usage() {
+  echo "usage: pipeline.sh report-timings <scratch-dir>" >&2
+  echo "  prints per-phase wall-clock durations from timings.tsv (consecutive-dispatch deltas) + total" >&2
+}
+
+cmd_report_timings() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) report_timings_usage; exit 0 ;;
+      -*) report_timings_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else report_timings_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then report_timings_usage; exit 1; fi
+  local timings="$scratch/timings.tsv"
+  if [ ! -f "$timings" ]; then
+    echo "pipeline.sh report-timings: timings.tsv not found: $timings" >&2
+    exit 1
+  fi
+
+  local now
+  now="$(date -u +%s)"
+
+  # Each row's duration = next row's epoch − this row's epoch; the final row runs
+  # until now (the phase is still in flight, or just handed control back). Total =
+  # last dispatch's start-to-now span, i.e. the whole pipeline's wall-clock.
+  awk -F'\t' -v now="$now" '
+    { epoch[NR] = $1; phase[NR] = $2; tool[NR] = $3; n = NR }
+    END {
+      if (n == 0) { print "no dispatches recorded"; exit }
+      printf "%-10s %-8s %8s\n", "phase", "tool", "seconds"
+      for (i = 1; i <= n; i++) {
+        end = (i < n) ? epoch[i + 1] : now
+        dur = end - epoch[i]
+        if (dur < 0) dur = 0
+        printf "%-10s %-8s %8d\n", phase[i], tool[i], dur
+      }
+      total = now - epoch[1]
+      if (total < 0) total = 0
+      printf "%-10s %-8s %8d\n", "TOTAL", "", total
+    }
+  ' "$timings"
 }
 
 gate_usage() {
@@ -534,6 +653,10 @@ case "$SUBCOMMAND" in
     cmd_rows "$@" ;;
   iter)
     cmd_iter "$@" ;;
+  report-timings)
+    cmd_report_timings "$@" ;;
+  post-develop)
+    cmd_post_develop "$@" ;;
   *)
     usage
     exit 1 ;;

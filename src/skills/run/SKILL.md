@@ -47,7 +47,7 @@ Before invoking ANY phase tool below — plan/dev/test/perf/security/review/anal
 
 > Linear MANDATORY: move issue to started state (@@ship/patterns/linear-status.md, never hardcode) — automatically, no confirmation.
 
-Persist `spec.md`+`design.md` to scratch once (@@ship/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`; em-dash not heading, so analyze skips it).
+Persist `spec.md`+`design.md` to scratch once (@@ship/patterns/run-context.md, which defines the `spec.md` slice + scope-index format) — phases read these, not re-inlined.
 
 ### 1.9. PHASE: Plan
 
@@ -65,31 +65,22 @@ Log `pipeline.sh dispatch` for `dev` first, then invoke `ship:develop` via Skill
 
 Consolidate phase-status (MANDATORY, before proceeding) — sole writer of `phase-status.md`: `bash "@@ship/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev`. Line-count: `git diff --stat`, warn past 400.
 
-### 2.5. Refresh diff + classification (MANDATORY if `dev` ran)
+### 2.5. Post-develop consolidation (MANDATORY if `dev` ran)
 
-> develop writes to the tree without committing, so the baseline diff misses it.
+> develop writes to the tree without committing — one call refreshes `diff.md` + class, verifies the mutation against the pre-develop snapshot (trusted over develop's self-report), and counts untested touched files.
 
 ```bash
-bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
-bash "@@ship/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
+bash "@@ship/hooks/pipeline.sh" post-develop .context/ship-run/<task-id>
 ```
+Parse `evidence`: `ok` → ✓ continue. `warn` (re-run, no new mutation) → note, continue. `fail` (nothing written) → **STOP**. `untested` >0 → `warn`, non-blocking, never `fail`. `diff_class` is refreshed in `diff-class.txt` for the quality scope.
 
-### 2.6. Develop evidence gate (MANDATORY if `dev` ran)
+### 3-4. STAGE: Verification (quality ∥ test-gen, then test-exec ∥ analyze)
 
-Trust the script's verified mutation, not develop's self-report:
-```bash
-bash "@@ship/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-develop-files.txt
-bash "@@ship/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-develop-files.txt .context/ship-run/<task-id>/post-develop-files.txt
-```
-Non-empty → ✓. Empty + baseline non-empty (re-run) → `warn`, continue. Empty + baseline empty (no worker dispatched) → **STOP**, `fail`.
+Quality scope once (deterministic): `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows, prints `run=`/`depth=`/`log=`. Pre-quality snapshot captured (step 0).
 
-Untested-files (non-blocking): `bash "@@ship/hooks/evidence-gate.sh" .context/ship-run/<task-id>/develop-touched-files.txt`; found → `warn`, never `fail`.
+**Turn A — dispatch concurrently, nothing waits** (all read `diff.md`/`plan.md`; `pipeline.sh dispatch` before each): `ship:test Mode: generate` (its test-layer fan-out is parallel internally; skip if `generated-tests.md` exists — re-run) **plus** the `run=` phases among `perf`/`security`/`review`. `test` disabled → drop test-gen; empty `run=` → drop those.
 
-### 3-4. STAGE: Verification (test-exec ∥ quality)
-
-`test` enabled → dispatch `ship:test Mode: generate` first and await it (its test-layer fan-out is parallel internally); skip if `generated-tests.md` already exists (re-run).
-
-Same turn: (a) test-exec, (b) quality fan-out — neither waits. `test` disabled → skip (a); quality disabled → skip (b).
+**Turn B — after A** (both need the generated tests): (a) test-exec ∥ (b) `analyze` if in `run=`.
 
 **(a) Test execution:**
 ```bash
@@ -97,14 +88,12 @@ timeout 300 bash "@@ship/hooks/test-exec.sh" .context/ship-run/<task-id> [--conf
 ```
 Exit 0 green → pass, zero agents. Exit 1 red → `bash "@@ship/hooks/pipeline.sh" iter .context/ship-run/<task-id> test-fix --max 2`; limit hit → **STOP** ("Suíte vermelha. Intervenção manual necessária."); else ONE fix Agent (`model: sonnet`, `test-failures.md`), re-run. Exit 2 unresolved → warn, `phase-status-test.md` gate=`skip`, offer `Mode: execute`, never auto-invoke. Exit 124 timeout → **STOP**.
 
-Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
+Reconciliation (fix touched source, suite went green): snapshot (as 2.5) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
 
-**(b) Quality:** class→agent-set scope (deterministic) — `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`log=`. Pre-quality snapshot captured (step 0).
-
-Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
+**Common inline** (every quality Agent — `ship:ship-perf`/`-security`/`-review`/`-analyze` direct, never Skill wrappers): task, language, storage mode, scratch, `Severity Overrides`, `Fan-out: <depth>` (perf/security/review — flat = no sub-agents), `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
 - `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
 - `security` + `Security Focus`, `Diff slice script:` `@@ship/hooks/diff-slice.sh`.
-- `analyze` + `Test Scope`, `Correlate script:` `@@ship/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).
+- `analyze` (in `run=`): run `bash "@@ship/hooks/analyze-precheck.sh" <spec.md> <diff.md> --scratch <dir> --test-scope <...> --findings-gate @@ship/hooks/findings-gate.sh` first — `agent=skip` (clean correlation, PASS row written) → dispatch `skipped`, no Agent; `agent=run` → dispatch the Agent (`Test Scope`, `Correlate script:` `@@ship/hooks/analyze-correlate.sh`; own severities feed the gate; persists via Linear `save_comment`).
 
 ### 5. GATE CHECK
 
@@ -134,7 +123,7 @@ Invoke `ship:homolog` via Skill — not forked, same context, never Agent. Inlin
 
 ### 7. MANDATORY STOP — await user confirmation for PR
 
-Verify Linear lifecycle: resolve completed-state (@@ship/patterns/linear-status.md, never hardcode), confirm `state.type == "completed"` + quality-report comment exist. Local: write `report-<task-id>.md`, mark `done` in `tasks.md`. Both: clean up temp files.
+Verify Linear lifecycle: resolve completed-state (@@ship/patterns/linear-status.md, never hardcode), confirm `state.type == "completed"` + quality-report comment exist. Local: write `report-<task-id>.md`, mark `done` in `tasks.md`. Both: surface the per-phase wall-clock (`bash "@@ship/hooks/pipeline.sh" report-timings .context/ship-run/<task-id>`), then clean up temp files.
 
 Inform user — multi-task: ask to continue/stop; single: "**Task complete!** Run `/ship:pr` when ready." STOP — never auto-invoke `/ship:pr`.
 

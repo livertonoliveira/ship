@@ -41,9 +41,9 @@ Log `Security focus: <category> (<n>/10 OWASP categorias ativas)` and carry the 
 
 ---
 
-## 3. Slice diff by category
+## 3. Fan-out decision
 
-Run the deterministic slicer — it partitions the diff into 3 category files by file path (A→injection, B→auth, C→data), copying any unmatched file into all three:
+Read `Fan-out:` from the caller. **`flat`** (default; small diffs) → skip slicing and sub-agents entirely: scan all 3 categories below yourself against `.context/ship-run/<task-id>/diff.md` in one pass (the diff is small enough that sub-agent startup would cost more than it saves), then go to step 5. **`nested`** (large diffs only) → run the deterministic slicer and launch 3 sub-agents:
 
 ```bash
 bash "<diff-slice-script>" .context/ship-run/<task-id>/diff.md --out-dir .context/ship-run/<task-id>
@@ -53,9 +53,9 @@ bash "<diff-slice-script>" .context/ship-run/<task-id>/diff.md --out-dir .contex
 
 ---
 
-## 4. Launch 3 sub-agents in parallel
+## 4. The 3 attack categories
 
-Launch all 3 via the **Agent tool** in one call, passing the active OWASP IDs (step 2) and the path to its own slice file (step 3). Each reads only its slice, analyzes ONLY new/modified code, and returns a JSON array in this shared format:
+Nested → launch all 3 via the **Agent tool** in one call, each with the active OWASP IDs (step 2) and its own slice path. Flat → work the same 3 categories inline. Either way, analyze ONLY new/modified code; findings share this JSON format:
 
 ```json
 [{"severity":"critical|high|medium|low","category":"...","filePath":"...","line":0,"title":"...","owasp":"A03:2021 Injection","cwe":"CWE-89","vector":"...","impact":"...","proofOfConcept":"...","fix":"..."}]
@@ -117,7 +117,7 @@ Write findings to `.context/ship-run/<task-id>/security-findings.md` (pipeline m
 
 ## Rules
 
-- Diff-only — no full-codebase scans (`/ship:audit:security` covers that). ALWAYS launch 3 sub-agents in parallel.
+- Diff-only — no full-codebase scans (`/ship:audit:security` covers that). Always cover all 3 categories; `Fan-out` decides whether via sub-agents (nested) or inline (flat).
 - No false positives: only report with concrete evidence. Proof of Concept required for critical/high. Fixes must include a code example matching the project's patterns.
 - Consider context (internal vs. public API threat model); avoid security theater.
 - Language: caller's `Artifact language` for user-facing output; code/variables stay English. Do NOT re-read files after Edit/Write unless requested or compaction is suspected.

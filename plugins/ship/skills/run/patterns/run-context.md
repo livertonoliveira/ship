@@ -2,10 +2,11 @@
 
 Temporary scratch pattern used by the `/ship:run` orchestrator to share context
 between phase agents (develop, test, perf, security, review, analyze). `develop`
-and `ship:test Mode: generate` dispatch in the same Phase 2 turn when `plan.md`
-exists — see `run/SKILL.md` → Phase 2/3. `perf`, `security`, `review`, and
-`analyze` all dispatch in the same Phase 4 parallel turn and feed a single
-aggregated gate in Phase 5 — see `run/SKILL.md` → Phase 4/5.
+dispatches alone (Phase 2). Verification then runs in two turns: **Turn A**
+dispatches `ship:test Mode: generate` + `perf`/`security`/`review` concurrently
+(all need only the diff), and **Turn B** runs `test-exec` ∥ `analyze` (both need
+the generated tests). All quality phases feed a single aggregated gate in
+Phase 5 — see `run/SKILL.md` → Phase 3-4/5.
 
 ---
 
@@ -29,9 +30,9 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 |------|-----------|---------|---------|
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review, analyze | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
-| `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full — title and covering issue when known) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
+| `spec.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full, as `<req-id> — <title> — covered by <issue-id>` — the em-dash keeps each entry a list line rather than a heading, so `analyze` skips it) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
 | `design.md` | orchestrator (run) — once, in step 1 | plan, develop, analyze | full Design document. Written once; `develop` slices it per module when fanning out workers |
-| `plan.md` | plan skill (`ship:plan`) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. Absent when the planner is skipped, which happens in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
+| `plan.md` | plan skill (`ship:plan`); or `develop` (minimal `## Test Contract` only, when the planner was skipped) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. When the planner is skipped, `develop` still writes the `## Test Contract` so `ship:test` keeps that single source instead of falling back to raw scenarios. Planner skipped in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
 | `phase-status.md` | orchestrator only (creates header; consolidates rows) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |

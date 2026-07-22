@@ -26,7 +26,7 @@ Extract the task ID. Scratch dir: `.context/ship-run/<task-id>/`. Read `ship/con
 
 Pipeline mode: read `spec.md` + `design.md` from the scratch dir. Standalone (no scratch dir): fetch directly — Linear via `get_issue`/`get_document`; Local via `ship/changes/<feature>/proposal.md` + `design.md`.
 
-`plan.md` in the scratch dir is the module map. Absent (planner skipped for `minor`/`trivial`, or standalone) → treat the whole task as a single module with spec/design as its contract.
+`plan.md` in the scratch dir is the module map. Absent (planner skipped for `minor`/`trivial`, or standalone) → treat the whole task as a single module with spec/design as its contract. In pipeline mode, before implementing, derive a minimal Test Contract from the spec's `@SC-XX` scenarios — one `@SC-XX -> <layer from its @unit/@integration/@e2e tag> -> <test file per project convention>` slot each — and write it to `plan.md` under `## Test Contract`, so `ship:test` still derives tests from one source instead of falling back to raw scenarios (the deliberate anti-drift contract `ship:plan` would otherwise own). Map only; never re-decompose modules.
 
 ---
 
