@@ -186,7 +186,7 @@ test_post_develop_no_mutation_stops() {
 }
 
 test_verify_a_dispatches_worker_with_brief() {
-  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist, SUT slice)"
+  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist, SUT slice, start marker)"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -203,6 +203,7 @@ test_verify_a_dispatches_worker_with_brief() {
   brief="$dir/.context/ship-run/TASK-1/test-brief-unit.md"
   if [ "$(field "$out" state)" = "verify-a" ] \
     && printf '%s' "$out" | grep -q 'subagent_type=ship:ship-test-unit' \
+    && printf '%s' "$out" | grep -q 'worker-start-ship-test-unit.txt' \
     && [ -f "$brief" ] \
     && grep -q 'Scenario: greets' "$brief" \
     && ! grep -q "$SCEN_ID" "$brief" \
@@ -210,6 +211,21 @@ test_verify_a_dispatches_worker_with_brief() {
     && grep -q 'read these first' "$brief" \
     && grep -q 'src/existing.test.js' "$brief" \
     && grep -q '| test | Agent | ship-test-unit |' "$dir/.context/ship-run/TASK-1/dispatch-log.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+  rm -rf "$dir"
+}
+
+test_report_timings_prints_worker_start_lag() {
+  local name="report-timings prints per-worker start lag from worker-start markers"
+  local dir; dir="$(mktemp -d)"
+  printf '100\ttest\tAgent\tship-test-unit\n110\treview\tAgent\tship-review\n' > "$dir/timings.tsv"
+  printf '160\n' > "$dir/worker-start-ship-test-unit.txt"
+  local out; out="$(bash "$PIPELINE" report-timings "$dir")"
+  if printf '%s\n' "$out" | grep -qE 'ship-test-unit +60' \
+    && ! printf '%s\n' "$out" | grep -qE '^ship-review '; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -371,6 +387,7 @@ test_greenfield_multi_module_runs_planner
 test_invalid_plan_asks_then_replans
 test_post_develop_no_mutation_stops
 test_verify_a_dispatches_worker_with_brief
+test_report_timings_prints_worker_start_lag
 test_silent_worker_failure_redispatches_then_stops
 test_happy_path_reaches_done_with_status_rows
 test_gate_fail_fix_rerun_cycle
