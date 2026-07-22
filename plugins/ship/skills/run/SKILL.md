@@ -47,7 +47,7 @@ Before invoking ANY phase tool below — plan/dev/test/perf/security/review/anal
 
 > Linear MANDATORY: move issue to started state (${CLAUDE_SKILL_DIR}/patterns/linear-status.md, never hardcode) — automatically, no confirmation.
 
-Persist `spec.md`+`design.md` to scratch once (${CLAUDE_SKILL_DIR}/patterns/run-context.md) — phases read these, not re-inlined. `spec.md`: task description + the requirement sections its ACs belong to + a scope index for the rest (`<req-id> — <title> — covered by <issue-id>`; em-dash not heading, so analyze skips it).
+Persist `spec.md`+`design.md` to scratch once (${CLAUDE_SKILL_DIR}/patterns/run-context.md, which defines the `spec.md` slice + scope-index format) — phases read these, not re-inlined.
 
 ### 1.9. PHASE: Plan
 
@@ -93,7 +93,7 @@ Reconciliation (fix touched source, suite went green): snapshot (as 2.5) → `ba
 **Common inline** (every quality Agent — `ship:ship-perf`/`-security`/`-review`/`-analyze` direct, never Skill wrappers): task, language, storage mode, scratch, `Severity Overrides`, `Fan-out: <depth>` (perf/security/review — flat = no sub-agents), `Findings gate script:` `${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
 - `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
 - `security` + `Security Focus`, `Diff slice script:` `${CLAUDE_SKILL_DIR}/hooks/diff-slice.sh`.
-- `analyze` + `Test Scope`, `Correlate script:` `${CLAUDE_SKILL_DIR}/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).
+- `analyze` (in `run=`): run `bash "${CLAUDE_SKILL_DIR}/hooks/analyze-precheck.sh" <spec.md> <diff.md> --scratch <dir> --test-scope <...> --findings-gate ${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh` first — `agent=skip` (clean correlation, PASS row written) → dispatch `skipped`, no Agent; `agent=run` → dispatch the Agent (`Test Scope`, `Correlate script:` `${CLAUDE_SKILL_DIR}/hooks/analyze-correlate.sh`; own severities feed the gate; persists via Linear `save_comment`).
 
 ### 5. GATE CHECK
 
