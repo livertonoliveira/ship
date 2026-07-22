@@ -155,12 +155,13 @@ test_pipeline_gate_call_removal_breaks_detection() {
   fi
 }
 
-test_evidence_gate_wired_in_develop_section() {
-  local name="the develop evidence gate section invokes evidence-gate.sh"
+test_evidence_gate_wired_via_post_develop() {
+  local name="the post-develop consolidation section drives evidence-gate.sh via pipeline.sh post-develop"
   local section
-  section="$(sed -n '/### 2.6. Develop evidence gate/,/### 3. PHASE: Testing/p' "$RUN_SKILL")"
+  section="$(sed -n '/### 2.5. Post-develop consolidation/,/### 3-4. STAGE: Verification/p' "$RUN_SKILL")"
 
-  if printf '%s' "$section" | grep -q '@@ship/hooks/evidence-gate.sh'; then
+  if printf '%s' "$section" | grep -q '@@ship/hooks/pipeline.sh" post-develop' \
+    && grep -q '"$HOOK_DIR/evidence-gate.sh"' "$REPO_ROOT/src/hooks/pipeline.sh"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -260,7 +261,7 @@ test_phase2_development_pipeline_dispatch_removal_breaks_detection
 test_pipeline_complete_call_removal_breaks_detection
 test_pipeline_gate_wired_in_gate_check_section
 test_pipeline_gate_call_removal_breaks_detection
-test_evidence_gate_wired_in_develop_section
+test_evidence_gate_wired_via_post_develop
 test_rerun_scope_wired_in_surgical_rerun_step
 test_pipeline_iter_wired_in_surgical_rerun_step
 test_pipeline_iter_wired_in_test_exec_step
