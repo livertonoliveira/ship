@@ -4,12 +4,13 @@ set -euo pipefail
 
 usage() {
   echo "usage: pipeline.sh <subcommand> [args...]" >&2
-  echo "  init      <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
-  echo "  dispatch  <scratch-dir> <phase> <tool> <name> <model>" >&2
-  echo "  complete  <scratch-dir> <run-number> <phase>..." >&2
-  echo "  gate      <scratch-dir> [--config <path>]" >&2
-  echo "  rows      <scratch-dir>" >&2
-  echo "  iter      <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  init            <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
+  echo "  dispatch        <scratch-dir> <phase> <tool> <name> <model>" >&2
+  echo "  complete        <scratch-dir> <run-number> <phase>..." >&2
+  echo "  gate            <scratch-dir> [--config <path>]" >&2
+  echo "  rows            <scratch-dir>" >&2
+  echo "  iter            <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  report-timings  <scratch-dir>" >&2
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -153,10 +154,16 @@ cmd_dispatch() {
     exit 1
   fi
 
-  local ts
+  local ts epoch
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  epoch="$(date -u +%s)"
 
   printf '| %s | %s | %s | %s | %s |\n' "$phase" "$tool" "$name" "$model" "$ts" >> "$scratch_dir/dispatch-log.md"
+  # Wall-clock instrumentation: one row per dispatch. report-timings pairs
+  # consecutive rows into per-phase durations — the breakdown that turns "the
+  # pipeline felt slow" into "phase X took N seconds". Skipped dispatches
+  # (tool=skipped) are recorded too so a zero-duration skip is visible.
+  printf '%s\t%s\t%s\t%s\n' "$epoch" "$phase" "$tool" "$name" >> "$scratch_dir/timings.tsv"
   echo "▶ Fase: $phase | tool=$tool | name=$name | model=$model"
 }
 
@@ -234,6 +241,54 @@ cmd_iter() {
   if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
     exit 2
   fi
+}
+
+report_timings_usage() {
+  echo "usage: pipeline.sh report-timings <scratch-dir>" >&2
+  echo "  prints per-phase wall-clock durations from timings.tsv (consecutive-dispatch deltas) + total" >&2
+}
+
+cmd_report_timings() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) report_timings_usage; exit 0 ;;
+      -*) report_timings_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else report_timings_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then report_timings_usage; exit 1; fi
+  local timings="$scratch/timings.tsv"
+  if [ ! -f "$timings" ]; then
+    echo "pipeline.sh report-timings: timings.tsv not found: $timings" >&2
+    exit 1
+  fi
+
+  local now
+  now="$(date -u +%s)"
+
+  # Each row's duration = next row's epoch − this row's epoch; the final row runs
+  # until now (the phase is still in flight, or just handed control back). Total =
+  # last dispatch's start-to-now span, i.e. the whole pipeline's wall-clock.
+  awk -F'\t' -v now="$now" '
+    { epoch[NR] = $1; phase[NR] = $2; tool[NR] = $3; n = NR }
+    END {
+      if (n == 0) { print "no dispatches recorded"; exit }
+      printf "%-10s %-8s %8s\n", "phase", "tool", "seconds"
+      for (i = 1; i <= n; i++) {
+        end = (i < n) ? epoch[i + 1] : now
+        dur = end - epoch[i]
+        if (dur < 0) dur = 0
+        printf "%-10s %-8s %8d\n", phase[i], tool[i], dur
+      }
+      total = now - epoch[1]
+      if (total < 0) total = 0
+      printf "%-10s %-8s %8d\n", "TOTAL", "", total
+    }
+  ' "$timings"
 }
 
 gate_usage() {
@@ -534,6 +589,8 @@ case "$SUBCOMMAND" in
     cmd_rows "$@" ;;
   iter)
     cmd_iter "$@" ;;
+  report-timings)
+    cmd_report_timings "$@" ;;
   *)
     usage
     exit 1 ;;
