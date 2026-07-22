@@ -119,9 +119,11 @@ parse_failed_files() {
   local out="$1"
   FAILED_FILES="$( {
     awk '
-      /^FAIL / { cur = $2 }
-      /^PASS / { cur = "" }
-      cur != "" && /(✕|✗|×)/ { print cur }
+      function flush() { if (cur != "" && marks == 0) print cur }
+      /^FAIL / { flush(); cur = $2; marks = 0 }
+      /^PASS / { flush(); cur = ""; marks = 0 }
+      cur != "" && /(✕|✗|×)/ { print cur; marks++ }
+      END { flush() }
     ' "$out" || true
     grep "location: " "$out" 2>/dev/null | sed -E "s/.*location: '([^:]+):[0-9]+:[0-9]+'.*/\1/" || true
     grep -E '^FAILED ' "$out" 2>/dev/null | sed -E 's/^FAILED ([^:]+)::.*/\1/' || true
@@ -155,6 +157,13 @@ write_reports() {
           printf -- '- %s (%s failures)\n' "$file" "$count"
         fi
       done
+    elif [ "$SUITE_SKIPPED" -eq 0 ] && [ "$RUN_EXIT_CODE" -ne 0 ]; then
+      # Suite exited non-zero but no failing file could be parsed (e.g. Jest
+      # "Test suite failed to run" with no per-test markers). Embed the raw tail
+      # so the fix agent gets the actual error instead of a contentless marker.
+      printf '\n## Test suite failed (could not parse failing files)\n\n```\n'
+      [ -n "$RUN_OUTPUT_FILE" ] && [ -f "$RUN_OUTPUT_FILE" ] && tail -80 "$RUN_OUTPUT_FILE"
+      printf '```\n'
     fi
   } > "$scratch/test-failures.md"
 
@@ -201,6 +210,8 @@ main() {
   TYPECHECK_OUT=""
   LINT_OUT=""
   SUITE_SKIPPED=0
+  RUN_OUTPUT_FILE=""
+  RUN_EXIT_CODE=0
   resolve_static_checks "$scratch" "$config"
 
   local tc_pid="" lint_pid=""
@@ -238,11 +249,6 @@ main() {
   else
     run_suite "${CMD_WORDS[@]}"
     parse_failed_files "$RUN_OUTPUT_FILE"
-    rm -f "$RUN_OUTPUT_FILE"
-
-    if [ -z "$FAILED_FILES" ] && [ "$RUN_EXIT_CODE" -ne 0 ]; then
-      FAILED_FILES="(unparsed)"
-    fi
   fi
 
   local overall=0
@@ -250,6 +256,7 @@ main() {
 
   write_reports "$scratch" "$FAILED_FILES" "$overall"
 
+  [ -n "$RUN_OUTPUT_FILE" ] && rm -f "$RUN_OUTPUT_FILE"
   [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
   [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
 
