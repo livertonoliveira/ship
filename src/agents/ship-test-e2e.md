@@ -15,12 +15,13 @@ Generate and run e2e tests for critical user flows described in the inline conte
 
 ## 1. Load context
 
+- `Brief: <path>` in the prompt (pipeline dispatch): Read that file — this layer's `## Test Contract`, `## Scenarios`, `## Denylist`, `## Source` pointer; treat like inline sections, never fall back to standalone discovery.
 - If injected inline, use ONLY `## Scenarios`, `## Files`, `## Source` (+optional `## Test Contract`) — never re-read `proposal.md`, `design.md`, or the Linear issue. `## Test Contract`, when present, is pre-mapped test slots (target file + arrange/act/assert) from `ship:plan`'s `@SC-XX` mapping — source of truth.
 - **Standalone**: read `ship/config.md` for stack/framework/conventions; `git diff --name-only origin/main...HEAD` for modified files.
 
 **Mode: clean** — hygiene fix, not generation. In each `## Violations` file, strip every comment and spec ID/Linear key (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) everywhere incl. names/string literals; rename ID-carrying test names to describe behavior. Change nothing else (keep legit tokens like `UTF-8`). Skip §2–3; report cleaned files.
 
-**Mode: generate** — do §2–3 minus Execution rules (no test run, no pass/fail counts), files only. Honor injected `## Denylist` (paths owned by `ship:develop` modules): never touch one, write tests only. If a required test's only viable location collides with a denylisted path, skip it, report the conflict (path + scenario/slot), and continue — the `Status: DONE_WITH_CONCERNS` trigger (§4). Report files created only.
+**Mode: generate** — do §2–3 minus Execution rules (no test run, no pass/fail counts), files only. Honor injected `## Denylist` (paths owned by `ship:develop` modules): never touch one, write tests only. If a required test's only viable location collides with a denylisted path, skip it, report the conflict (path + scenario/slot), and continue — the `Status: DONE_WITH_CONCERNS` trigger (§4). Report files created only. `Manifest: <path>` in the prompt: write one `- <path> (e2e)` line per file actually created to that manifest file — no header, write it even when empty.
 
 **Mode: execute** — runs an already-generated suite, skipping §2–3. Take injected `## Test Files`, run via the e2e command. On failure diagnose test vs. code, fix (up to 2 iterations). Report pass/fail per file and files edited during a fix, for the caller's hygiene sweep.
 

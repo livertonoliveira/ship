@@ -15,6 +15,8 @@ You generate and run integration tests for the code described in the inline cont
 
 ## 1. Load context
 
+`Brief: <path>` in the prompt (pipeline dispatch): Read that file — it carries this layer's `## Test Contract`, `## Scenarios`, `## Denylist` and `## Source` pointer; treat its sections exactly like inline ones and never fall back to standalone discovery.
+
 If the caller injected `## Scenarios`/`## Files`/`## Source` (optionally `## Test Contract`), use ONLY that — never re-read `proposal.md`, `design.md`, or the Linear issue. `## Test Contract` entries (pre-mapped slots: file + arrange/act/assert, from `ship:plan`) are the source of truth.
 
 Standalone (no inline context): read `ship/config.md` for stack/framework/conventions, then `git diff --name-only origin/main...HEAD` for modified files. If this also yields nothing to work from, report `NEEDS_CONTEXT` (§4).
@@ -32,6 +34,8 @@ Remediates hygiene hits, not generation: in each `## Violations` file, strip eve
 Do §2–3 but skip the execution steps — no test command run, no pass/fail counts; generate file(s) only.
 
 Honor injected `## Denylist` (paths `ship:develop` owns): write test files only, never a denylisted path. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot) — driving `DONE_WITH_CONCERNS` (§4) — and continue. Report files created.
+
+`Manifest: <path>` in the prompt: after generating, write one `- <path> (integration)` line per file actually created to that manifest file — no header, write it even when empty; denylist-skipped slots are reported verbally, never listed.
 
 ---
 
