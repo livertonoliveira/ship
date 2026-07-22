@@ -33,12 +33,21 @@ test('normal runs all enabled quality phases and skips none', () => {
   const o = parse(run('normal', ALL).stdout);
   assert.equal(o.run, 'perf security review analyze');
   assert.equal(o.skip, '');
+  assert.equal(o.depth, 'flat');
 });
 
 test('large runs all enabled quality phases and skips none', () => {
   const o = parse(run('large', ALL).stdout);
   assert.equal(o.run, 'perf security review analyze');
   assert.equal(o.skip, '');
+  assert.equal(o.depth, 'nested');
+});
+
+test('only a large diff earns nested fan-out; smaller classes stay flat', () => {
+  assert.equal(parse(run('trivial', ALL).stdout).depth, 'flat');
+  assert.equal(parse(run('minor', ALL).stdout).depth, 'flat');
+  assert.equal(parse(run('normal', ALL).stdout).depth, 'flat');
+  assert.equal(parse(run('large', ALL).stdout).depth, 'nested');
 });
 
 test('minor runs security+analyze and skips perf+review', () => {

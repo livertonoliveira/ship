@@ -27,8 +27,9 @@ Standalone fallback:
 
 ## 2. Determine agent strategy
 
-- **Large diff** (5+ files, different modules): one parallel Agent per module (§3–4 methodology + its diff slice), then consolidate findings.
-- **Focused diff** (1–4 files, same module): single sequential review.
+Read `Fan-out:` from the caller:
+- **`flat`** (default; small diffs): single in-context review of the whole diff — no sub-agents.
+- **`nested`** (large diffs only): one parallel Agent per module (§3–4 methodology + its diff slice), then consolidate findings.
 
 ---
 

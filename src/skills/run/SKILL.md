@@ -88,9 +88,9 @@ Exit 0 green → pass, zero agents. Exit 1 red → `bash "@@ship/hooks/pipeline.
 
 Reconciliation (fix touched source, suite went green): snapshot (as 2.6) → `bash "@@ship/hooks/rerun-scope.sh" <changed-files> <drift-findings.json> --config ship/config.md` → re-dispatch phases marked `rerun`.
 
-**(b) Quality:** class→agent-set scope (deterministic) — `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`log=`. Pre-quality snapshot captured (step 0).
+**(b) Quality:** class→agent-set scope (deterministic) — `bash "@@ship/hooks/quality-scope.sh" <class> --phases "perf security review analyze" --scratch .context/ship-run/<task-id>` (`<class>` from `diff-class.txt`): writes PASS skip rows for skipped phases, prints `run=`/`depth=`/`log=`. Pre-quality snapshot captured (step 0).
 
-Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
+Dispatch only the `run=` phases in ONE concurrent turn (empty `run=` → skip to Phase 5); `pipeline.sh dispatch` before each. All four as **Agent** direct (`ship:ship-perf`/`-security`/`-review`/`-analyze`), not the Skill wrappers (standalone-only). Common inline: task, language, storage mode, scratch, `Severity Overrides`, `Fan-out: <depth>` (perf/security/review — flat = no sub-agents), `Findings gate script:` `@@ship/hooks/findings-gate.sh`; each reads `diff.md` from scratch, never recomputes.
 - `perf`/`review` + project/stack. `review` writes `review-findings.md` (scratch only, never `ship/changes/` in Linear).
 - `security` + `Security Focus`, `Diff slice script:` `@@ship/hooks/diff-slice.sh`.
 - `analyze` + `Test Scope`, `Correlate script:` `@@ship/hooks/analyze-correlate.sh`; own severities feed the gate; persists (Linear `save_comment`).

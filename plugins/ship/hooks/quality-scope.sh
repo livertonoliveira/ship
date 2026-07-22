@@ -158,8 +158,19 @@ main() {
     done
   fi
 
+  # Fan-out depth: a small diff is already a fraction of one screen, so slicing it
+  # across nested sub-agents costs more in per-agent startup than it saves. Only a
+  # `large` diff earns nested fan-out; everything smaller runs each quality phase
+  # flat (the phase agent analyzes the whole diff in-context, no sub-agents).
+  local depth
+  case "$class" in
+    large) depth="nested" ;;
+    *) depth="flat" ;;
+  esac
+
   printf 'run=%s\n' "$(printf '%s ' ${run[@]+"${run[@]}"} | sed 's/ *$//')"
   printf 'skip=%s\n' "$(printf '%s ' ${skip[@]+"${skip[@]}"} | sed 's/ *$//')"
+  printf 'depth=%s\n' "$depth"
   printf 'log=%s\n' "$log"
 }
 

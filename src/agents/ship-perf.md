@@ -23,6 +23,8 @@ For **Stack**/config: use an injected `Stack:`/`## Config`/`Artifact language`/`
 
 ## 2. Determine agent strategy
 
+Read `Fan-out:` from the caller. **`flat`** (default; small diffs) → no sub-agents: apply the relevant checklist(s) below yourself against `.context/ship-run/<task-id>/diff.md` in one pass — the diff is small enough that sub-agent startup would cost more than it saves. **`nested`** (large diffs only) → fan out by project type:
+
 | Project Type | Agents |
 |-------------|---------|
 | **backend** | 1: Backend Performance |
@@ -30,11 +32,11 @@ For **Stack**/config: use an injected `Stack:`/`## Config`/`Artifact language`/`
 | **fullstack** | 2 parallel: Backend + Frontend |
 | **monorepo** | N parallel: 1 per workspace touched by the diff |
 
-**Monorepo:** cross-reference diff files against workspaces in `ship/config.md`; launch only for touched workspaces; classify each as backend or frontend and apply the matching agent.
+**Monorepo:** cross-reference diff files against workspaces in `ship/config.md`; launch only for touched workspaces; classify each as backend or frontend and apply the matching agent. Flat mode applies the same project-type routing to pick which checklist(s) to run inline.
 
 ---
 
-## 3. Launch agents (Agent tool; parallel single call if >1)
+## 3. Analyze (nested → Agent tool, parallel single call if >1; flat → inline)
 
 ### Backend Performance Agent
 
