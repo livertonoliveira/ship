@@ -6,56 +6,46 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
-const HOOK_SIBLING_REF = /\$HOOK_DIR\/([A-Za-z0-9_-]+\.sh)/g;
+const REPO_ROOT = path.resolve(PLUGIN_ROOT, '..', '..');
+const SRC_HOOKS = path.join(REPO_ROOT, 'src', 'hooks');
+const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
 
-function findHookScripts(dir, results = []) {
+function shFiles(dir) {
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.sh'))
+    .map((e) => e.name)
+    .sort();
+}
+
+function skillHookDirs(dir, results = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      findHookScripts(full, results);
-    } else if (entry.name.endsWith('.sh')) {
+    if (entry.name === 'hooks') {
       results.push(full);
+    } else {
+      skillHookDirs(full, results);
     }
   }
   return results;
 }
 
-test('every bundled hook has its HOOK_DIR siblings alongside it', () => {
-  const scripts = findHookScripts(path.join(PLUGIN_ROOT, 'skills'))
-    .concat(findHookScripts(path.join(PLUGIN_ROOT, 'hooks')));
+test('every compiled skill that bundles a hook carries the full sibling set', () => {
+  const expected = shFiles(SRC_HOOKS);
+  assert.ok(expected.length > 0, 'src/hooks has no .sh files');
 
-  const missing = [];
-  for (const script of scripts) {
-    const content = fs.readFileSync(script, 'utf8');
-    const dir = path.dirname(script);
-    for (const [, name] of content.matchAll(HOOK_SIBLING_REF)) {
-      if (!fs.existsSync(path.join(dir, name))) {
-        missing.push(`${path.relative(PLUGIN_ROOT, script)} -> $HOOK_DIR/${name}`);
-      }
-    }
-  }
+  const hookDirs = skillHookDirs(SKILLS_DIR);
+  assert.ok(hookDirs.length > 0, 'no compiled skill bundles hooks — did the build run?');
 
-  assert.deepEqual(missing, [], `bundled hooks reference siblings that are not bundled:\n${missing.join('\n')}`);
-});
-
-test('pipeline required hooks are bundled wherever pipeline is bundled', () => {
-  const required = fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks', 'pipeline.sh'), 'utf8')
-    .match(/REQUIRED_HOOKS="([^"]+)"/)[1]
-    .trim()
-    .split(/\s+/);
-  assert.ok(required.length > 0, 'expected pipeline.sh to declare REQUIRED_HOOKS');
-
-  const pipelines = findHookScripts(path.join(PLUGIN_ROOT, 'skills'))
-    .filter((p) => path.basename(p) === 'pipeline.sh');
-  assert.ok(pipelines.length > 0, 'expected at least one skill to bundle pipeline.sh');
-
-  for (const pipeline of pipelines) {
-    const dir = path.dirname(pipeline);
-    for (const hook of required) {
-      assert.ok(
-        fs.existsSync(path.join(dir, hook)),
-        `${path.relative(PLUGIN_ROOT, dir)} bundles pipeline.sh but is missing required hook ${hook}`,
-      );
-    }
+  for (const dir of hookDirs) {
+    const bundled = shFiles(dir);
+    const missing = expected.filter((name) => !bundled.includes(name));
+    assert.deepEqual(
+      missing,
+      [],
+      `${path.relative(REPO_ROOT, dir)} is missing sibling hook(s): ${missing.join(', ')} — ` +
+        'hooks resolve siblings via $HOOK_DIR at runtime, so a partial bundle ships a broken install'
+    );
   }
 });
