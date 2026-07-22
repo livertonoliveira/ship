@@ -146,6 +146,58 @@ test('jest-style runner composes "<package manager> test", forwards file args af
   assert.match(failuresContent, /src\/bar\.test\.js \(2 failures\)/);
 });
 
+test('jest "Test suite failed to run" (FAIL block, no ✕ markers) is listed as a failing file', () => {
+  const dir = setupProject({ testRunner: 'jest', packageManager: 'npm' });
+  const fakeJest = path.join(dir, 'fake-jest.sh');
+  fs.writeFileSync(
+    fakeJest,
+    [
+      '#!/usr/bin/env bash',
+      'echo "FAIL src/broken.test.js"',
+      "echo '  ● Test suite failed to run'",
+      "echo '    Cannot find module \\'../missing\\' from \\'src/broken.test.js\\''",
+      'exit 1',
+      '',
+    ].join('\n')
+  );
+  fs.chmodSync(fakeJest, 0o755);
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: 'fixture', scripts: { test: './fake-jest.sh' } })
+  );
+  fs.writeFileSync(
+    path.join(dir, 'scratch', 'generated-tests.md'),
+    '# Generated Tests\n\n- src/broken.test.js (unit)\n'
+  );
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /src\/broken\.test\.js \(1 failure\)/);
+  assert.doesNotMatch(failuresContent, /\(unparsed\)/);
+});
+
+test('suite failing with unparseable output embeds the raw tail instead of a contentless marker', () => {
+  const dir = setupProject({ testRunner: undefined, packageManager: undefined });
+  const fakeRunner = path.join(dir, 'fake-runner.sh');
+  fs.writeFileSync(
+    fakeRunner,
+    [
+      '#!/usr/bin/env bash',
+      "echo 'RuntimeError: database connection refused at bootstrap'",
+      'exit 1',
+      '',
+    ].join('\n')
+  );
+  fs.chmodSync(fakeRunner, 0o755);
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Test Framework: ${fakeRunner}\n`);
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 1);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.match(failuresContent, /## Test suite failed \(could not parse failing files\)/);
+  assert.match(failuresContent, /database connection refused/);
+  assert.doesNotMatch(failuresContent, /\(unparsed\)/);
+});
+
 function writeFakeCheck(dir, name, { exitCode, output }) {
   const file = path.join(dir, name);
   fs.writeFileSync(
