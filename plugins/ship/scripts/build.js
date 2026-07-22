@@ -147,6 +147,37 @@ function resolveRefs(content, skillRelPath) {
   return expand(content, 0);
 }
 
+const HOOK_SIBLING_REF = /\$HOOK_DIR\/([A-Za-z0-9_-]+\.sh)/g;
+
+const bundledSiblings = new Set();
+
+function bundleHookSiblings(ref, skillOutDir, skillRelPath, seen = new Set()) {
+  seen.add(ref);
+  const srcPath = path.join(SOURCE_ROOT, ref);
+  const refDir = path.dirname(ref);
+  const content = readFileCached(srcPath);
+  for (const [, name] of content.matchAll(HOOK_SIBLING_REF)) {
+    const siblingRef = path.join(refDir, name);
+    if (seen.has(siblingRef)) continue;
+    const dedupeKey = `${skillOutDir}\0${siblingRef}`;
+    if (bundledSiblings.has(dedupeKey)) { seen.add(siblingRef); continue; }
+    bundledSiblings.add(dedupeKey);
+    const siblingSrc = path.join(SOURCE_ROOT, siblingRef);
+    assertContained(SOURCE_ROOT, siblingSrc, siblingRef, skillRelPath);
+    if (!fs.existsSync(siblingSrc)) {
+      console.error(`Erro: hook ${ref} referencia sibling inexistente em ${skillRelPath}: $HOOK_DIR/${name}`);
+      process.exit(1);
+    }
+    const siblingDest = path.join(skillOutDir, siblingRef);
+    assertContained(skillOutDir, siblingDest, siblingRef, skillRelPath);
+    fs.mkdirSync(path.dirname(siblingDest), { recursive: true });
+    fs.copyFileSync(siblingSrc, siblingDest);
+    fs.chmodSync(siblingDest, 0o755);
+    console.log(`  ${skillRelPath} ⇢ ${siblingRef} (bundled, transitive of ${path.basename(ref)})`);
+    bundleHookSiblings(siblingRef, skillOutDir, skillRelPath, seen);
+  }
+}
+
 function processLazyRefs(content, skillRelPath, skillOutDir) {
   return content.replace(REPLACE_LAZY, (match, ref, anchor) => {
     if (anchor) {
@@ -165,6 +196,7 @@ function processLazyRefs(content, skillRelPath, skillOutDir) {
     if (ref.endsWith('.sh')) {
       fs.copyFileSync(srcPath, destPath);
       fs.chmodSync(destPath, 0o755);
+      bundleHookSiblings(ref, skillOutDir, skillRelPath);
     } else {
       const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
       fs.writeFileSync(destPath, resolved, 'utf8');
