@@ -110,18 +110,23 @@ The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. 
 
 ### Edge case 2 — Loop de re-runs (máximo 3 iterações)
 
-**Trigger:** `pipeline.sh iter <scratch-dir> fix --max 3` exits 2 — a persisted counter (`iteration-fix.txt`), not an in-context variable, so it survives a mid-run context compaction (which never re-runs init). It is reset only by `pipeline.sh init` itself — i.e., a genuinely new `/ship:run` invocation, fresh or resume — so a completed run's stale count never aborts a later loop.
+**Trigger:** `pipeline.sh iter <scratch-dir> fix --max 3` exits 2 — a persisted counter (`iteration-fix.txt`). It is reset **only on a fresh init**; a `resume` (a re-queued `/ship:run`, or recovery after an interruption) preserves it, so re-queuing continues the same capped loop instead of restarting it from zero. A mid-run context compaction never calls init, so the counter survives that too.
 
-**Behavior:**
-- Abort the pipeline immediately — do not dispatch the fix Agent.
-- Inform the user: "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."
-- Do NOT proceed to acceptance — wait for user action.
+**Behavior (severity-aware exit at the cap):**
+- Residue is only ≤ medium (WARN) → report the findings and advance to homolog (deferred, non-blocking) — `gate-resolved.txt` = `WARN capped-deferred`.
+- Residue includes critical/high (FAIL) → abort without dispatching the fix Agent: "3 fix rounds reached and critical/high findings remain. Manual intervention required." Do NOT proceed to acceptance.
+
+### Edge case 2b — Convergence guards (before every fix round)
+
+Both keyed on per-finding **identity** (`<phase>|<severity>|<file>|<slug>`, `:line` stripped) via `findings-identity.sh`, accumulated in `findings-ledger.txt`. They fire before the cap so most loops stop earlier:
+- **Identity fixpoint** — a re-verify round surfaces no finding not already in the ledger. Re-fixing reproduces the same set (findings a code change cannot move, or that the fix agent already failed to move) → ask the user (defer / fix manually).
+- **Self-inflicted churn** — after ≥1 fix, every *new* finding this round is ≤ medium **and** sits on a file the previous fix itself touched (`fix-changed-files.txt`). These are regenerations of the fix's own churn, not the original diff's problems → report and advance to homolog (`gate-resolved.txt` = `WARN churn-deferred`); the human still sees them at acceptance.
 
 ### Edge case 3 — `on_warn: fix` usa lógica cirúrgica
 
 **Trigger:** Gate returns exit code 1 (WARN) and `on_warn` is set to `fix`.
 
-**Behavior:** Identical to `on_fail: fix` — apply the full Surgical Re-run Procedure including all edge cases (empty fix, iteration limit, out-of-scope files). No special handling for warnings vs failures.
+**Behavior:** Same Surgical Re-run Procedure as `on_fail: fix`, but WARN residue never blocks: the convergence guards and the cap defer it to homolog rather than stopping the pipeline (only critical/high stops).
 
 ### Edge case 4 — Fix tocou arquivo fora do scope original
 

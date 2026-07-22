@@ -177,8 +177,8 @@ test_fresh_init_resets_counters() {
   log_pass "$name"
 }
 
-test_resume_init_resets_counters() {
-  local name="pipeline.sh init --mode resume also removes prior iteration counters (no stale-count abort)"
+test_resume_init_preserves_counters() {
+  local name="pipeline.sh init --mode resume preserves the fix counter (cap survives a re-queued run)"
   local dir task rc=0
   dir="$(mktemp -d)"
   task="iterresumetask"
@@ -187,20 +187,49 @@ test_resume_init_resets_counters() {
   (
     cd "$dir"
     bash "$PIPELINE_SCRIPT" init "$task" --mode fresh >/dev/null
-    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null
-    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null
-    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null
-    bash "$PIPELINE_SCRIPT" init "$task" --mode resume >/dev/null
+    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null   # count=1
+    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null   # count=2
+    bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3 >/dev/null   # count=3 (at max)
+    bash "$PIPELINE_SCRIPT" init "$task" --mode resume >/dev/null                    # must NOT reset
 
+    # The 4th increment must exceed the cap and exit 2 — proving the counter
+    # survived resume. Under the old reset-on-resume bug this restarted at 1.
     local out ec=0
     out="$(bash "$PIPELINE_SCRIPT" iter ".context/ship-run/$task" fix --max 3)" || ec=$?
-    [ "$ec" -eq 0 ] || exit 1
-    [ "$out" = "count=1" ] || exit 1
+    [ "$ec" -eq 2 ] || exit 1
+    [ "$out" = "count=4" ] || exit 1
   ) || rc=$?
   rm -rf "$dir"
 
   if [ "$rc" -ne 0 ]; then
-    log_fail "$name (resume inherited a stale count and would abort prematurely)"
+    log_fail "$name (resume reset the counter, defeating the fix-round cap)"
+    return
+  fi
+  log_pass "$name"
+}
+
+test_resume_init_preserves_ledger() {
+  local name="pipeline.sh init --mode resume preserves the findings ledger; fresh clears it"
+  local dir task rc=0
+  dir="$(mktemp -d)"
+  task="iterledgertask"
+  setup_repo "$dir"
+
+  (
+    cd "$dir"
+    bash "$PIPELINE_SCRIPT" init "$task" --mode fresh >/dev/null
+    printf 'review|medium|src/a.ts|dup\n' > ".context/ship-run/$task/findings-ledger.txt"
+
+    bash "$PIPELINE_SCRIPT" init "$task" --mode resume >/dev/null
+    [ -f ".context/ship-run/$task/findings-ledger.txt" ] || exit 1
+
+    bash "$PIPELINE_SCRIPT" init "$task" --mode fresh >/dev/null
+    [ ! -f ".context/ship-run/$task/findings-ledger.txt" ] || exit 1
+  ) || rc=$?
+  rm -rf "$dir"
+
+  if [ "$rc" -ne 0 ]; then
+    log_fail "$name"
     return
   fi
   log_pass "$name"
@@ -213,7 +242,8 @@ test_exceeding_max_exits_2
 test_at_max_still_exits_0
 test_invalid_counter_name_rejected
 test_fresh_init_resets_counters
-test_resume_init_resets_counters
+test_resume_init_preserves_counters
+test_resume_init_preserves_ledger
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
