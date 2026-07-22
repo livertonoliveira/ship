@@ -65,25 +65,14 @@ Log `pipeline.sh dispatch` for `dev` first, then invoke `ship:develop` via Skill
 
 Consolidate phase-status (MANDATORY, before proceeding) — sole writer of `phase-status.md`: `bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" complete .context/ship-run/<task-id> <N> dev`. Line-count: `git diff --stat`, warn past 400.
 
-### 2.5. Refresh diff + classification (MANDATORY if `dev` ran)
+### 2.5. Post-develop consolidation (MANDATORY if `dev` ran)
 
-> develop writes to the tree without committing, so the baseline diff misses it.
+> develop writes to the tree without committing — one call refreshes `diff.md` + class, verifies the mutation against the pre-develop snapshot (trusted over develop's self-report), and counts untested touched files.
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md
-bash "${CLAUDE_SKILL_DIR}/hooks/diff-classify.sh" .context/ship-run/<task-id>/diff.md .context/ship-run/<task-id>/diff-class.txt
+bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" post-develop .context/ship-run/<task-id>
 ```
-
-### 2.6. Develop evidence gate (MANDATORY if `dev` ran)
-
-Trust the script's verified mutation, not develop's self-report:
-```bash
-bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" snapshot .context/ship-run/<task-id>/post-develop-files.txt
-bash "${CLAUDE_SKILL_DIR}/hooks/snapshot-files.sh" diff .context/ship-run/<task-id>/pre-develop-files.txt .context/ship-run/<task-id>/post-develop-files.txt
-```
-Non-empty → ✓. Empty + baseline non-empty (re-run) → `warn`, continue. Empty + baseline empty (no worker dispatched) → **STOP**, `fail`.
-
-Untested-files (non-blocking): `bash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh" .context/ship-run/<task-id>/develop-touched-files.txt`; found → `warn`, never `fail`.
+Parse `evidence`: `ok` → ✓ continue. `warn` (re-run, no new mutation) → note, continue. `fail` (nothing written) → **STOP**. `untested` >0 → `warn`, non-blocking, never `fail`. `diff_class` is refreshed in `diff-class.txt` for the quality scope.
 
 ### 3-4. STAGE: Verification (test-exec ∥ quality)
 
@@ -134,7 +123,7 @@ Invoke `ship:homolog` via Skill — not forked, same context, never Agent. Inlin
 
 ### 7. MANDATORY STOP — await user confirmation for PR
 
-Verify Linear lifecycle: resolve completed-state (${CLAUDE_SKILL_DIR}/patterns/linear-status.md, never hardcode), confirm `state.type == "completed"` + quality-report comment exist. Local: write `report-<task-id>.md`, mark `done` in `tasks.md`. Both: clean up temp files.
+Verify Linear lifecycle: resolve completed-state (${CLAUDE_SKILL_DIR}/patterns/linear-status.md, never hardcode), confirm `state.type == "completed"` + quality-report comment exist. Local: write `report-<task-id>.md`, mark `done` in `tasks.md`. Both: surface the per-phase wall-clock (`bash "${CLAUDE_SKILL_DIR}/hooks/pipeline.sh" report-timings .context/ship-run/<task-id>`), then clean up temp files.
 
 Inform user — multi-task: ask to continue/stop; single: "**Task complete!** Run `/ship:pr` when ready." STOP — never auto-invoke `/ship:pr`.
 

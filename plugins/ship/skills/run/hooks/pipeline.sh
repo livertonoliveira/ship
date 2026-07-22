@@ -11,6 +11,7 @@ usage() {
   echo "  rows            <scratch-dir>" >&2
   echo "  iter            <scratch-dir> <counter-name> [--max N]" >&2
   echo "  report-timings  <scratch-dir>" >&2
+  echo "  post-develop    <scratch-dir>" >&2
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -241,6 +242,69 @@ cmd_iter() {
   if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
     exit 2
   fi
+}
+
+post_develop_usage() {
+  echo "usage: pipeline.sh post-develop <scratch-dir>" >&2
+  echo "  Runs the full post-develop sequence in one call: refresh diff.md, re-classify," >&2
+  echo "  snapshot the tree, diff it against the pre-develop snapshot for mutation evidence," >&2
+  echo "  and check untested touched files. Replaces five separate orchestrator invocations." >&2
+  echo "  Prints: diff_class=<class>  evidence=ok|warn|fail  untested=<n>" >&2
+}
+
+cmd_post_develop() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) post_develop_usage; exit 0 ;;
+      -*) post_develop_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else post_develop_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  if [ -z "$scratch" ]; then post_develop_usage; exit 1; fi
+
+  local pre="$scratch/pre-develop-files.txt"
+  if [ ! -f "$pre" ]; then
+    echo "pipeline.sh post-develop: pre-develop snapshot not found: $pre (run 'init' first)" >&2
+    exit 1
+  fi
+
+  # 1. develop writes to the tree without committing, so refresh the diff + class.
+  bash "$HOOK_DIR/capture-diff.sh" "$scratch/diff.md"
+  local class
+  class="$(bash "$HOOK_DIR/diff-classify.sh" "$scratch/diff.md" "$scratch/diff-class.txt")"
+
+  # 2. Mutation evidence: snapshot the tree, diff against the pre-develop snapshot.
+  #    A non-empty set is develop's verified footprint — trusted over its self-report.
+  bash "$HOOK_DIR/snapshot-files.sh" snapshot "$scratch/post-develop-files.txt"
+  bash "$HOOK_DIR/snapshot-files.sh" diff "$pre" "$scratch/post-develop-files.txt" \
+    > "$scratch/develop-touched-files.txt"
+
+  local evidence
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    evidence="ok"
+  elif [ -s "$scratch/diff.md" ] && grep -q '^diff --git ' "$scratch/diff.md"; then
+    # No new mutation this turn but the tree already carries work → re-run, not a no-op.
+    evidence="warn"
+  else
+    # No mutation and an empty diff → develop never ran. Caller must STOP.
+    evidence="fail"
+  fi
+
+  # 3. Untested touched files (non-blocking): count source files with no sibling test.
+  local untested=0
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    untested="$(bash "$HOOK_DIR/evidence-gate.sh" "$scratch/develop-touched-files.txt" \
+      | grep -oE '"untested":\[[^]]*\]' | sed 's/"untested"://' \
+      | grep -oE '"[^"]*"' | grep -c '"' || true)"
+    untested="${untested:-0}"
+  fi
+
+  printf 'diff_class=%s\n' "$class"
+  printf 'evidence=%s\n' "$evidence"
+  printf 'untested=%s\n' "$untested"
 }
 
 report_timings_usage() {
@@ -591,6 +655,8 @@ case "$SUBCOMMAND" in
     cmd_iter "$@" ;;
   report-timings)
     cmd_report_timings "$@" ;;
+  post-develop)
+    cmd_post_develop "$@" ;;
   *)
     usage
     exit 1 ;;
