@@ -122,7 +122,7 @@ cmd_init() {
   # runs on a mid-run context compaction (across which the on-disk counter must
   # survive), so clearing here can't truncate a live loop, but it does stop a
   # stale count from a prior completed cycle aborting a new loop prematurely.
-  rm -f "$SCRATCH"/iteration-*.txt
+  rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/gate-fix-fingerprint.txt
 
   if [ "$MODE" = "fresh" ]; then
     if [ ! -f "$CONFIG" ]; then
@@ -1317,6 +1317,24 @@ cmd_next() {
       [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
       case "$choice" in
         fix)
+          # Convergence guard: fingerprint the gate's own inputs (per-phase
+          # severity counts). If the previous fix cycle left them unchanged, a
+          # further fix is a fixpoint — findings a code change cannot move (e.g.
+          # cross-language orphans) — so surface to the user instead of looping.
+          local fp_file="$SCRATCH/gate-fix-fingerprint.txt" cur_fp prev_fp=""
+          cur_fp="$(last_rows_by_phase "$SCRATCH/phase-status.md")"
+          [ -f "$fp_file" ] && prev_fp="$(cat "$fp_file")"
+          if [ -n "$prev_fp" ] && [ "$cur_fp" = "$prev_fp" ]; then
+            rm -f "$fp_file"
+            next_body_add "Gate decision: $g_decision — findings unchanged after the last fix (fixpoint). No automated fix will move them; present the findings in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
+            if [ "$g_decision" = "FAIL" ]; then
+              next_body_add "Options: fix manually then --answer defer | defer (proceed registering pending findings)."
+            else
+              next_body_add "Options: fix manually then --answer pass | pass (proceed)."
+            fi
+            next_emit "gate" "ask" "$RUN" "gate $g_decision — fix converged (findings unchanged), user decision required"
+          fi
+          printf '%s\n' "$cur_fp" > "$fp_file"
           local fx_rc=0
           set +e
           ( cmd_iter "$SCRATCH" fix --max 3 ) >/dev/null
