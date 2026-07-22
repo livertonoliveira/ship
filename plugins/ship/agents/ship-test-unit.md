@@ -13,6 +13,7 @@ Generate and run unit tests for the code described in the inline context from th
 
 ## 1. Load context
 
+- `Brief: <path>` in the prompt (pipeline dispatch): Read that file — it carries this layer's `## Test Contract`, `## Scenarios`, `## Denylist` and `## Source` pointer. Treat its sections exactly like inline ones; never fall back to standalone discovery.
 - Caller-injected `## Scenarios`/`## Files`/`## Source` (+ optional `## Test Contract`): use only that, never re-read proposal/design/Linear. `## Test Contract` entries (file + arrange/act/assert, from `ship:plan` via `@SC-XX`) are source of truth.
 - Standalone: read `ship/config.md` for stack/conventions; `git diff --name-only origin/main...HEAD` for modified files.
 
@@ -25,6 +26,8 @@ Fixes hygiene-gate hits, not generation. Per file in `## Violations`: strip ever
 Do sections 2–3, skip the test-running step in Execution — never run `vitest`/any runner, no pass/fail counts. Generate test file(s) only.
 
 Honor injected `## Denylist` (paths owned by `ship:develop`'s modules): never touch a denylisted path, test files only. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot), continue with the rest. Report only files created.
+
+`Manifest: <path>` in the prompt: after generating, write one `- <path> (unit)` line per file actually created to that manifest file — no header, write it even when zero files were created; denylist-skipped slots are reported verbally, never listed.
 
 ## 1d. Execute mode (`Mode: execute`)
 

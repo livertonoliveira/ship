@@ -87,23 +87,12 @@ Hits → clean the exact `file:line` hits yourself (remove the comment or rename
 
 ---
 
-## 8. Write phase status
-
-Write (overwrite, don't append) your row to `.context/ship-run/<task-id>/phase-status-dev.md` (if the scratch dir exists) — never write directly to shared `phase-status.md`; the caller consolidates the row, substituting the real run number for `#<RUN>`:
-
-```
-| dev | #<RUN> | <ISO-8601 UTC> | - | pass | 0 | 0 | 0 | 0 | |
-```
-
----
-
-## 9. Self-check before returning (MANDATORY)
+## 8. Self-check before returning (MANDATORY)
 
 1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
-2. **Did source change?** `git diff --stat` (scratch dir is gitignored). Empty output, absent a legitimate "already implemented" re-run, means nothing was written — investigate, implement, or report honestly.
-3. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
+2. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
 
-Narrating a plan while editing zero files is itself a defect — stop and implement instead.
+No phase-status bookkeeping: the caller's `pipeline.sh post-develop` verifies your mutation against the pre-develop snapshot and writes the `dev` row itself — a zero-mutation tree is detected there and fails the phase. Narrating a plan while editing zero files is itself a defect — stop and implement instead.
 
 ## Rules
 

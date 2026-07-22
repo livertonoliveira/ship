@@ -1,12 +1,13 @@
 # Run Context — Shared Scratch Between Agents
 
-Temporary scratch pattern used by the `/ship:run` orchestrator to share context
-between phase agents (develop, test, perf, security, review, analyze). `develop`
-dispatches alone (Phase 2). Verification then runs in two turns: **Turn A**
-dispatches `ship:test Mode: generate` + `perf`/`security`/`review` concurrently
-(all need only the diff), and **Turn B** runs `test-exec` ∥ `analyze` (both need
-the generated tests). All quality phases feed a single aggregated gate in
-Phase 5 — see `run/SKILL.md` → Phase 3-4/5.
+Temporary scratch pattern used by the `/ship:run` pipeline to share context
+between phase agents (develop, test workers, perf, security, review, analyze).
+The `pipeline.sh next` state machine owns the scratch dir's lifecycle and
+sequencing: `develop` dispatches alone; verification then runs in two waves —
+first the per-layer `ship-test-*` workers + `perf`/`security`/`review`
+concurrently (all need only the diff), then `test-exec` and `analyze` (both
+need the generated tests). All quality phases feed a single aggregated gate
+evaluated by `pipeline.sh gate`.
 
 ---
 
@@ -36,7 +37,9 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
 | `phase-status.md` | orchestrator only (creates header; consolidates rows) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
-| `phase-status-<phase>.md` | one phase agent each (`develop`, `test-generate`, `test`, `perf`, `security`, `review`, `analyze`) | orchestrator (consolidation only) | scratch row for that phase's most recent dispatch, using `#<RUN>` as a literal placeholder in the Run column — overwritten each dispatch, never appended to by any other agent |
+| `phase-status-<phase>.md` | one writer each — quality agents write their own (`perf`, `security`, `review`, `analyze`); `pipeline.sh` writes the deterministic ones (`dev` from post-develop evidence, `test-generate` from the manifests, `test` from test-exec) | `pipeline.sh next` (consolidation only) | scratch row for that phase's most recent dispatch, using `#<RUN>` as a literal placeholder in the Run column — overwritten each dispatch, never appended to by any other agent |
+| `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer — replaces the old `ship:test` orchestrator's inline slicing |
+| `generated-tests-<layer>.md` | `ship-test-<layer>` worker | `pipeline.sh next` | manifest fragment: one `- <path> (<layer>)` line per file the worker actually created (header-free; written even when empty). `next` concatenates fragments into `generated-tests.md` |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
 | `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
 | `jaccard.json` | analyze agent | analyze agent (re-run) | Jaccard similarity matrix cache — keyed by diff + spec SHA-256 hashes; reused when hashes match to avoid redundant computation |
@@ -245,5 +248,5 @@ When an orchestrator dispatches N sub-agents, each opens a fresh conversation wi
 | Phase | Shared artifact sliced | Slice dimension |
 |-------|------------------------|-----------------|
 | `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `ship:test` | `plan.md` test contract (fallback: scenarios + file list) | by test layer (unit / integration / e2e) |
+| `pipeline.sh next` → `ship-test-*` workers | `plan.md` test contract + spec scenarios (via `test-brief-<layer>.md`) | by test layer (unit / integration / e2e) |
 | `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit |

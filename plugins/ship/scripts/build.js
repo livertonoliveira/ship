@@ -147,39 +147,28 @@ function resolveRefs(content, skillRelPath) {
   return expand(content, 0);
 }
 
-const HOOK_SIBLING_REF = /\$HOOK_DIR\/([A-Za-z0-9_-]+\.sh)/g;
-
-const bundledSiblings = new Set();
-
-function bundleHookSiblings(ref, skillOutDir, skillRelPath, seen = new Set()) {
-  seen.add(ref);
-  const srcPath = path.join(SOURCE_ROOT, ref);
-  const refDir = path.dirname(ref);
-  const content = readFileCached(srcPath);
-  for (const [, name] of content.matchAll(HOOK_SIBLING_REF)) {
-    const siblingRef = path.join(refDir, name);
-    if (seen.has(siblingRef)) continue;
-    const dedupeKey = `${skillOutDir}\0${siblingRef}`;
-    if (bundledSiblings.has(dedupeKey)) { seen.add(siblingRef); continue; }
-    bundledSiblings.add(dedupeKey);
-    const siblingSrc = path.join(SOURCE_ROOT, siblingRef);
-    assertContained(SOURCE_ROOT, siblingSrc, siblingRef, skillRelPath);
-    if (!fs.existsSync(siblingSrc)) {
-      console.error(`Erro: hook ${ref} referencia sibling inexistente em ${skillRelPath}: $HOOK_DIR/${name}`);
-      process.exit(1);
-    }
-    const siblingDest = path.join(skillOutDir, siblingRef);
-    assertContained(skillOutDir, siblingDest, siblingRef, skillRelPath);
-    fs.mkdirSync(path.dirname(siblingDest), { recursive: true });
-    fs.copyFileSync(siblingSrc, siblingDest);
-    fs.chmodSync(siblingDest, 0o755);
-    console.log(`  ${skillRelPath} ⇢ ${siblingRef} (bundled, transitive of ${path.basename(ref)})`);
-    bundleHookSiblings(siblingRef, skillOutDir, skillRelPath, seen);
+// Hooks resolve siblings at runtime via $HOOK_DIR (pipeline.sh shells out to
+// capture-diff.sh, quality-scope.sh, …), so bundling a single hook without its
+// siblings ships a broken install that only fails mid-run. Whenever any
+// hooks/*.sh is lazy-bundled into a skill, copy the entire src/hooks/ set.
+function bundleHookSiblings(skillOutDir, skillRelPath) {
+  const srcHooks = path.join(SOURCE_ROOT, 'hooks');
+  const destHooks = path.join(skillOutDir, 'hooks');
+  fs.mkdirSync(destHooks, { recursive: true });
+  let copied = 0;
+  for (const entry of fs.readdirSync(srcHooks, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.sh')) continue;
+    const dest = path.join(destHooks, entry.name);
+    fs.copyFileSync(path.join(srcHooks, entry.name), dest);
+    fs.chmodSync(dest, 0o755);
+    copied++;
   }
+  console.log(`  ${skillRelPath} ⇢ hooks/*.sh (${copied} siblings bundled)`);
 }
 
 function processLazyRefs(content, skillRelPath, skillOutDir) {
-  return content.replace(REPLACE_LAZY, (match, ref, anchor) => {
+  let needsHookSiblings = false;
+  const result = content.replace(REPLACE_LAZY, (match, ref, anchor) => {
     if (anchor) {
       console.error(`Erro: lazy ref com âncora não é suportado em ${skillRelPath}: @@ship/${ref}${anchor} (lazy é whole-file; remova a âncora ou use @ship inline)`);
       process.exit(1);
@@ -196,7 +185,7 @@ function processLazyRefs(content, skillRelPath, skillOutDir) {
     if (ref.endsWith('.sh')) {
       fs.copyFileSync(srcPath, destPath);
       fs.chmodSync(destPath, 0o755);
-      bundleHookSiblings(ref, skillOutDir, skillRelPath);
+      if (ref.startsWith('hooks/')) needsHookSiblings = true;
     } else {
       const resolved = resolveRefs(readFileCached(srcPath), `${skillRelPath} → ${ref}`);
       fs.writeFileSync(destPath, resolved, 'utf8');
@@ -204,6 +193,10 @@ function processLazyRefs(content, skillRelPath, skillOutDir) {
     console.log(`  ${skillRelPath} ⇢ @@ship/${ref} (bundled, lazy)`);
     return '${CLAUDE_SKILL_DIR}/' + ref;
   });
+  if (needsHookSiblings) {
+    bundleHookSiblings(skillOutDir, skillRelPath);
+  }
+  return result;
 }
 
 function walkAgentFiles(dir, results = []) {
