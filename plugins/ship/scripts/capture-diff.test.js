@@ -39,7 +39,8 @@ test('--prefer ignores an empty preferred file and falls back to capture', () =>
   const out = path.join(dir, 'out.md');
   fs.writeFileSync(empty, '');
   // Capture runs git against the real repo; it must not crash and must produce a file.
-  const res = spawnSync('bash', [CAPTURE, out, '--prefer', empty], {
+  // Pin --base HEAD so the fallback works in a shallow checkout with no origin/main ref.
+  const res = spawnSync('bash', [CAPTURE, out, '--base', 'HEAD', '--prefer', empty], {
     cwd: process.cwd(),
     encoding: 'utf8',
   });
@@ -52,7 +53,8 @@ test('--prefer ignores a non-diff preferred file and falls back to capture', () 
   const bogus = path.join(dir, 'bogus.md');
   const out = path.join(dir, 'out.md');
   fs.writeFileSync(bogus, 'this is not a diff\n');
-  const res = spawnSync('bash', [CAPTURE, out, '--prefer', bogus], {
+  // Pin --base HEAD so the fallback works in a shallow checkout with no origin/main ref.
+  const res = spawnSync('bash', [CAPTURE, out, '--base', 'HEAD', '--prefer', bogus], {
     cwd: process.cwd(),
     encoding: 'utf8',
   });
