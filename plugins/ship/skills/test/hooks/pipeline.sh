@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh analyze-precheck.sh analyze-correlate.sh diff-slice.sh rerun-scope.sh findings-gate.sh pipeline.sh"
+REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh analyze-precheck.sh analyze-correlate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -118,13 +118,15 @@ cmd_init() {
 
   mkdir -p "$SCRATCH"
 
-  # Reset fix-loop counters on every re-invocation (fresh or resume): init never
-  # runs on a mid-run context compaction (across which the on-disk counter must
-  # survive), so clearing here can't truncate a live loop, but it does stop a
-  # stale count from a prior completed cycle aborting a new loop prematurely.
-  rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/gate-fix-fingerprint.txt
-
+  # Reset the fix-loop counters ONLY on a fresh init. A resume continues a live
+  # loop (a re-queued /ship:run, or recovery after an interruption), so its
+  # cap counter and findings ledger MUST survive — clearing them here is what
+  # let the verify→fix→verify loop restart unbounded every re-invocation.
+  # (A mid-run context compaction never calls init at all, so the counters
+  # already survive that case naturally.)
   if [ "$MODE" = "fresh" ]; then
+    rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/findings-ledger.txt "$SCRATCH"/gate-fix-fingerprint.txt
+
     if [ ! -f "$CONFIG" ]; then
       echo "pipeline.sh init: config not found: $CONFIG (run /ship:init first)" >&2
       exit 1
@@ -1317,38 +1319,77 @@ cmd_next() {
       [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
       case "$choice" in
         fix)
-          # Convergence guard: fingerprint the gate's own inputs (per-phase
-          # severity counts). If the previous fix cycle left them unchanged, a
-          # further fix is a fixpoint — findings a code change cannot move (e.g.
-          # cross-language orphans) — so surface to the user instead of looping.
-          local fp_file="$SCRATCH/gate-fix-fingerprint.txt" cur_fp prev_fp=""
-          cur_fp="$(last_rows_by_phase "$SCRATCH/phase-status.md")"
-          [ -f "$fp_file" ] && prev_fp="$(cat "$fp_file")"
-          if [ -n "$prev_fp" ] && [ "$cur_fp" = "$prev_fp" ]; then
-            rm -f "$fp_file"
-            next_body_add "Gate decision: $g_decision — findings unchanged after the last fix (fixpoint). No automated fix will move them; present the findings in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
+          # Convergence guards keyed on per-finding IDENTITY (file + title),
+          # not severity counts — counts churn while the same nits regenerate,
+          # so they never detect a loop. The ledger accumulates every finding
+          # identity seen across rounds; a round is only worth a fix if it
+          # surfaces one not seen before.
+          local ledger="$SCRATCH/findings-ledger.txt" cur_ids new_ids
+          cur_ids="$(bash "$HOOK_DIR/findings-identity.sh" "$SCRATCH" 2>/dev/null || true)"
+          touch "$ledger"
+          new_ids="$(comm -23 <(printf '%s\n' "$cur_ids" | sed '/^$/d' | sort -u) <(sort -u "$ledger"))"
+
+          # Item 3 — fixpoint: nothing new since the last fix. Re-fixing just
+          # reproduces the same set (findings a code change cannot move, or the
+          # fix agent already failed to move them) — surface to the user.
+          if [ -n "$cur_ids" ] && [ -z "$new_ids" ]; then
+            next_body_add "Gate decision: $g_decision — no new finding since the last fix (identity fixpoint). An automated fix reproduces the same set; present the findings in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
             if [ "$g_decision" = "FAIL" ]; then
               next_body_add "Options: fix manually then --answer defer | defer (proceed registering pending findings)."
             else
               next_body_add "Options: fix manually then --answer pass | pass (proceed)."
             fi
-            next_emit "gate" "ask" "$RUN" "gate $g_decision — fix converged (findings unchanged), user decision required"
+            next_emit "gate" "ask" "$RUN" "gate $g_decision — fix converged (no new finding), user decision required"
           fi
-          printf '%s\n' "$cur_fp" > "$fp_file"
-          local fx_rc=0
-          set +e
-          ( cmd_iter "$SCRATCH" fix --max 3 ) >/dev/null
-          fx_rc=$?
-          set -e
-          if [ "$fx_rc" -eq 2 ]; then
-            next_body_add "Limite de 3 iterações fix→re-run atingido. Intervenção manual necessária."
-            next_emit "gate" "stop" "$RUN" "fix iteration limit reached"
+
+          # Item 4 — churn treadmill: once at least one fix has run, if every
+          # NEW finding this round is ≤ medium AND sits on a file the previous
+          # fix itself touched, they are self-inflicted regenerations, not the
+          # original diff's problems. Stop chasing them — report and advance to
+          # homolog (the human still sees them there and can reject).
+          local churn_only=0
+          if [ "$g_decision" = "WARN" ] && [ "$RUN" -gt 1 ] && [ -n "$new_ids" ] && [ -s "$SCRATCH/fix-changed-files.txt" ]; then
+            churn_only=1
+            local id_sev id_file
+            while IFS='|' read -r _ id_sev id_file _; do
+              [ -z "$id_sev" ] && continue
+              case "$id_sev" in critical|high) churn_only=0; break ;; esac
+              if [ -z "$id_file" ] || ! grep -qxF "$id_file" "$SCRATCH/fix-changed-files.txt"; then
+                churn_only=0; break
+              fi
+            done <<< "$new_ids"
           fi
-          bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-fix-files.txt"
-          touch "$SCRATCH/gate-fix-inflight.txt"
-          next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "gate ($g_decision)" "$SCRATCH/phase-status.md + the per-phase findings files in $SCRATCH"
-          next_common_after
-          next_emit "gate-fix" "dispatch" "$RUN" "gate $g_decision — dispatching fix agent"
+
+          printf '%s\n' "$cur_ids" | sed '/^$/d' >> "$ledger"
+          sort -u -o "$ledger" "$ledger"
+
+          if [ "$churn_only" -eq 1 ]; then
+            printf 'WARN churn-deferred\n' > "$SCRATCH/gate-resolved.txt"
+            next_body_add "Gate decision: WARN — the only new findings this round are ≤ medium and all on files the previous fix itself touched (self-inflicted churn, not the original diff). Reporting them and advancing to homolog instead of another fix round; present them in the artifact language and register tracking per storage mode."
+          else
+            local fx_rc=0
+            set +e
+            ( cmd_iter "$SCRATCH" fix --max 3 ) >/dev/null
+            fx_rc=$?
+            set -e
+            if [ "$fx_rc" -eq 2 ]; then
+              # Cap reached. Severity-aware exit: WARN residue is deferred to
+              # homolog (non-blocking); FAIL residue needs a human.
+              if [ "$g_decision" = "WARN" ]; then
+                printf 'WARN capped-deferred\n' > "$SCRATCH/gate-resolved.txt"
+                next_body_add "Gate decision: WARN — 3 fix rounds reached and only ≤ medium findings remain. Advancing to homolog (deferred, non-blocking); present them in the artifact language and register tracking per storage mode."
+              else
+                next_body_add "3 fix rounds reached and critical/high findings remain. Manual intervention required before proceeding."
+                next_emit "gate" "stop" "$RUN" "fix cap reached with blocking findings"
+              fi
+            else
+              bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-fix-files.txt"
+              touch "$SCRATCH/gate-fix-inflight.txt"
+              next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "gate ($g_decision)" "$SCRATCH/phase-status.md + the per-phase findings files in $SCRATCH"
+              next_common_after
+              next_emit "gate-fix" "dispatch" "$RUN" "gate $g_decision — dispatching fix agent"
+            fi
+          fi
           ;;
         defer|pass)
           printf '%s deferred\n' "$g_decision" > "$SCRATCH/gate-resolved.txt"

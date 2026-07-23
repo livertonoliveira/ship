@@ -381,6 +381,166 @@ test_dev_disabled_still_runs_verification() {
   rm -rf "$dir"
 }
 
+drive_to_verify_a() {
+  local dir="$1" task="$2" scratch
+  scratch="$dir/.context/ship-run/$task"
+  next "$dir" "$task" >/dev/null
+  multi_module_spec > "$scratch/spec.md"
+  next "$dir" "$task" >/dev/null
+  valid_plan > "$scratch/plan.md"
+  next "$dir" "$task" >/dev/null
+  mkdir -p "$dir/src"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
+  next "$dir" "$task" >/dev/null
+}
+
+review_round() {
+  local scratch="$1" gate="$2" c="$3" h="$4" m="$5" l="$6" sev="$7" title="$8" file="$9"
+  printf '| review | #<RUN> | 2026-01-01T00:00:00Z | - | %s | %s | %s | %s | %s | |\n' \
+    "$gate" "$c" "$h" "$m" "$l" > "$scratch/phase-status-review.md"
+  printf '### [%s] %s\n- **File:** %s\n' "$sev" "$title" "$file" > "$scratch/review-findings.md"
+}
+
+gate_fix_round() {
+  local dir="$1" task="$2" tag="$3" out
+  out="$(next "$dir" "$task" --answer fix)"
+  printf 'fix-%s\n' "$tag" >> "$dir/src/a.js"
+  next "$dir" "$task" >/dev/null
+  printf '%s\n' "$(field "$out" state)"
+}
+
+test_identity_fixpoint_stops_the_loop() {
+  local name="a re-verify round with no new finding identity stops the fix loop and asks the user"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/T8"
+  drive_to_verify_a "$dir" T8
+  review_round "$scratch" fail 0 1 0 0 HIGH "Race condition on idempotency" "src/a.js"
+  local r1 regate
+  r1="$(gate_fix_round "$dir" T8 r1)"
+  review_round "$scratch" fail 0 1 0 0 HIGH "Race condition on idempotency" "src/a.js"
+  regate="$(next "$dir" T8 --answer fix)"
+  if [ "$r1" = "gate-fix" ] \
+    && [ "$(field "$regate" state)" = "gate" ] && [ "$(field "$regate" action)" = "ask" ] \
+    && printf '%s' "$regate" | grep -q 'no new finding'; then
+    log_pass "$name"
+  else
+    log_fail "$name (r1=$r1 regate=$(field "$regate" state)/$(field "$regate" action))"
+  fi
+  rm -rf "$dir"
+}
+
+test_self_inflicted_churn_advances_instead_of_refixing() {
+  local name="a new ≤medium finding on a file the fix itself touched is deferred to homolog, not re-fixed"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/T9"
+  drive_to_verify_a "$dir" T9
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Duplicated pre-lock query" "src/a.js"
+  local r1 out
+  r1="$(gate_fix_round "$dir" T9 r1)"
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Local constant naming" "src/a.js"
+  out="$(next "$dir" T9 --answer fix)"
+  if [ "$r1" = "gate-fix" ] && [ "$(field "$out" state)" = "homolog" ] \
+    && grep -q 'churn-deferred' "$scratch/gate-resolved.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (r1=$r1 state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
+test_fix_cap_with_blocking_findings_stops() {
+  local name="three fix rounds with distinct critical/high findings, then the cap stops for manual intervention"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/T10"
+  drive_to_verify_a "$dir" T10
+  local s1 s2 s3 final
+  review_round "$scratch" fail 0 1 0 0 HIGH "Broken guard one" "src/a.js"
+  s1="$(gate_fix_round "$dir" T10 r1)"
+  review_round "$scratch" fail 0 1 0 0 HIGH "Broken guard two" "src/a.js"
+  s2="$(gate_fix_round "$dir" T10 r2)"
+  review_round "$scratch" fail 0 1 0 0 HIGH "Broken guard three" "src/a.js"
+  s3="$(gate_fix_round "$dir" T10 r3)"
+  review_round "$scratch" fail 0 1 0 0 HIGH "Broken guard four" "src/a.js"
+  final="$(next "$dir" T10 --answer fix)"
+  if [ "$s1" = "gate-fix" ] && [ "$s2" = "gate-fix" ] && [ "$s3" = "gate-fix" ] \
+    && [ "$(field "$final" state)" = "gate" ] && [ "$(field "$final" action)" = "stop" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (s1=$s1 s2=$s2 s3=$s3 final=$(field "$final" state)/$(field "$final" action))"
+  fi
+  rm -rf "$dir"
+}
+
+test_fix_cap_with_only_warnings_advances() {
+  local name="three fix rounds with distinct non-churn mediums, then the cap defers to homolog (non-blocking)"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/T11"
+  drive_to_verify_a "$dir" T11
+  local s1 s2 s3 final
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Style nit one" "src/other.js"
+  s1="$(gate_fix_round "$dir" T11 r1)"
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Style nit two" "src/other.js"
+  s2="$(gate_fix_round "$dir" T11 r2)"
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Style nit three" "src/other.js"
+  s3="$(gate_fix_round "$dir" T11 r3)"
+  review_round "$scratch" warn 0 0 1 0 MEDIUM "Style nit four" "src/other.js"
+  final="$(next "$dir" T11 --answer fix)"
+  if [ "$s1" = "gate-fix" ] && [ "$s2" = "gate-fix" ] && [ "$s3" = "gate-fix" ] \
+    && [ "$(field "$final" state)" = "homolog" ] \
+    && grep -q 'capped-deferred' "$scratch/gate-resolved.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (s1=$s1 s2=$s2 s3=$s3 final=$(field "$final" state))"
+  fi
+  rm -rf "$dir"
+}
+
+test_rerun_worker_silent_failure_blocks_no_silent_pass() {
+  local name="a surgical re-run deletes the phase-status row; if the re-dispatched worker never rewrites it, the pipeline re-dispatches twice then stops — never silently passes"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/T12"
+  drive_to_verify_a "$dir" T12
+  review_round "$scratch" fail 0 1 0 0 HIGH "Real correctness bug" "src/a.js"
+  next "$dir" T12 >/dev/null
+  local fix rerun c1 c2 c3
+  fix="$(next "$dir" T12 --answer fix)"
+  echo 'fixed' >> "$dir/src/a.js"
+  rerun="$(next "$dir" T12)"
+  # The re-run deleted phase-status-review.md and re-dispatched review. Simulate
+  # a silently-failing worker: never rewrite the row.
+  c1="$(next "$dir" T12)"
+  c2="$(next "$dir" T12)"
+  c3="$(next "$dir" T12)"
+  if [ "$(field "$fix" state)" = "gate-fix" ] \
+    && [ "$(field "$rerun" state)" = "verify-rerun" ] \
+    && [ ! -f "$scratch/phase-status-review.md" ] \
+    && [ "$(field "$c1" action)" = "dispatch" ] \
+    && [ "$(field "$c3" action)" = "stop" ] \
+    && [ "$(field "$c3" state)" != "homolog" ] \
+    && printf '%s' "$c3" | grep -q 'silently failed'; then
+    log_pass "$name"
+  else
+    log_fail "$name (fix=$(field "$fix" state) rerun=$(field "$rerun" state) row=$([ -f "$scratch/phase-status-review.md" ] && echo present || echo deleted) c1=$(field "$c1" action) c3=$(field "$c3" action)/$(field "$c3" state))"
+  fi
+  rm -rf "$dir"
+}
+
 test_first_call_asks_for_context_staging
 test_single_module_spec_skips_planner
 test_greenfield_multi_module_runs_planner
@@ -393,6 +553,11 @@ test_happy_path_reaches_done_with_status_rows
 test_gate_fail_fix_rerun_cycle
 test_gate_fail_defer_proceeds
 test_dev_disabled_still_runs_verification
+test_identity_fixpoint_stops_the_loop
+test_self_inflicted_churn_advances_instead_of_refixing
+test_fix_cap_with_blocking_findings_stops
+test_fix_cap_with_only_warnings_advances
+test_rerun_worker_silent_failure_blocks_no_silent_pass
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
