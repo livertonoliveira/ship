@@ -782,12 +782,19 @@ plan_predict_single_module() {
 # SUT slice (read first) of the worker brief.
 next_module_files() {
   local plan="$1" spec="$2"
+  # A test file the planner listed under a module's `Files:` must never reach the
+  # test worker's denylist (the worker must be free to WRITE it) nor its SUT list
+  # (a test is not source-under-test) — otherwise the worker refuses to generate
+  # the test and the suite comes up empty. Filter with the same test-path shapes
+  # next_test_pattern_ref uses to FIND tests.
+  local test_re='(\.test\.|\.spec\.|_test\.|_spec\.|__tests__/|(^|/)tests?/|(^|/)test_[^/]*\.py)'
   if [ -f "$plan" ]; then
     grep -E '^- Files:' "$plan" | sed -E 's/^- Files:[[:space:]]*//' | tr ',' '\n' \
-      | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/`//g' | grep -v '^$' || true
+      | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/`//g' | grep -v '^$' \
+      | grep -vE "$test_re" || true
   elif [ -f "$spec" ]; then
     awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /{sub(/^- */,"");print}' "$spec" 2>/dev/null \
-      | sed 's/`//g' || true
+      | sed 's/`//g' | grep -vE "$test_re" || true
   fi
 }
 
@@ -885,7 +892,7 @@ next_quality_dispatch() {
     review)   extra=" | Write review-findings.md to the scratch dir only (never ship/changes/ in Linear mode)" ;;
   esac
   cmd_dispatch "$scratch" "$phase" Agent "ship-$phase" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-$phase (model sonnet), prompt: \"Task: $task | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-$phase.txt | Artifact language: $lang | Storage mode: $mode | Scratch dir: $scratch | Fan-out: $depth (flat = no sub-agents) | Findings gate script: $HOOK_DIR/findings-gate.sh | Severity overrides: ship/config.md → ## Severity Overrides | Stack: $scratch/stack.md | Read the diff from $scratch/diff.md — never recompute it$extra\""
+  next_body_add "- Agent subagent_type=ship:ship-$phase (model sonnet), prompt: \"Task: $task | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-$phase.txt | Artifact language: $lang | Storage mode: $mode | Scratch dir: $scratch | Fan-out: $depth (flat = no sub-agents) | Findings gate script: $HOOK_DIR/findings-gate.sh | Severity overrides: ship/config.md → ## Severity Overrides | Stack: $scratch/stack.md | Design decisions: $scratch/design.md — honor settled decisions; don't relitigate | Read the diff from $scratch/diff.md — never recompute it$extra\""
 }
 
 next_test_dispatch() {
@@ -1071,6 +1078,43 @@ cmd_next() {
     fi
   fi
 
+  # --- static gate: typecheck + lint before the subjective fan-out -------------
+  # Runs deterministically after develop and BLOCKS verify-a until green/skip, so
+  # no LLM reviewer spends tokens on code that won't compile or lint.
+  if [ "$(phase_toggle "$CONFIG" dev)" != "disabled" ] && [ ! -f "$SCRATCH/static-exec-done.txt" ]; then
+    local se_rc=0
+    set +e
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
+    se_rc=$?
+    set -e
+    case "$se_rc" in
+      0)
+        next_write_row "$SCRATCH" static pass ""
+        next_consolidate "$SCRATCH" "$RUN" static
+        touch "$SCRATCH/static-exec-done.txt"
+        ;;
+      2)
+        next_write_row "$SCRATCH" static skip "no static checks"
+        next_consolidate "$SCRATCH" "$RUN" static
+        touch "$SCRATCH/static-exec-done.txt"
+        ;;
+      *)
+        local sf_rc=0
+        set +e
+        ( cmd_iter "$SCRATCH" static-fix --max 2 ) >/dev/null
+        sf_rc=$?
+        set -e
+        if [ "$sf_rc" -eq 2 ]; then
+          next_body_add "Typecheck/lint vermelho após 2 tentativas. Present $SCRATCH/static-failures.md to the user and stop — manual intervention required."
+          next_emit "static-gate" "stop" "$RUN" "typecheck/lint red after fix attempts"
+        fi
+        next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "typecheck/lint failure" "$SCRATCH/static-failures.md"
+        next_common_after
+        next_emit "static-fix" "dispatch" "$RUN" "typecheck/lint red — dispatching fix agent"
+        ;;
+    esac
+  fi
+
   # --- verification turn A: test-layer workers ∥ quality agents ----------------
   if [ ! -f "$SCRATCH/verify-a.txt" ]; then
     local qs qrun depth layers=""
@@ -1159,6 +1203,11 @@ cmd_next() {
     } > "$SCRATCH/generated-tests.md"
     next_write_row "$SCRATCH" test-generate pass ""
     next_consolidate "$SCRATCH" "$RUN" test-generate
+    # Intent-add the freshly generated (untracked) test files so every later
+    # diff-based consumer sees them — analyze correlates them instead of flagging
+    # a false coverage gap, and test-exec/pr build a complete diff. Mirrors the
+    # intent-adds capture-diff/snapshot-files already do at init/pre-develop.
+    git add -A -N >/dev/null 2>&1 || true
   fi
 
   # --- test execution (deterministic; fix loop on red) -------------------------
@@ -1300,7 +1349,7 @@ cmd_next() {
 
   # --- gate --------------------------------------------------------------------
   if [ ! -f "$SCRATCH/gate-resolved.txt" ]; then
-    next_consolidate "$SCRATCH" "$RUN" perf security review analyze test test-generate
+    next_consolidate "$SCRATCH" "$RUN" static perf security review analyze test test-generate
     local g_out g_rc=0 g_decision g_action
     set +e
     g_out="$(run_gate "$SCRATCH" --config "$CONFIG" 2>&1)"
@@ -1422,8 +1471,15 @@ cmd_next() {
   fi
 
   # --- done ---------------------------------------------------------------------
-  local timings
+  local timings gate_reason
   timings="$(cmd_report_timings "$SCRATCH" 2>/dev/null || true)"
+  # Telemetry: why the gate fix-loop stopped (durable, shown at completion).
+  gate_reason="$(head -1 "$SCRATCH/gate-resolved.txt" 2>/dev/null || true)"
+  case "$gate_reason" in
+    "WARN churn-deferred")  next_body_add "Gate loop stopped: self-inflicted churn deferred to homolog (convergence guard)." ;;
+    "WARN capped-deferred") next_body_add "Gate loop stopped: 3-round fix cap reached — ≤ medium residue deferred to homolog." ;;
+    "warn-empty-fix")       next_body_add "Gate loop stopped: fix produced no changes — findings surfaced as WARN." ;;
+  esac
   if [ "$STORE" = "linear" ]; then
     next_body_add "Verify the Linear lifecycle: resolve the completed state per $HOOK_DIR/../patterns/linear-status.md (never hardcode), confirm state.type == \"completed\" and that the quality-report comment exists."
   else

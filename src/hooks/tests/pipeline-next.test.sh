@@ -541,6 +541,194 @@ test_rerun_worker_silent_failure_blocks_no_silent_pass() {
   rm -rf "$dir"
 }
 
+# A typecheck command that fails until a sentinel file exists — lets a test
+# simulate the fix agent making typecheck green between rounds.
+make_fake_typecheck() {
+  local dir="$1" sentinel="$2" f="$dir/fake-tsc.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '[ -f "%s" ] && exit 0\n' "$sentinel"
+    printf 'echo "src/a.js(1,1): error TS2304: Cannot find name x"\n'
+    printf 'exit 2\n'
+  } > "$f"
+  chmod +x "$f"
+  printf -- '- Typecheck: %s\n' "$f" >> "$dir/ship/config.md"
+}
+
+# Drive init → context → (plan) → develop and return the FIRST `next` output at
+# the static gate (static-fix when a check fails, verify-a when it skips). Robust
+# to whether the planner runs, since post-develop passes even without mutation.
+drive_to_static_gate() {
+  local dir="$1" task="$2" scratch out state i
+  scratch="$dir/.context/ship-run/$task"
+  next "$dir" "$task" >/dev/null
+  multi_module_spec > "$scratch/spec.md"
+  mkdir -p "$dir/src"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
+  for i in 1 2 3 4 5; do
+    out="$(next "$dir" "$task")"
+    state="$(field "$out" state)"
+    case "$state" in
+      plan) valid_plan > "$scratch/plan.md" ;;
+      static-fix|static-gate|verify-a) printf '%s' "$out"; return 0 ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+test_static_gate_fail_dispatches_fix_before_verify() {
+  local name="failing typecheck dispatches a static-fix agent BEFORE any quality/test worker"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  make_fake_typecheck "$dir" "$dir/.tc-fixed"
+  local scratch="$dir/.context/ship-run/TS1"
+  local out; out="$(drive_to_static_gate "$dir" TS1)"
+  if [ "$(field "$out" state)" = "static-fix" ] && [ "$(field "$out" action)" = "dispatch" ] \
+    && printf '%s' "$out" | grep -q 'typecheck/lint failure' \
+    && [ -f "$scratch/static-failures.md" ] \
+    && ! grep -qE 'ship-(review|perf|security|test)' "$scratch/dispatch-log.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state)/$(field "$out" action))"
+  fi
+  rm -rf "$dir"
+}
+
+test_static_gate_fix_then_pass_proceeds_to_verify() {
+  local name="static gate: fix makes typecheck green, then the pipeline advances to verify-a"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  make_fake_typecheck "$dir" "$dir/.tc-fixed"
+  local scratch="$dir/.context/ship-run/TS2"
+  local r1 r2
+  r1="$(drive_to_static_gate "$dir" TS2)"
+  touch "$dir/.tc-fixed"
+  r2="$(next "$dir" TS2)"
+  if [ "$(field "$r1" state)" = "static-fix" ] \
+    && [ "$(field "$r2" state)" = "verify-a" ] \
+    && grep -q '^| static | #1 |' "$scratch/phase-status.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (r1=$(field "$r1" state) r2=$(field "$r2" state))"
+  fi
+  rm -rf "$dir"
+}
+
+test_static_fix_cap_stops() {
+  local name="two static-fix rounds that stay red hit the cap and stop for manual intervention"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  make_fake_typecheck "$dir" "$dir/.never"
+  local scratch="$dir/.context/ship-run/TS3"
+  local r1 r2 r3
+  r1="$(drive_to_static_gate "$dir" TS3)"
+  r2="$(next "$dir" TS3)"
+  r3="$(next "$dir" TS3)"
+  if [ "$(field "$r1" action)" = "dispatch" ] && [ "$(field "$r2" action)" = "dispatch" ] \
+    && [ "$(field "$r3" state)" = "static-gate" ] && [ "$(field "$r3" action)" = "stop" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (r1=$(field "$r1" action) r2=$(field "$r2" action) r3=$(field "$r3" state)/$(field "$r3" action))"
+  fi
+  rm -rf "$dir"
+}
+
+plan_with_test_in_files() {
+  cat <<EOF
+## Module Map
+
+### M1: core
+- Files: src/a.js, test/a.test.js
+- Depends on: none
+- Contract: does things
+- Scenarios: $SCEN_ID
+
+## Test Contract
+
+### $SCEN_ID -> unit -> test/a.test.js
+- arrange: x
+- act: y
+- assert: z
+EOF
+}
+
+test_denylist_excludes_test_files() {
+  local name="a test file listed in a module's Files never lands on the test worker's denylist (it must be free to write it)"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  local scratch="$dir/.context/ship-run/TD1"
+  next "$dir" TD1 >/dev/null
+  multi_module_spec > "$scratch/spec.md"
+  next "$dir" TD1 >/dev/null
+  plan_with_test_in_files > "$scratch/plan.md"
+  next "$dir" TD1 >/dev/null
+  mkdir -p "$dir/src"
+  echo 'module.exports=1' > "$dir/src/a.js"
+  next "$dir" TD1 >/dev/null
+  local brief="$scratch/test-brief-unit.md" deny
+  deny="$(sed -n '/## Denylist/,/## Source/p' "$brief" 2>/dev/null || true)"
+  if [ -f "$brief" ] \
+    && printf '%s' "$deny" | grep -q 'src/a.js' \
+    && ! printf '%s' "$deny" | grep -q 'test/a.test.js'; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+  rm -rf "$dir"
+}
+
+test_generated_tests_are_intent_added() {
+  local name="generated (untracked) test files are intent-added so diff-based consumers see them"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' '- perf: disabled
+- security: disabled
+- review: disabled
+- analyze: disabled'
+  local scratch="$dir/.context/ship-run/TG1"
+  next "$dir" TG1 >/dev/null
+  single_module_spec > "$scratch/spec.md"
+  next "$dir" TG1 >/dev/null
+  mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
+  next "$dir" TG1 >/dev/null
+  mkdir -p "$dir/test" && echo 'it(1)' > "$dir/test/b.test.js"
+  printf -- '- test/b.test.js (unit)\n' > "$scratch/generated-tests-unit.md"
+  next "$dir" TG1 >/dev/null
+  if (cd "$dir" && git diff --name-only origin/main | grep -qx 'test/b.test.js'); then
+    log_pass "$name"
+  else
+    log_fail "$name ($(cd "$dir" && git status --porcelain | tr '\n' ';'))"
+  fi
+  rm -rf "$dir"
+}
+
+test_static_gate_skip_when_no_checks() {
+  local name="no typecheck/lint configured: static gate skips and the pipeline reaches verify-a"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/TS4"
+  local out; out="$(drive_to_static_gate "$dir" TS4)"
+  if [ "$(field "$out" state)" = "verify-a" ] \
+    && grep -qE '^\| static \| #1 \|.*\| skip \|' "$scratch/phase-status.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
 test_first_call_asks_for_context_staging
 test_single_module_spec_skips_planner
 test_greenfield_multi_module_runs_planner
@@ -558,6 +746,12 @@ test_self_inflicted_churn_advances_instead_of_refixing
 test_fix_cap_with_blocking_findings_stops
 test_fix_cap_with_only_warnings_advances
 test_rerun_worker_silent_failure_blocks_no_silent_pass
+test_static_gate_fail_dispatches_fix_before_verify
+test_static_gate_fix_then_pass_proceeds_to_verify
+test_static_fix_cap_stops
+test_static_gate_skip_when_no_checks
+test_denylist_excludes_test_files
+test_generated_tests_are_intent_added
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

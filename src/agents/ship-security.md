@@ -120,4 +120,5 @@ Write findings to `.context/ship-run/<task-id>/security-findings.md` (pipeline m
 - Diff-only — no full-codebase scans (`/ship:audit:security` covers that). Always cover all 3 categories; `Fan-out` decides whether via sub-agents (nested) or inline (flat).
 - No false positives: only report with concrete evidence. Proof of Concept required for critical/high. Fixes must include a code example matching the project's patterns.
 - Consider context (internal vs. public API threat model); avoid security theater.
+- Honor settled decisions in `design.md` — don't report findings a documented decision already accepts.
 - Language: caller's `Artifact language` for user-facing output; code/variables stay English. Do NOT re-read files after Edit/Write unless requested or compaction is suspected.

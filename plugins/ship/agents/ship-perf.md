@@ -105,6 +105,7 @@ Write findings to `.context/ship-run/<task-id>/perf-findings.md` (with scratch d
 ## Rules
 
 - No false positives: report only with concrete evidence in the code.
+- Honor settled decisions in `design.md` — don't report findings a documented decision already accepts.
 - Consider context: an admin endpoint at 10 req/day differs from a public one at 1000 req/s.
 - Adapt to stack and project type: no React fixes for Vue code; monorepo = per-workspace agents; backend = DB/algo focus; frontend = bundle/render focus.
 - Suggest fixes with code when possible.
