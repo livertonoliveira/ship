@@ -272,11 +272,6 @@ test_happy_path_reaches_done_with_status_rows() {
   printf -- '- src/b.test.js (unit)\n' > "$scratch/generated-tests-unit.md"
   local mid
   mid="$(next "$dir" TASK-1)"
-  if [ "$(field "$mid" state)" = "analyze" ]; then
-    printf '| analyze | #<RUN> | 2026-01-01T00:00:00Z | - | pass | 0 | 0 | 0 | 0 | |\n' \
-      > "$scratch/phase-status-analyze.md"
-    mid="$(next "$dir" TASK-1)"
-  fi
   local fin
   fin="$(next "$dir" TASK-1 --answer approved)"
   if [ "$(field "$mid" state)" = "homolog" ] && [ "$(field "$mid" action)" = "work" ] \
@@ -693,8 +688,7 @@ test_generated_tests_are_intent_added() {
 - integration: disabled
 - e2e: disabled' '- perf: disabled
 - security: disabled
-- review: disabled
-- analyze: disabled'
+- review: disabled'
   local scratch="$dir/.context/ship-run/TG1"
   next "$dir" TG1 >/dev/null
   single_module_spec > "$scratch/spec.md"

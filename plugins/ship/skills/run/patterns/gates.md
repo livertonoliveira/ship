@@ -55,10 +55,10 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), `pipeline.sh next` sel
 4. Log decision (see format below)
 5. Launch selected phases in parallel
 
-Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked by `pipeline.sh next`. It takes the fix's changed-files list as input (plus, optionally, the previous `drift-findings.json` as a second argument — see "analyze phase scope mapping" below) and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked by `pipeline.sh next`. It takes the fix's changed-files list as input and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
 
 ```json
-{"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."},"analyze":{"rerun":true,"reason":"..."}},"out_of_scope":false,"empty":false}
+{"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."}},"out_of_scope":false,"empty":false}
 ```
 
 `pipeline.sh next` invokes this script directly and consumes its JSON output rather than computing the intersection in prose.
@@ -74,23 +74,6 @@ Re-run pulado: <phase3> (não analisava arquivos modificados), <phase4> (não an
 ### Behavior with `on_fail_rerun: all`
 
 When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all quality phases that were originally enabled. This is the "safe" fallback — guaranteed to catch any regression introduced by the fix.
-
-## Example: analyze phase in phase-status.md
-
-`analyze` dispatches in the same `verify-a` parallel turn as `perf`/`security`/`review` and its findings feed the same single aggregated gate (`pipeline.sh next`) — it does not run a second gate cycle of its own. Its row in `phase-status.md` follows the identical run/timestamp/gate schema as the other three:
-
-```markdown
-| analyze | #1 | 2026-05-01T10:07:00Z | 5 | warn | 0 | 0 | 2 | 1 | 2 criterios sem testes |
-| analyze | #2 | 2026-05-01T10:12:00Z | 5 | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
-```
-
-### analyze phase scope mapping (Surgical Re-run)
-
-| Phase | Scope |
-|-------|-------|
-| `analyze` | All files in the original diff (broad scope — re-run if any file changed by fix) |
-
-The analyze phase is re-run after a fix because spec↔code correlation depends on the entire diff, not individual files. **Single exception**: when `rerun-scope.sh` receives the previous `drift-findings.json` and every finding category is spec-side (`DUP`/`TERM`/`AMBIG`/`SUBSPEC`/`PRINCIPLE`), it returns `analyze.rerun=false` — a code fix cannot alter spec-side findings, so a re-run would reproduce them verbatim. (The re-run itself is also cheap when it does happen: the deterministic correlation engine caches by diff/spec hash.)
 
 ## Re-run: edge cases
 

@@ -94,9 +94,9 @@ test('--findings on empty array is PASS', () => {
 
 test('--scratch writes the row to phase-status-<phase>.md with the #<RUN> placeholder', () => {
   const dir = scratch();
-  run(['analyze', '--critical', '0', '--high', '0', '--medium', '1', '--low', '0', '--files', '5', '--scratch', dir, '--config', '/nonexistent']);
-  const row = fs.readFileSync(path.join(dir, 'phase-status-analyze.md'), 'utf8');
-  assert.match(row, /^\| analyze \| #<RUN> \|.*\| 5 \| warn \| 0 \| 0 \| 1 \| 0 \|/);
+  run(['review', '--critical', '0', '--high', '0', '--medium', '1', '--low', '0', '--files', '5', '--scratch', dir, '--config', '/nonexistent']);
+  const row = fs.readFileSync(path.join(dir, 'phase-status-review.md'), 'utf8');
+  assert.match(row, /^\| review \| #<RUN> \|.*\| 5 \| warn \| 0 \| 0 \| 1 \| 0 \|/);
 });
 
 test('unknown phase fails fast', () => {

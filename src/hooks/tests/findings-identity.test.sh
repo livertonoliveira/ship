@@ -50,21 +50,16 @@ test_line_shift_yields_same_identity() {
 }
 
 test_json_findings_and_escalations() {
-  local name="JSON findings parse; drift escalations (no severity) are excluded"
+  local name="JSON findings parse; objects with no severity are excluded"
   local dir out
   dir="$(mktemp -d)"
   cat > "$dir/security-findings.json" <<'EOF'
-[{"severity":"high","category":"AUTHZ","filePath":"src/user.ts","line":9,"title":"IDOR"}]
-EOF
-  cat > "$dir/drift-findings.json" <<'EOF'
-{"findings":[{"severity":"medium","category":"ORPHAN","file":"src/z.ts:99","title":"Orphan file"}],
- "escalations":[{"requirementId":"appointment-flow","confidence":9,"file":"src/y.ts","decision":"Match"}],
- "summary":{"critical":0,"high":1,"medium":1,"low":0,"gate":"FAIL"}}
+[{"severity":"high","category":"AUTHZ","filePath":"src/user.ts","line":9,"title":"IDOR"},
+ {"category":"note","file":"src/y.ts","info":"context object with no severity"}]
 EOF
   out="$(bash "$IDENTITY_SCRIPT" "$dir")"
   rm -rf "$dir"
   if printf '%s\n' "$out" | grep -qx 'security|high|src/user.ts|authz-idor' \
-    && printf '%s\n' "$out" | grep -qx 'analyze|medium|src/z.ts|orphan-orphan-file' \
     && ! printf '%s\n' "$out" | grep -q 'src/y.ts'; then
     log_pass "$name"
   else

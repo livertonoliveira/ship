@@ -174,7 +174,6 @@ These commands are part of the normal delivery flow. Each one analyzes only **wh
 | `/ship:perf` | Analyzes diff performance — detects project type and adapts agents accordingly |
 | `/ship:security` | OWASP security scan of the diff with 3 parallel agents by attack category |
 | `/ship:review` | Code review focused on SOLID, DRY, KISS, Clean Code, and project consistency |
-| `/ship:analyze` | Detects drift between spec, code, and tests — gate PASS/WARN/FAIL |
 | `/ship:homolog` | Presents the final quality report and awaits approval |
 | `/ship:pr` | Creates the Pull Request with atomic commits and aggregated quality report |
 
@@ -305,7 +304,7 @@ The `Test Scope` field controls which test layers `/ship:test` generates during 
 
 Disabled layers are not generated during the normal pipeline. To audit and backfill those gaps, use `/ship:audit:tests`.
 
-> `/ship:analyze` detects drift only within enabled layers; `/ship:audit:tests` audits all project layers regardless of this setting.
+> `/ship:audit:tests` audits test coverage across all project layers, regardless of which layers the pipeline generates.
 
 ### Scenario Depth
 
@@ -322,8 +321,7 @@ When `depth` is `light` or `full`, each scenario gets tags like `@SC-01`, `@AC-0
 - `/ship:plan` — maps each `@SC-XX` to a module and a test slot in one interpretation
 - `/ship:develop` — implements code to satisfy each `@SC-XX` (following the plan)
 - `/ship:test` — generates one test per scenario without re-deriving them
-- `/ship:analyze` — correlates scenarios with tests and reports what's covered
-- `/ship:audit:tests` — does this correlation across the entire project by layer
+- `/ship:audit:tests` — correlates scenarios with tests across the entire project by layer and reports what's covered
 
 ---
 

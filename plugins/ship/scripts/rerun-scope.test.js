@@ -22,47 +22,18 @@ function tmpFile(name, content) {
   return p;
 }
 
-test('analyze re-runs by default when the fix touched files', () => {
+test('security and review re-run by default when the fix touched files', () => {
   const changed = tmpFile('changed.txt', 'src/auth/login.ts\n');
   const out = run([changed]);
-  assert.equal(out.phases.analyze.rerun, true);
   assert.equal(out.phases.security.rerun, true);
-});
-
-test('analyze is skipped when every previous finding is spec-side', () => {
-  const changed = tmpFile('changed.txt', 'src/auth/login.ts\n');
-  const findings = tmpFile(
-    'drift-findings.json',
-    JSON.stringify([
-      { category: 'DUP', severity: 'low' },
-      { category: 'TERM', severity: 'low' },
-    ])
-  );
-  const out = run([changed, findings]);
-  assert.equal(out.phases.analyze.rerun, false);
-  assert.match(out.phases.analyze.reason, /spec-side/);
   assert.equal(out.phases.review.rerun, true);
 });
 
-test('analyze still re-runs when any finding is code-side', () => {
-  const changed = tmpFile('changed.txt', 'src/auth/login.ts\n');
-  const findings = tmpFile(
-    'drift-findings.json',
-    JSON.stringify([
-      { category: 'DUP', severity: 'low' },
-      { category: 'IMPL', severity: 'critical' },
-    ])
-  );
-  const out = run([changed, findings]);
-  assert.equal(out.phases.analyze.rerun, true);
-});
-
-test('analyze re-runs when the findings file is missing or empty', () => {
-  const changed = tmpFile('changed.txt', 'src/auth/login.ts\n');
-  const missing = run([changed, path.join(os.tmpdir(), 'nope-does-not-exist.json')]);
-  assert.equal(missing.phases.analyze.rerun, true);
-  const empty = run([changed, tmpFile('drift-findings.json', '[]')]);
-  assert.equal(empty.phases.analyze.rerun, true);
+test('perf re-runs only when a changed file matches its src/**|lib/** scope', () => {
+  const inScope = run([tmpFile('changed.txt', 'src/auth/login.ts\n')]);
+  assert.equal(inScope.phases.perf.rerun, true);
+  const outOfScope = run([tmpFile('changed.txt', 'docs/readme.md\n')]);
+  assert.equal(outOfScope.phases.perf.rerun, false);
 });
 
 test('on_fail_rerun: all forces every phase to rerun, bypassing scope mapping', () => {
@@ -71,11 +42,10 @@ test('on_fail_rerun: all forces every phase to rerun, bypassing scope mapping', 
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rerun-scope-config-'));
   const config = path.join(configDir, 'config.md');
   fs.writeFileSync(config, '## Gate Behavior\n- on_fail_rerun: all\n');
-  const out = run([changed, '', '--config', config]);
+  const out = run([changed, '--config', config]);
   assert.equal(out.phases.perf.rerun, true);
   assert.equal(out.phases.security.rerun, true);
   assert.equal(out.phases.review.rerun, true);
-  assert.equal(out.phases.analyze.rerun, true);
   assert.match(out.phases.perf.reason, /on_fail_rerun: all/);
 });
 
@@ -84,7 +54,7 @@ test('on_fail_rerun: surgical (default) keeps scope mapping even with --config p
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rerun-scope-config-'));
   const config = path.join(configDir, 'config.md');
   fs.writeFileSync(config, '## Gate Behavior\n- on_fail_rerun: surgical\n');
-  const out = run([changed, '', '--config', config]);
+  const out = run([changed, '--config', config]);
   assert.equal(out.phases.perf.rerun, false);
   assert.equal(out.phases.security.rerun, true);
 });
@@ -100,7 +70,7 @@ test('on_fail_rerun: all does not override the empty-fix case', () => {
   const config = path.join(configDir, 'config.md');
   fs.writeFileSync(config, '## Gate Behavior\n- on_fail_rerun: all\n');
   const empty = tmpFile('changed.txt', '');
-  const out = run([empty, '', '--config', config]);
+  const out = run([empty, '--config', config]);
   assert.equal(out.phases.perf.rerun, false);
   assert.equal(out.phases.perf.reason, 'no changed files');
   assert.equal(out.empty, true);

@@ -12,8 +12,8 @@
 # title is slugified.
 #
 # Extraction is grep/sed/awk only (no jq) for parity with findings-gate.sh and
-# rerun-scope.sh. JSON objects that carry no "severity" (e.g. the drift
-# escalation log) are ignored — only gate findings have a severity.
+# rerun-scope.sh. JSON objects that carry no "severity" are ignored — only gate
+# findings have a severity.
 
 set -eu
 
@@ -54,26 +54,20 @@ emit_md() {
   ' "$f"
 }
 
-# JSON findings files (flat array, or an object with a "findings" array). Only
-# objects carrying a "severity" are findings; the drift escalation log has none.
+# JSON findings files (flat array). Only objects carrying a "severity" are
+# findings.
 emit_json() {
   local phase="$1" f="$2" content obj sev file slugsrc
   [ -f "$f" ] || return 0
   content="$(tr -d '\n' < "$f")"
-  # Drift wraps findings in {"findings":[...],"escalations":[...],...}; isolate
-  # the findings array so sibling arrays (escalations have no severity, but a
-  # single-object array is not split on "},{" and would otherwise merge in).
-  case "$content" in
-    *'"findings"'*) content="$(printf '%s' "$content" | sed -E 's/.*"findings":[[:space:]]*\[//; s/\].*//')" ;;
-  esac
   # One JSON object per line, then keep the severity-bearing ones.
   { printf '%s' "$content" | sed 's/}[[:space:]]*,[[:space:]]*{/}\
 {/g' | grep '"severity"' || true; } | while IFS= read -r obj; do
     sev="$(printf '%s' "$obj" | sed -E 's/.*"severity"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' | tr '[:upper:]' '[:lower:]')"
     file="$(printf '%s' "$obj" | grep -oE '"(filePath|file)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
     file="$(printf '%s' "$file" | sed -E 's/:[0-9]+(-[0-9]+)?$//')"
-    # Slug source: prefer title, else the drift identifiers, else category.
-    slugsrc="$(printf '%s' "$obj" | grep -oE '"(title|requirementId|scenarioId|criterionId|category)"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    # Slug source: prefer title, else category.
+    slugsrc="$(printf '%s' "$obj" | grep -oE '"(title|category)"[[:space:]]*:[[:space:]]*"[^"]*"' \
       | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' | tr '\n' '-')"
     slugsrc="$(printf '%s' "$slugsrc" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60)"
     printf '%s|%s|%s|%s\n' "$phase" "$sev" "$file" "$slugsrc"
@@ -84,7 +78,6 @@ emit_json() {
   emit_md   review "$scratch/review-findings.md"
   emit_md   perf   "$scratch/perf-findings.md"
   emit_json security "$scratch/security-findings.json"
-  emit_json analyze  "$scratch/drift-findings.json"
 } | { grep -v '^[^|]*||' || true; } | sort -u
 
 exit 0

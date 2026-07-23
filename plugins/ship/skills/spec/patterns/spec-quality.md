@@ -1,6 +1,6 @@
 # Spec Quality Gate (AMBIG / SUBSPEC / PRINCIPLE)
 
-Semantic quality passes over the **drafted spec text** (REQ-XX / AC-XX), run once at spec time — after the clarify marker gate, before any artifact is created. These passes audit the spec, not code, so they never run inside the development pipeline (`/ship:run` / `/ship:analyze`).
+Semantic quality passes over the **drafted spec text** (REQ-XX / AC-XX), run once at spec time — after the clarify marker gate, before any artifact is created. These passes audit the spec, not code, so they never run inside the development pipeline (`/ship:run`).
 
 ## Pre-filters (local, zero LLM)
 
@@ -96,4 +96,4 @@ Findings are **spec defects — fix them in the spec text now**, while it is sti
 - **Interactive mode**: present each finding with its suggested rewrite and ask the user to accept, edit, or dismiss. Apply accepted rewrites to the drafted Proposal/issue content before creating any Linear/local artifact.
 - **Headless mode**: do not block. Append the findings under a `## Spec Quality Notes` section of the Proposal and continue.
 
-No candidates, or no finding confirmed → log a single line ("Spec quality: 0 achados") and proceed. These findings never gate the pipeline: once the spec is created, `/ship:analyze` does not re-audit spec quality.
+No candidates, or no finding confirmed → log a single line ("Spec quality: 0 achados") and proceed. These findings never gate the pipeline: once the spec is created, the development pipeline does not re-audit spec quality.

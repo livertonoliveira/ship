@@ -43,7 +43,7 @@ test_run_skill_next_removal_breaks_detection() {
 test_run_skill_has_no_phase_choreography() {
   local name="run SKILL.md contains no direct phase-hook choreography (all sequencing lives in pipeline.sh)"
   local leftovers
-  leftovers="$(grep -nE '@@ship/hooks/(quality-scope|test-exec|plan-validate|rerun-scope|status-consolidate|evidence-gate|snapshot-files|analyze-precheck)\.sh' "$RUN_SKILL" || true)"
+  leftovers="$(grep -nE '@@ship/hooks/(quality-scope|test-exec|plan-validate|rerun-scope|status-consolidate|evidence-gate|snapshot-files)\.sh' "$RUN_SKILL" || true)"
   if [ -z "$leftovers" ]; then
     log_pass "$name"
   else
@@ -55,8 +55,8 @@ test_pipeline_next_wires_phase_hooks() {
   local name_prefix="pipeline.sh next wires"
   local script
   for script in plan-validate.sh quality-scope.sh test-scope.sh test-exec.sh \
-    analyze-precheck.sh rerun-scope.sh status-consolidate.sh evidence-gate.sh \
-    snapshot-files.sh findings-gate.sh plan-scope.sh; do
+    rerun-scope.sh status-consolidate.sh evidence-gate.sh \
+    snapshot-files.sh plan-scope.sh; do
     if grep -q "\"\$HOOK_DIR/$script\"" "$PIPELINE_SH"; then
       log_pass "$name_prefix $script"
     else

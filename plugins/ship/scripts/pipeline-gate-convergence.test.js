@@ -67,7 +67,6 @@ function setup() {
   w('verify-a.txt', 'quality=review\ndepth=flat\nlayers=\n');
   w('pending.txt', '');
   w('test-exec-done.txt', '');
-  w('analyze-decided.txt', 'skip\n');
   w('review-findings.md', '### [MEDIUM] Some warn\n- **File:** src/x.ts:1\n');
   w(
     'phase-status.md',

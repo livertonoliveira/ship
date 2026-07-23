@@ -34,11 +34,9 @@ Core Web Vitals thresholds (Good / Needs Improvement / Poor): LCP ≤2.5s / 2.5-
 - **medium**: Relevant inefficiency, no immediate critical impact
 - **low**: Best practice not followed, marginal impact
 
-## Drift (Spec ↔ Code ↔ Test conformance) {#drift}
+## No override markers {#no-markers}
 
-Severity/gate per category: see `report-templates.md#drift-findings`.
-
-> **No override markers.** Correlation is keyword-based only. Ship never emits spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so the drift/coverage analyzers never scan for them. When requirement names don't match code naming (e.g., spec says "cache invalidation" but code uses "eviction"), the item surfaces as **uncertain** — the fix is to rename the code/test to match the spec vocabulary, never to annotate it with a marker comment.
+> Ship never emits spec-ID comments (`IMPL-REQ-XX`, `IMPL-SC-XX`, `TEST-REQ-XX`, `TEST-AC-XX`, `TEST-SC-XX`) into source or test files, so the coverage analyzer (`ship:audit:tests`, keyword-based Jaccard correlation) never scans for them. When requirement names don't match code naming (e.g., spec says "cache invalidation" but code uses "eviction"), the item surfaces as **uncertain** — the fix is to rename the code/test to match the spec vocabulary, never to annotate it with a marker comment.
 
 ## Severity Overrides
 
@@ -51,7 +49,7 @@ Before applying standard gate rules (`critical|high → fail`, `medium → warn`
 - <phase>: <from-severity>→<to-severity>
 ```
 
-Where `<phase>` must be one of the valid pipeline phases: `dev`, `test`, `analyze`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`.
+Where `<phase>` must be one of the valid pipeline phases: `dev`, `test`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`.
 
 ### How to apply
 

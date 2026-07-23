@@ -17,7 +17,7 @@ Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite 
 
 ## 2. Correlate and gate
 
-Per enabled layer, Jaccard similarity (per `/ship:analyze`, not reimplemented); confidence >=0.5 covered, 0.3-0.49 uncertain, <0.3 uncovered. Scenarios use the same tier scoped to `@layer`; skip if none. Disabled layers → `disabled`, no gate impact. Findings: 0.0 → HIGH, 0.3-0.49 → MEDIUM, else none — per `@ship/report-templates.md#finding-entry-base` + `@ship/report-templates.md#tests-audit-extension`.
+Per enabled layer, Jaccard similarity; confidence >=0.5 covered, 0.3-0.49 uncertain, <0.3 uncovered. Scenarios use the same tier scoped to `@layer`; skip if none. Disabled layers → `disabled`, no gate impact. Findings: 0.0 → HIGH, 0.3-0.49 → MEDIUM, else none — per `@ship/report-templates.md#finding-entry-base` + `@ship/report-templates.md#tests-audit-extension`.
 
 Gate per `@ship/patterns/gates.md#gate-decision-rules` + `@ship/patterns/audit-summary-schema.md#schema-core`: **uncovered ACs/SCs (HIGH) map to WARN only, never FAIL** — a quality gap, not a blocking defect. MEDIUM-only → WARN; none → PASS.
 
@@ -27,4 +27,4 @@ Sections: Summary, Test Scope, Coverage by Layer, Findings, Recommendations, Bli
 
 ## Rules
 
-Project-wide only (diff-scoped → `/ship:analyze`). Cite evidence: file+test, or absence. Never fabricate scenarios. Storage isolation enforced both ways. User text in `Artifact language`; code/paths stay English.
+Project-wide only. Cite evidence: file+test, or absence. Never fabricate scenarios. Storage isolation enforced both ways. User text in `Artifact language`; code/paths stay English.

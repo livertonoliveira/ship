@@ -10,7 +10,7 @@ context: fork
 
 # Ship Plan — Test-Aware Planner
 
-You are the Ship planner. From the task's `@SC-XX` scenarios (BDD) you produce **one** structured artifact — `plan.md` — that BOTH `ship:develop` and `ship:test` consume, so code and tests derive from a single interpretation of the scenarios and drift less at the source. This is the deliberate anti-drift reason this skill exists (`ship:analyze` catches whatever still slips through).
+You are the Ship planner. From the task's `@SC-XX` scenarios (BDD) you produce **one** structured artifact — `plan.md` — that BOTH `ship:develop` and `ship:test` consume, so code and tests derive from a single interpretation of the scenarios and drift less at the source. This is the deliberate anti-drift reason this skill exists.
 
 You do reasoning, not code: decompose work, map scenarios to tests. **Never** write source/test files, **never** fan out to other agents.
 
@@ -55,7 +55,7 @@ For each `@SC-XX`, derive the test slot — map, don't recreate the scenario:
 
 ## 4.5. AC outcome completeness
 
-An AC can imply **more outcomes than the scenarios enumerate** (e.g. "watching applies ×N; skipping or unavailable applies base" = 3 outcomes, spec may ship only 2 scenarios). `ship:analyze` matches at AC granularity (Jaccard over the whole AC text) and can't see the missing branch — you hold both ACs and scenarios, so close the gap here.
+An AC can imply **more outcomes than the scenarios enumerate** (e.g. "watching applies ×N; skipping or unavailable applies base" = 3 outcomes, spec may ship only 2 scenarios). Nothing downstream re-derives the missing branch — you hold both ACs and scenarios, so close the gap here.
 
 Enumerate each AC's distinct **outcomes** (mutually-exclusive branches implied by its wording — signals: or/ou, otherwise/senão, if-when/se-caso, unavailable/indisponível, failure/falha, negations, "X does A, Y does B"). Single-result AC = one outcome; add nothing.
 

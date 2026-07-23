@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh analyze-precheck.sh analyze-correlate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -33,7 +33,7 @@ require_hooks() {
   fi
 }
 
-KNOWN_PHASES="plan dev test perf security review analyze homolog"
+KNOWN_PHASES="plan dev test perf security review homolog"
 
 is_known_phase() {
   local phase="$1"
@@ -559,7 +559,7 @@ run_gate() {
     exit 1
   fi
 
-  local valid_phases="dev test analyze perf security review frontend-perf database backend"
+  local valid_phases="dev test perf security review frontend-perf database backend"
 
   local dispatched completed_phases scored_dispatched unfinished
   dispatched="$(dispatched_phases_in_log "$scratch/dispatch-log.md")"
@@ -1118,7 +1118,7 @@ cmd_next() {
   # --- verification turn A: test-layer workers ∥ quality agents ----------------
   if [ ! -f "$SCRATCH/verify-a.txt" ]; then
     local qs qrun depth layers=""
-    qs="$(bash "$HOOK_DIR/quality-scope.sh" "$class" --phases "perf security review analyze" --scratch "$SCRATCH" --config "$CONFIG")"
+    qs="$(bash "$HOOK_DIR/quality-scope.sh" "$class" --phases "perf security review" --scratch "$SCRATCH" --config "$CONFIG")"
     qrun="$(printf '%s\n' "$qs" | grep '^run=' | sed 's/^run=//')"
     depth="$(printf '%s\n' "$qs" | grep '^depth=' | sed 's/^depth=//')"
     if [ "$(phase_toggle "$CONFIG" test)" != "disabled" ] && [ ! -f "$SCRATCH/generated-tests.md" ]; then
@@ -1136,7 +1136,6 @@ cmd_next() {
       pending="$pending layer:$l"
     done
     for p in $qrun; do
-      [ "$p" = "analyze" ] && continue
       next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$p" "$depth"
       pending="$pending quality:$p"
     done
@@ -1144,7 +1143,7 @@ cmd_next() {
     if [ -n "${pending# }" ]; then
       next_body_add "Dispatch ALL of the above concurrently in this turn (synchronous, never backgrounded)."
       next_common_after
-      next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}] + quality [$(printf '%s' "$qrun" | sed 's/ analyze//;s/analyze//')]"
+      next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}] + quality [$qrun]"
     fi
   fi
 
@@ -1204,9 +1203,8 @@ cmd_next() {
     next_write_row "$SCRATCH" test-generate pass ""
     next_consolidate "$SCRATCH" "$RUN" test-generate
     # Intent-add the freshly generated (untracked) test files so every later
-    # diff-based consumer sees them — analyze correlates them instead of flagging
-    # a false coverage gap, and test-exec/pr build a complete diff. Mirrors the
-    # intent-adds capture-diff/snapshot-files already do at init/pre-develop.
+    # diff-based consumer sees them — test-exec/pr build a complete diff. Mirrors
+    # the intent-adds capture-diff/snapshot-files already do at init/pre-develop.
     git add -A -N >/dev/null 2>&1 || true
   fi
 
@@ -1263,34 +1261,6 @@ cmd_next() {
     esac
   fi
 
-  # --- analyze (agent only on gray-zone) ---------------------------------------
-  local qrun_v
-  qrun_v="$(grep '^quality=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^quality=//')"
-  if printf '%s' "$qrun_v" | grep -qw analyze && [ ! -f "$SCRATCH/analyze-decided.txt" ]; then
-    local scope_spec pre
-    scope_spec="$(bash "$HOOK_DIR/test-scope.sh" --config "$CONFIG" | awk -F= '
-      $1 == "run"  { n = split($2, a, " "); for (i = 1; i <= n; i++) state[a[i]] = "enabled" }
-      $1 == "skip" { n = split($2, a, " "); for (i = 1; i <= n; i++) state[a[i]] = "disabled" }
-      END { printf "unit=%s,integration=%s,e2e=%s", state["unit"], state["integration"], state["e2e"] }
-    ')"
-    pre="$(bash "$HOOK_DIR/analyze-precheck.sh" "$SCRATCH/spec.md" "$SCRATCH/diff.md" \
-      --scratch "$SCRATCH" --test-scope "$scope_spec" --config "$CONFIG" \
-      --findings-gate "$HOOK_DIR/findings-gate.sh" | grep '^agent=' | cut -d= -f2)"
-    printf '%s\n' "$pre" > "$SCRATCH/analyze-decided.txt"
-    if [ "$pre" = "run" ]; then
-      cmd_dispatch "$SCRATCH" analyze Agent ship-analyze sonnet >/dev/null
-      printf 'quality:analyze\n' >> "$SCRATCH/pending.txt"
-      next_body_add "- Agent subagent_type=ship:ship-analyze (model sonnet), prompt: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH | Test Scope: $scope_spec | Correlate script: $HOOK_DIR/analyze-correlate.sh | Findings gate script: $HOOK_DIR/findings-gate.sh | Read spec.md and diff.md from the scratch dir; your severities feed the gate; persist the drift report per storage mode.\""
-      next_common_after
-      next_emit "analyze" "dispatch" "$RUN" "correlation has gray-zone/gaps — analyze agent required"
-    else
-      next_consolidate "$SCRATCH" "$RUN" analyze
-    fi
-  fi
-  if [ "$(head -1 "$SCRATCH/analyze-decided.txt" 2>/dev/null)" = "run" ]; then
-    next_consolidate "$SCRATCH" "$RUN" analyze
-  fi
-
   # --- gate-fix completion (snapshot diff → schedule reconciliation) -----------
   if [ -f "$SCRATCH/gate-fix-inflight.txt" ]; then
     rm -f "$SCRATCH/gate-fix-inflight.txt"
@@ -1307,16 +1277,16 @@ cmd_next() {
 
   # --- reconciliation (fix touched source → surgical re-run) -------------------
   if [ -s "$SCRATCH/reconcile-source.txt" ]; then
-    local changed="$SCRATCH/test-fix-changed-files.txt" rs rerun_p="" rerun_analyze="" depth_v2
+    local changed="$SCRATCH/test-fix-changed-files.txt" rs rerun_p="" depth_v2
     [ "$(head -1 "$SCRATCH/reconcile-source.txt")" = "gate-fix" ] && changed="$SCRATCH/fix-changed-files.txt"
-    rs="$(bash "$HOOK_DIR/rerun-scope.sh" "$changed" "$SCRATCH/drift-findings.json" --config "$CONFIG" 2>/dev/null || true)"
+    rs="$(bash "$HOOK_DIR/rerun-scope.sh" "$changed" --config "$CONFIG" 2>/dev/null || true)"
     rm -f "$SCRATCH/reconcile-source.txt"
     depth_v2="$(grep '^depth=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^depth=//')"
     # Only phases that actually ran this pipeline can re-run — rerun-scope has
     # no notion of profile/config enablement, so intersect with verify-a's set.
     local p2 ran_quality
     ran_quality="$(grep '^quality=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^quality=//')"
-    for p2 in perf security review analyze; do
+    for p2 in perf security review; do
       printf '%s' "$ran_quality" | grep -qw "$p2" || continue
       if printf '%s' "$rs" | grep -qE "\"$p2\":\{\"rerun\":true"; then
         rerun_p="$rerun_p $p2"
@@ -1327,29 +1297,20 @@ cmd_next() {
       printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
       for p2 in ${rerun_p# }; do
         rm -f "$SCRATCH/phase-status-$p2.md"
-        if [ "$p2" = "analyze" ]; then
-          rm -f "$SCRATCH/analyze-decided.txt"
-          rerun_analyze="1"
-        else
-          next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$p2" "${depth_v2:-flat}"
-          printf 'quality:%s\n' "$p2" >> "$SCRATCH/pending.txt"
-        fi
+        next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$p2" "${depth_v2:-flat}"
+        printf 'quality:%s\n' "$p2" >> "$SCRATCH/pending.txt"
       done
       if [ -n "$NEXT_BODY" ]; then
         next_body_add "The fix changed source files — surgical re-run of the phases above (notes: re-run cirúrgico)."
         next_common_after
         next_emit "verify-rerun" "dispatch" "$RUN" "surgical re-run after fix"
       fi
-      if [ -n "$rerun_analyze" ]; then
-        next_body_add "The fix changed source files — analyze must re-correlate. Run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id>"
-        next_emit "verify-rerun" "work" "$RUN" "surgical re-run: analyze re-correlation"
-      fi
     fi
   fi
 
   # --- gate --------------------------------------------------------------------
   if [ ! -f "$SCRATCH/gate-resolved.txt" ]; then
-    next_consolidate "$SCRATCH" "$RUN" static perf security review analyze test test-generate
+    next_consolidate "$SCRATCH" "$RUN" static perf security review test test-generate
     local g_out g_rc=0 g_decision g_action
     set +e
     g_out="$(run_gate "$SCRATCH" --config "$CONFIG" 2>&1)"
