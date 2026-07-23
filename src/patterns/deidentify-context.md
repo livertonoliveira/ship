@@ -20,11 +20,11 @@ prompt, remove from that **injected text only**:
 - Bare spec IDs in prose: `REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`, `TEST-*`.
 - The task's Linear issue key (`<TEAM>-<n>`, e.g. `MOB-1734`).
 
-## What to KEEP — the behavioral content the worker (and analyze) needs
+## What to KEEP — the behavioral content the worker needs
 
 - The `Scenario:` / `Scenario Outline:` **titles** and the `Given` / `When` / `Then` / `Examples`
   steps. This is the behavior the worker tests, and the `When`/`Then` keywords are exactly what
-  `ship:analyze` correlates against test names — stripping the *tags* does not weaken traceability.
+  the coverage audit (`ship:audit:tests`) correlates against test names — stripping the *tags* does not weaken traceability.
 - `arrange` / `act` / `assert` notes, the `Files` set, and the module `Contract`.
 
 A de-identified scenario block keeps its title and steps and drops only its tag line, e.g.:
@@ -39,6 +39,6 @@ Scenario: ignores a duplicate event for the same transactionId
 ## Keep the mapping — traceability lives in the artifact, not the code
 
 You (the orchestrator) still hold the `SC-XX → module/test-file` mapping from `plan.md` / the spec.
-Keep it for the **report / phase artifacts** so `ship:analyze` and humans can trace spec→test. It
+Keep it for the **report / phase artifacts** so `ship:audit:tests` and humans can trace spec→test. It
 belongs in markdown artifacts and Linear — never carried into a source or test identifier. Iterate
 the worker over **scenarios** (one test per scenario block), not over "`@SC-XX`".

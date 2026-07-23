@@ -13,7 +13,7 @@ usage() {
   echo "  --run <n>           Run column value (default literal '#<RUN>')" >&2
 }
 
-VALID_PHASES="dev test analyze perf security review frontend-perf database backend"
+VALID_PHASES="dev test perf security review frontend-perf database backend"
 
 trim() {
   local s="$1"

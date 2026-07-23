@@ -57,12 +57,11 @@ tier split (there is none).
 | `ship:perf`           | Performance analysis. |
 | `ship:security`       | Security analysis. |
 | `ship:review`         | Code review. |
-| `ship:analyze`        | Drift detection. |
 | `ship:audit:*`        | Project-wide audits. |
 | `ship:homolog`        | Interactive acceptance gate — **not forked**; runs inline in the caller's context so approval and the Done transition share one context. |
 | `ship:pr`             | PR body expansion + conflict resolution + strict-mode gate eval. |
 | `ship-test-{unit,integration,e2e}` | Leaf workers — test generation. |
-| `ship-audit-*`, `ship-analyze`, `ship-review`, ... | Named worker agents dispatched by the wrappers/orchestrators. |
+| `ship-audit-*`, `ship-review`, `ship-perf`, ... | Named worker agents dispatched by the wrappers/orchestrators. |
 
 ---
 
@@ -72,7 +71,7 @@ tier split (there is none).
 
 ```yaml
 ---
-name: ship:analyze
+name: ship:review
 model: "sonnet"
 # ... other fields
 ---

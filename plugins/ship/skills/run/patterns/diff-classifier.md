@@ -88,18 +88,16 @@ Parse the section: extract non-comment lines starting with `- ` and strip the le
 
 ## Behavior per Class
 
-`analyze` participates in the same Phase 4 fan-out as `perf`/`security`/`review` (see `run/SKILL.md` → Phase 4), so its per-class behavior is decided alongside theirs.
-
 > **`src/hooks/quality-scope.sh` is the canonical implementation of this mapping.** Given the class and the effective enabled quality phases, it prints `run=` (phases to dispatch), `skip=`, and `log=`, and — with `--scratch` — writes the PASS skip rows for skipped phases (via `findings-gate.sh`, zero counts → PASS). `ship:run` invokes it directly rather than reasoning about the mapping in prose. The table below is documentation only.
 
 | Class | Runs | Skipped (PASS row) | Log message |
 |-------|------|--------------------|-------------|
-| `trivial` | — | `perf`, `security`, `review`, `analyze` | `Diff trivial — fases de qualidade puladas` |
-| `minor` | `security`, `analyze` | `perf`, `review` | `Diff minor — perf/review pulados, security/analyze mantidos` |
+| `trivial` | — | `perf`, `security`, `review` | `Diff trivial — fases de qualidade puladas` |
+| `minor` | `security` | `perf`, `review` | `Diff minor — perf/review pulados, security mantido` |
 | `normal` | all enabled | — | `Diff normal — fases de qualidade completas` |
 | `large` | all enabled | — | `Diff large — fases de qualidade completas` |
 
-`trivial` is the only class where `analyze` is skipped: a diff that touches only doc/config files with zero sensitive-path matches has nothing for drift correlation to check either. Every other class runs `analyze` regardless of how `perf`/`security`/`review` are adjusted, because spec↔code drift can appear in a single-file, sub-100-line change just as easily as in a large one. Skip rows carry the note `diff <class> — pulado`:
+Skip rows carry the note `diff <class> — pulado`:
 
 ```
 | perf     | #<RUN> | <iso-timestamp> | - | pass | 0 | 0 | 0 | 0 | diff trivial — pulado |

@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   echo "usage: quality-scope.sh <class> --phases \"<candidate quality phases>\" [--scratch <dir>] [--config <path>]" >&2
   echo "  <class>     trivial | minor | normal | large" >&2
-  echo "  --phases    space-separated candidate quality phases among: perf security review analyze" >&2
+  echo "  --phases    space-separated candidate quality phases among: perf security review" >&2
   echo "              (intersected with ship/config.md — a disabled phase never runs, even if listed here)" >&2
   echo "  --scratch   write PASS skip rows (via findings-gate) for skipped phases" >&2
   echo "  --config    config path — source of truth for Pipeline Profile/Phases (default ship/config.md)" >&2
@@ -13,7 +13,7 @@ usage() {
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-QUALITY_ORDER="perf security review analyze"
+QUALITY_ORDER="perf security review"
 
 in_list() {
   local needle="$1"; shift
@@ -70,8 +70,7 @@ security_focus_category() {
 
 # perf/security/review are config-gated (profile default + Pipeline Phases
 # override, override wins; security is additionally forced off by
-# `Security Focus: categories: none`). analyze has no config toggle — it is
-# always considered config-enabled; only the diff-class scoping below can skip it.
+# `Security Focus: categories: none`).
 config_enabled_quality_phases() {
   local config="$1"
   if [ ! -f "$config" ]; then
@@ -88,7 +87,7 @@ config_enabled_quality_phases() {
     fi
     [ "$state" = "enabled" ] && out="$out $p"
   done
-  printf '%s' "${out# } analyze"
+  printf '%s' "${out# }"
 }
 
 main() {
@@ -137,11 +136,11 @@ main() {
     minor)
       for p in ${enabled[@]+"${enabled[@]}"}; do
         case "$p" in
-          security|analyze) run+=("$p") ;;
+          security) run+=("$p") ;;
           *) skip+=("$p") ;;
         esac
       done
-      log="Diff minor — perf/review pulados, security/analyze mantidos"
+      log="Diff minor — perf/review pulados, security mantido"
       ;;
     normal|large)
       run=(${enabled[@]+"${enabled[@]}"})

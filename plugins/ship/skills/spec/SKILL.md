@@ -69,7 +69,7 @@ All contexts also read `ship/config.md` for stack and conventions.
 ### Gates (before creating any artifact)
 
 - **Clarify markers** (skip if `mode` off): scan drafted Proposal/Design via `bash "${CLAUDE_SKILL_DIR}/hooks/needs-clarification-scan.sh" <dir>`: `2` (fail) → halt/resolve, headless downgrades to warn; `1` (warn) → confirm with user; `0` → proceed.
-- **Spec quality:** audit REQ/AC for ambiguity (AMBIG), underspecification (SUBSPEC), convention violations (PRINCIPLE) via `${CLAUDE_SKILL_DIR}/patterns/spec-quality.md` — pre-filters + one batched sub-agent, strict JSON; apply rewrites first. Runs only here, once — never inside the pipeline (`/ship:run`/`/ship:analyze`).
+- **Spec quality:** audit REQ/AC for ambiguity (AMBIG), underspecification (SUBSPEC), convention violations (PRINCIPLE) via `${CLAUDE_SKILL_DIR}/patterns/spec-quality.md` — pre-filters + one batched sub-agent, strict JSON; apply rewrites first. Runs only here, once — never inside the pipeline (`/ship:run`).
 
 ## 6. Create artifacts
 

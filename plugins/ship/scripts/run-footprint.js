@@ -17,12 +17,10 @@ const RUN_FOOTPRINT_FILES = [
   'skills/develop/SKILL.md',
   'skills/test/SKILL.md',
   'skills/review/SKILL.md',
-  'skills/analyze/SKILL.md',
   'skills/homolog/SKILL.md',
   'agents/ship-perf.md',
   'agents/ship-security.md',
   'agents/ship-review.md',
-  'agents/ship-analyze.md',
   'agents/ship-test-unit.md',
 ];
 

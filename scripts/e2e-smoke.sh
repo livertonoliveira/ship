@@ -4,7 +4,7 @@
 # Spins up a throwaway git project, seeds a Local-mode ship/config.md, then drives
 # the REAL pipeline against the LOCAL plugin build (plugins/ship) via the headless
 # `claude --print --plugin-dir` CLI: /ship:spec → /ship:run (dev→test→perf→
-# security→review→analyze→homolog). Asserts structural invariants and runs the
+# security→review→homolog). Asserts structural invariants and runs the
 # generated test suite. Ship is LLM-driven, so this validates that the machinery
 # produces the right artifacts and passing tests — not exact code.
 #
@@ -61,9 +61,9 @@ printf '.context/\nnode_modules/\n' > .gitignore
 
 # Phases for the chosen scope. Full = everything except pr (we stop at homolog).
 if [ "$SCOPE" = "lite" ]; then
-  PHASES=$'- dev: enabled\n- test: enabled\n- perf: disabled\n- security: disabled\n- review: disabled\n- analyze: disabled\n- homolog: enabled\n- pr: disabled'
+  PHASES=$'- dev: enabled\n- test: enabled\n- perf: disabled\n- security: disabled\n- review: disabled\n- homolog: enabled\n- pr: disabled'
 else
-  PHASES=$'- dev: enabled\n- test: enabled\n- perf: enabled\n- security: enabled\n- review: enabled\n- analyze: enabled\n- homolog: enabled\n- pr: disabled'
+  PHASES=$'- dev: enabled\n- test: enabled\n- perf: enabled\n- security: enabled\n- review: enabled\n- homolog: enabled\n- pr: disabled'
 fi
 
 mkdir -p ship
@@ -182,7 +182,7 @@ if node --test >/tmp/ship-e2e-test.log 2>&1; then ok "generated test suite passe
 
 # Phase coverage in the trace
 if [ -n "${SCR:-}" ] && [ -f "$SCR/phase-status.md" ]; then
-  expect=(dev test); [ "$SCOPE" = full ] && expect=(dev test perf security review analyze)
+  expect=(dev test); [ "$SCOPE" = full ] && expect=(dev test perf security review)
   for ph in "${expect[@]}"; do
     grep -qiE "^\| *$ph " "$SCR/phase-status.md" && ok "phase ran: $ph" || bad "phase missing from trace: $ph"
   done

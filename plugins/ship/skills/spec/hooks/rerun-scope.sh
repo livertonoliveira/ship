@@ -3,12 +3,9 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: rerun-scope.sh [<changed-files-file>] [<analyze-findings-json>] [--config <path>]" >&2
+  echo "usage: rerun-scope.sh [<changed-files-file>] [--config <path>]" >&2
   echo "  reads changed files (one path per line) from the given file," >&2
   echo "  or from stdin if no argument is given" >&2
-  echo "  optional 2nd arg: drift-findings.json from the previous analyze run;" >&2
-  echo "  when every finding category is spec-side (DUP/TERM/AMBIG/SUBSPEC/PRINCIPLE)," >&2
-  echo "  analyze is not re-run (a code fix cannot change spec-side findings)" >&2
   echo "  --config: when Gate Behavior -> on_fail_rerun is 'all', force every phase" >&2
   echo "  to rerun=true and skip scope mapping entirely (unless the fix was empty)" >&2
 }
@@ -79,23 +76,8 @@ emit_phase() {
   printf '"%s":{"rerun":%s,"reason":"%s"}' "$name" "$rerun" "$(json_escape "$reason")"
 }
 
-analyze_findings_spec_side_only() {
-  local findings="$1" cats c
-  [ -f "$findings" ] || return 1
-  cats="$(grep -oE '"category"[[:space:]]*:[[:space:]]*"[A-Z]+"' "$findings" 2>/dev/null \
-    | sed -E 's/.*"([A-Z]+)"$/\1/' | sort -u)"
-  [ -n "$cats" ] || return 1
-  while IFS= read -r c; do
-    case "$c" in
-      DUP|TERM|AMBIG|SUBSPEC|PRINCIPLE) ;;
-      *) return 1 ;;
-    esac
-  done <<< "$cats"
-  return 0
-}
-
 main() {
-  local input="" analyze_findings="" config="" positional=0
+  local input="" config="" positional=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -104,7 +86,6 @@ main() {
       *)
         case "$positional" in
           0) input="$1" ;;
-          1) analyze_findings="$1" ;;
           *) usage; exit 1 ;;
         esac
         positional=$((positional + 1))
@@ -149,13 +130,11 @@ main() {
   local perf_rerun perf_reason
   local security_rerun security_reason
   local review_rerun review_reason
-  local analyze_rerun analyze_reason
 
   if [ "$empty" = "true" ]; then
     perf_rerun="false"; perf_reason="no changed files"
     security_rerun="false"; security_reason="no changed files"
     review_rerun="false"; review_reason="no changed files"
-    analyze_rerun="false"; analyze_reason="no changed files"
   else
     if [ "$perf_match" = "true" ]; then
       perf_rerun="true"
@@ -171,20 +150,11 @@ main() {
     review_rerun="true"
     review_reason="review scope is broad (full diff)"
 
-    if [ -n "$analyze_findings" ] && analyze_findings_spec_side_only "$analyze_findings"; then
-      analyze_rerun="false"
-      analyze_reason="analyze findings are all spec-side (DUP/TERM/AMBIG/SUBSPEC/PRINCIPLE); a code fix cannot change them"
-    else
-      analyze_rerun="true"
-      analyze_reason="analyze scope is broad (full diff)"
-    fi
-
     if [ -n "$config" ] && [ "$(on_fail_rerun_mode "$config")" = "all" ]; then
       local all_reason="on_fail_rerun: all — scope mapping skipped, full re-run forced by config"
       perf_rerun="true"; perf_reason="$all_reason"
       security_rerun="true"; security_reason="$all_reason"
       review_rerun="true"; review_reason="$all_reason"
-      analyze_rerun="true"; analyze_reason="$all_reason"
     fi
   fi
 
@@ -194,8 +164,6 @@ main() {
   emit_phase "security" "$security_rerun" "$security_reason"
   printf ','
   emit_phase "review" "$review_rerun" "$review_reason"
-  printf ','
-  emit_phase "analyze" "$analyze_rerun" "$analyze_reason"
   printf '},"out_of_scope":%s,"empty":%s}\n' "$out_of_scope" "$empty"
 }
 

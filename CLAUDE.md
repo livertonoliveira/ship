@@ -15,7 +15,6 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:perf` | Performance analysis of the diff |
 | `/ship:security` | OWASP security scan of the diff |
 | `/ship:review` | Code review (SOLID, DRY, KISS) |
-| `/ship:analyze` | Drift detection: map spec→code→tests, detect gaps, gate PASS/WARN/FAIL |
 | `/ship:homolog` | Final report + user homologation |
 | `/ship:pr` | Create PR with atomic commits and aggregated quality report |
 | `/ship:audit:backend` | Project-wide backend performance audit (3 parallel agents) |
@@ -66,7 +65,7 @@ ship/
 - Code, variable names, commits, branch names: always in English
 
 ### Parallelism
-- Parallel fan-out is allowed only where independent read-only analysis or disjoint test layers pay for the per-agent startup cost: the quality phases (`/ship:perf`, `/ship:security`, `/ship:review`, `/ship:analyze`), the test layers in `/ship:test`, and the `/ship:audit:*` commands
+- Parallel fan-out is allowed only where independent read-only analysis or disjoint test layers pay for the per-agent startup cost: the quality phases (`/ship:perf`, `/ship:security`, `/ship:review`), the test layers in `/ship:test`, and the `/ship:audit:*` commands
 - Everything else runs sequentially in a single context — `/ship:develop` implements all modules itself, in dependency order, with no leaf workers
 - Each parallel agent writes to separate files (no race conditions)
 
@@ -104,7 +103,7 @@ ship/
 - **Pipeline phases** (`/ship:perf`, `/ship:security`) are diff-scoped: they analyze only changed code during the development pipeline.
 - **Audit commands** (`/ship:audit:*`) are project-wide: they scan the entire codebase for systemic issues. Run them periodically or before releases.
 - `/ship:audit:run` launches all applicable audits in parallel and produces a consolidated gate report.
-- `/ship:analyze` detects drift only within the **enabled** Test Scope layers; `/ship:audit:tests` audits **all** layers project-wide regardless of pipeline config.
+- `/ship:audit:tests` audits test coverage across **all** layers project-wide, regardless of which layers the pipeline generates.
 
 > **STRICT RULE — audit commands MUST NOT be invoked from within `ship:run`.**
 > `ship:run` is a diff-scoped development pipeline. Audit commands (`audit:backend`, `audit:frontend`, `audit:database`, `audit:security`, `audit:tests`, `audit:run`) are project-wide and must be triggered by the user separately at planned moments (pre-release, periodic health checks). Any SKILL.md or command file that calls an `audit:*` command from inside the pipeline is a bug.

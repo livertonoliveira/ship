@@ -132,13 +132,11 @@ test_missing_quality_phase_dispatch_blocks_gate() {
     "| dev | Skill | ship:develop | sonnet | 2026-07-19T21:30:52Z |" \
     "| perf | Agent | ship-perf | sonnet | 2026-07-19T21:33:53Z |" \
     "| security | Agent | ship-security | sonnet | 2026-07-19T21:33:53Z |" \
-    "| review | Skill | ship:review | sonnet | 2026-07-19T21:33:53Z |" \
-    "| analyze | Skill | ship:analyze | sonnet | 2026-07-19T21:33:53Z |"
+    "| review | Skill | ship:review | sonnet | 2026-07-19T21:33:53Z |"
   write_phase_status "$dir/phase-status.md" \
     "| dev | #1 | 2026-07-19T21:30:00Z | 3 | PASS | 0 | 0 | 0 | 0 | |" \
     "| perf | #1 | 2026-07-19T21:35:00Z | 3 | pass | 0 | 0 | 0 | 0 | |" \
-    "| review | #1 | 2026-07-19T21:35:00Z | 3 | pass | 0 | 0 | 0 | 0 | |" \
-    "| analyze | #1 | 2026-07-19T21:35:00Z | 3 | pass | 0 | 0 | 0 | 0 | |"
+    "| review | #1 | 2026-07-19T21:35:00Z | 3 | pass | 0 | 0 | 0 | 0 | |"
 
   out="$(bash "$PIPELINE_SCRIPT" gate "$dir" 2>&1)" || rc=$?
   rm -rf "$dir"
