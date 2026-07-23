@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>]" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only]" >&2
 }
 
 field_from() {
@@ -176,44 +176,9 @@ write_reports() {
   printf '| test | %s | %s | - | %s | 0 | 0 | 0 | 0 | |\n' "$run_placeholder" "$ts" "$gate" > "$scratch/phase-status-test.md"
 }
 
-main() {
-  local scratch="" config="ship/config.md"
-
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --config) config="$2"; shift 2 ;;
-      -h|--help) usage; exit 0 ;;
-      -*) usage; exit 1 ;;
-      *)
-        if [ -z "$scratch" ]; then scratch="$1"; else usage; exit 1; fi
-        shift ;;
-    esac
-  done
-
-  if [ -z "$scratch" ]; then
-    usage
-    exit 1
-  fi
-
-  resolve_runner "$scratch" "$config"
-  if ! is_resolved "$RUNNER"; then
-    echo "test command not found: $config" >&2
-    exit 2
-  fi
-
-  build_test_command "$RUNNER" "$PKG"
-
-  TYPECHECK_CMD=""
-  LINT_CMD=""
-  TYPECHECK_EXIT=0
-  LINT_EXIT=0
-  TYPECHECK_OUT=""
-  LINT_OUT=""
-  SUITE_SKIPPED=0
-  RUN_OUTPUT_FILE=""
-  RUN_EXIT_CODE=0
-  resolve_static_checks "$scratch" "$config"
-
+# Runs typecheck + lint concurrently, collecting real exit codes into
+# TYPECHECK_EXIT / LINT_EXIT and their output into TYPECHECK_OUT / LINT_OUT.
+run_static_checks() {
   local tc_pid="" lint_pid=""
   if is_resolved "$TYPECHECK_CMD"; then
     start_static_check "$TYPECHECK_CMD"
@@ -232,6 +197,101 @@ main() {
   if [ -n "$lint_pid" ]; then
     set +e; wait "$lint_pid"; LINT_EXIT=$?; set -e
     echo "lint ($LINT_CMD): $([ "$LINT_EXIT" -eq 0 ] && echo pass || echo fail)"
+  fi
+}
+
+# Static-gate report: typecheck/lint output + a `static` phase row. Mirrors the
+# typecheck/lint half of write_reports so the fix agent gets the real errors.
+write_static_report() {
+  local scratch="$1" exit_code="$2"
+  {
+    printf '# Static Failures\n'
+    if [ "$TYPECHECK_EXIT" -gt 0 ]; then
+      printf '\n## Typecheck failed (`%s`)\n\n```\n' "$TYPECHECK_CMD"
+      tail -60 "$TYPECHECK_OUT"
+      printf '```\n'
+    fi
+    if [ "$LINT_EXIT" -gt 0 ]; then
+      printf '\n## Lint failed (`%s`)\n\n```\n' "$LINT_CMD"
+      tail -60 "$LINT_OUT"
+      printf '```\n'
+    fi
+  } > "$scratch/static-failures.md"
+
+  local gate="pass"
+  [ "$exit_code" -ne 0 ] && gate="fail"
+  local ts run_placeholder
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  run_placeholder='#<RUN>'
+  printf '| static | %s | %s | - | %s | 0 | 0 | 0 | 0 | |\n' "$run_placeholder" "$ts" "$gate" > "$scratch/phase-status-static.md"
+}
+
+main() {
+  local scratch="" config="ship/config.md" static_only=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --config) config="$2"; shift 2 ;;
+      --static-only) static_only=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then
+    usage
+    exit 1
+  fi
+
+  TYPECHECK_CMD=""
+  LINT_CMD=""
+  TYPECHECK_EXIT=0
+  LINT_EXIT=0
+  TYPECHECK_OUT=""
+  LINT_OUT=""
+  SUITE_SKIPPED=0
+  RUN_OUTPUT_FILE=""
+  RUN_EXIT_CODE=0
+
+  # --static-only: the pre-verify static gate. Runs typecheck+lint only, needs no
+  # test runner. Exit 2 when neither check resolves (repos without them).
+  if [ "$static_only" -eq 1 ]; then
+    PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
+    is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
+    resolve_static_checks "$scratch" "$config"
+    if ! is_resolved "$TYPECHECK_CMD" && ! is_resolved "$LINT_CMD"; then
+      exit 2
+    fi
+    run_static_checks
+    local st_overall=0
+    { [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && st_overall=1
+    write_static_report "$scratch" "$st_overall"
+    [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
+    [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
+    exit "$st_overall"
+  fi
+
+  resolve_runner "$scratch" "$config"
+  if ! is_resolved "$RUNNER"; then
+    echo "test command not found: $config" >&2
+    exit 2
+  fi
+
+  build_test_command "$RUNNER" "$PKG"
+
+  resolve_static_checks "$scratch" "$config"
+
+  # The static gate already ran typecheck+lint before the fan-out — don't repeat
+  # them here. A resolved static gate means typecheck is green (it blocks the
+  # pipeline otherwise), so the suite's typecheck precondition is satisfied.
+  if [ -f "$scratch/static-exec-done.txt" ]; then
+    TYPECHECK_EXIT=0
+    LINT_EXIT=0
+  else
+    run_static_checks
   fi
 
   collect_test_files "$scratch/generated-tests.md"

@@ -32,11 +32,9 @@ Two distinct artifacts:
 | `surgical` *(default)* | After auto-fix is applied, re-run **only the phases that failed or warned**. Phases that already passed are skipped. |
 | `all` | After auto-fix is applied, re-run **all quality phases** (perf, security, review) regardless of their previous result. |
 
-> **Scope note:** M5.1 establishes the schema and snapshot capture step only. The actual re-run logic that reads `on_fail_rerun` and selects which phases to re-launch is implemented in M5.2.
-
 ## Re-run cirúrgico
 
-After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selects which quality phases to re-run based on the `on_fail_rerun` config flag.
+After auto-fix is applied (on_fail: fix or on_warn: fix), `pipeline.sh next` selects which quality phases to re-run based on the `on_fail_rerun` config flag.
 
 ### Phase → scope mapping
 
@@ -49,7 +47,7 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 ### Algorithm (surgical mode)
 
 1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
-2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline). See `run.md` → Surgical Re-run Procedure for the exact commands.
+2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline).
 3. For each phase that previously ran:
    - Compute intersection of (modified files) and (phase scope)
    - If intersection is non-empty → re-run phase
@@ -57,13 +55,13 @@ After auto-fix is applied (on_fail: fix or on_warn: fix), the orchestrator selec
 4. Log decision (see format below)
 5. Launch selected phases in parallel
 
-Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked via `@@ship/hooks/rerun-scope.sh` from `run/SKILL.md`. It takes the fix's changed-files list as input (plus, optionally, the previous `drift-findings.json` as a second argument — see "analyze phase scope mapping" below) and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked by `pipeline.sh next`. It takes the fix's changed-files list as input (plus, optionally, the previous `drift-findings.json` as a second argument — see "analyze phase scope mapping" below) and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
 
 ```json
 {"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."},"analyze":{"rerun":true,"reason":"..."}},"out_of_scope":false,"empty":false}
 ```
 
-`run/SKILL.md`'s Surgical Re-run Procedure invokes this script directly and consumes its JSON output rather than computing the intersection in prose.
+`pipeline.sh next` invokes this script directly and consumes its JSON output rather than computing the intersection in prose.
 
 ### Log format
 
@@ -79,7 +77,7 @@ When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all qualit
 
 ## Example: analyze phase in phase-status.md
 
-`analyze` dispatches in the same Phase 4 parallel turn as `perf`/`security`/`review` and its findings feed the same single aggregated gate in Phase 5 (see `run/SKILL.md` → Phase 4/5) — it does not run a second gate cycle of its own. Its row in `phase-status.md` follows the identical run/timestamp/gate schema as the other three:
+`analyze` dispatches in the same `verify-a` parallel turn as `perf`/`security`/`review` and its findings feed the same single aggregated gate (`pipeline.sh next`) — it does not run a second gate cycle of its own. Its row in `phase-status.md` follows the identical run/timestamp/gate schema as the other three:
 
 ```markdown
 | analyze | #1 | 2026-05-01T10:07:00Z | 5 | warn | 0 | 0 | 2 | 1 | 2 criterios sem testes |
@@ -96,7 +94,7 @@ The analyze phase is re-run after a fix because spec↔code correlation depends 
 
 ## Re-run: edge cases
 
-The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. They are enforced inside the **Surgical Re-run Procedure** in `run.md`.
+The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. They are enforced by `pipeline.sh next`.
 
 ### Edge case 1 — Fix vazio (sem mudanças)
 
