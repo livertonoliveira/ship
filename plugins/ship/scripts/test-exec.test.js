@@ -366,3 +366,77 @@ test('pytest-style FAILED summary lines are parsed into per-file failure counts'
   const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
   assert.match(failuresContent, /test_math\.py \(2 failures\)/);
 });
+
+test('--static-only: failing typecheck exits 1, writes static-failures.md and a fail static row, needs no test runner', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-exec-'));
+  fs.mkdirSync(path.join(dir, 'scratch'));
+  fs.mkdirSync(path.join(dir, 'ship'));
+  fs.writeFileSync(path.join(dir, 'ship', 'config.md'), '# Config\n');
+  const fake = writeFakeCheck(dir, 'fake-tsc.sh', {
+    exitCode: 2,
+    output: "src/foo.ts(3,1): error TS2304: Cannot find name 'x'.",
+  });
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Typecheck: ${fake}\n`);
+  const res = run(dir, ['scratch', '--static-only']);
+  assert.equal(res.status, 1);
+  const content = fs.readFileSync(path.join(dir, 'scratch', 'static-failures.md'), 'utf8');
+  assert.match(content, /## Typecheck failed/);
+  assert.match(content, /error TS2304/);
+  const statusRow = fs.readFileSync(path.join(dir, 'scratch', 'phase-status-static.md'), 'utf8');
+  assert.match(statusRow, /\| static \| #<RUN> \|.*\| fail \|/);
+});
+
+test('--static-only: failing lint exits 1 and reports a Lint section', () => {
+  const dir = setupProject({});
+  const fake = writeFakeCheck(dir, 'fake-eslint.sh', {
+    exitCode: 1,
+    output: 'src/foo.ts:12:3 error no-restricted-syntax',
+  });
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Lint: ${fake}\n`);
+  const res = run(dir, ['scratch', '--static-only']);
+  assert.equal(res.status, 1);
+  const content = fs.readFileSync(path.join(dir, 'scratch', 'static-failures.md'), 'utf8');
+  assert.match(content, /## Lint failed/);
+  assert.match(content, /no-restricted-syntax/);
+});
+
+test('--static-only: passing typecheck+lint exits 0 with a header-only report and a pass static row', () => {
+  const dir = setupProject({});
+  const tsc = writeFakeCheck(dir, 'fake-tsc.sh', { exitCode: 0, output: 'ok' });
+  const lint = writeFakeCheck(dir, 'fake-eslint.sh', { exitCode: 0, output: 'ok' });
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), `# Stack\n\n- Typecheck: ${tsc}\n- Lint: ${lint}\n`);
+  const res = run(dir, ['scratch', '--static-only']);
+  assert.equal(res.status, 0, res.stderr);
+  const content = fs.readFileSync(path.join(dir, 'scratch', 'static-failures.md'), 'utf8');
+  assert.equal(content.trim(), '# Static Failures');
+  const statusRow = fs.readFileSync(path.join(dir, 'scratch', 'phase-status-static.md'), 'utf8');
+  assert.match(statusRow, /\| static \| #<RUN> \|.*\| pass \|/);
+});
+
+test('--static-only: neither typecheck nor lint resolves exits 2 (skip) and writes no report', () => {
+  const dir = setupProject({});
+  fs.writeFileSync(path.join(dir, 'scratch', 'stack.md'), '# Stack\n\n- Typecheck: none\n- Lint: none\n');
+  const res = run(dir, ['scratch', '--static-only']);
+  assert.equal(res.status, 2);
+  assert.ok(!fs.existsSync(path.join(dir, 'scratch', 'static-failures.md')));
+});
+
+test('suite path does NOT re-run typecheck when static-exec-done.txt already exists', () => {
+  const dir = setupProject({
+    testRunner: 'node --test',
+    packageManager: 'npm',
+    testFileContent: PASSING_TEST,
+  });
+  // A typecheck that would fail if run — but the static gate already ran, so the
+  // suite must skip it and stay green.
+  const fake = writeFakeCheck(dir, 'fake-tsc.sh', {
+    exitCode: 2,
+    output: "src/foo.ts(3,1): error TS2304: Cannot find name 'x'.",
+  });
+  fs.appendFileSync(path.join(dir, 'scratch', 'stack.md'), `- Typecheck: ${fake}\n`);
+  fs.writeFileSync(path.join(dir, 'scratch', 'static-exec-done.txt'), '');
+  const res = run(dir, ['scratch']);
+  assert.equal(res.status, 0, res.stderr);
+  const failuresContent = fs.readFileSync(path.join(dir, 'scratch', 'test-failures.md'), 'utf8');
+  assert.doesNotMatch(failuresContent, /## Typecheck failed/);
+});
