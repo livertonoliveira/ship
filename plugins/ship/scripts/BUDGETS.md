@@ -4,7 +4,27 @@ The build (`plugins/ship/scripts/build.js`) walks `src/skills/**/SKILL.md` and `
 
 ## Ceiling
 
-The default ceiling for every compiled `SKILL.md` and every compiled agent `.md` is **999 words**. A narrow **orchestrator tier** (1200 words) exists for `run` and `homolog` — see below. Every other skill or agent uses the default; there are no other per-tier exceptions.
+The ceiling for every compiled `SKILL.md` and every compiled agent `.md` is **1500 words**, flat. There are no per-skill exceptions.
+
+### Raised from 999 to 1500 (2026-07-25)
+
+The distribution made the case: **16 of 29 files sat within 100 words of the old ceiling, and 10 of 11 agents did.** Files clustering just under a limit is the signature of a limit that shapes content rather than bounding it — a healthy constraint leaves a spread. The concrete cost was observed, not hypothesised: a `ship/config.md` path was dropped from `spec/SKILL.md` purely to buy room, which is exactly the degradation the 2026-07-18 note below describes.
+
+The ceiling was never the primary defence. The Anti-Bloat Rule is — move the logic to a script, or remove the surface. As the root `CLAUDE.md` puts it, prose "can fit under the ceiling and still be the wrong fix". Raising a secondary guard while the primary one holds is the right trade.
+
+The old 1200 orchestrator tier for `run` and `homolog` is gone: at 1500 it exempted nothing.
+
+### Aggregate budgets — the guard that actually bounds cost
+
+A per-file ceiling bounds one file; a fleet of files each just under it adds up to the same bloat. `plugins/ship/scripts/run-footprint.js` enforces a total per group, and every budget sits **below** the sum of that group's per-file ceilings — otherwise it could never trip.
+
+| Group | Files | Budget |
+|---|---|---|
+| `run` | the 10 a typical `/ship:run` loads | 12000 |
+| `spec` | `spec`, `init`, `graph` | 3800 |
+| `audit` | 6 audit skills + 5 audit agents | 12000 |
+
+`spec` and `audit` had **no aggregate guard at all** before this change. Raising the per-file ceiling without adding them would have left 19 of 29 files bounded by nothing that scales.
 
 ### Orchestrator tier (1200 words) — `run`, `homolog`
 

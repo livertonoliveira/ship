@@ -17,7 +17,7 @@ Turns a Linear issue or free text into a spec + granular tasks (<400 lines each)
 
 ### 1. Detect input & storage mode
 
-`linear.app` URL or `^[A-Z]+-\d+$` → Linear issue ID; else free text. See @ship/patterns/storage-mode.md.
+`linear.app` URL or `^[A-Z]+-\d+$` → Linear issue ID; else free text. @ship/patterns/storage-mode.md.
 
 ### 2. Gather context — yourself, sequentially (no agents)
 
@@ -38,7 +38,7 @@ Turns a Linear issue or free text into a spec + granular tasks (<400 lines each)
 
 **Requirements:** `REQ-01…` (context, behavior, edge cases, constraints) + sequential testable `AC-01…` + area tag.
 
-**Scenarios** — `ship/config.md → ## Scenario Depth → depth` (default `full`): `none`=no Scenarios; `light`=nominal+dominant error/AC; `full`=+key edge (`Outline`+`Examples` collapse combinatorics). Enabled → stable spec-global `@SC-XX`/Scenario, tagged `@AC-YY`+layer (`@unit`/`@integration`/`@e2e`), shared `Background:`, concrete not restated ACs, one `Feature`/task. Worked example: `@@ship/patterns/gherkin-example.md`.
+**Scenarios** — `ship/config.md → ## Scenario Depth → depth` (default `full`): `none`; or `full` = nominal+key edge+error for **every** AC (`Outline`+`Examples` collapse combinatorics), a non-behavioral one marked `AC-NN (static)`. `full` → stable spec-global `@SC-XX`/Scenario, tagged `@AC-YY`+layer (`@unit`/`@integration`/`@e2e`), shared `Background:`, concrete not restated ACs, one `Feature`/task. Example: `@@ship/patterns/gherkin-example.md`.
 
 **Design:** architecture fit; decisions (choice, alternatives rejected+why); files+line estimate; data/API changes; risks.
 
@@ -58,11 +58,12 @@ Turns a Linear issue or free text into a spec + granular tasks (<400 lines each)
 Linear: `save_project` (new, never reuse) → id in `ship/config.md ## Linear Project` → `artifact_language` → Proposal+Design docs → milestones → labels → issues (labeled, milestone-linked).
 Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `### TASK-NNN`) — same content.
 
-- **Proposal:** Source, Why, Scope, Technical Context, Requirements per §4, plus Scenario Index (`SC-XX → AC-YY · layer · title`, omit if depth `none`).
+- **Proposal:** Source, Why, Scope, Technical Context, Requirements per §4, plus Scenario Index (`SC-XX → AC-YY · layer · title`).
 - **Design:** per §4 (architecture, decisions, files+lines, data/API, risks), plus Sequence Diagrams (Mermaid) for complex flows.
-- **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4, omit if `none`) → Notes (deps).
+- **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4) → `## Deps`. Both omitted at depth `none`.
+- `## Deps`: one blocking ID per line, bare (`none` if independent) — parsed by `/ship:graph`; free text is not. Linear: also set the native **blocked by** relation.
 
-**SC↔task cross-reference:** diff Scenario Index vs task Scenarios via `bash "@@ship/hooks/sc-crossref.sh" --index <file> --issues <dir>`; fix violations, re-run until clean, before §7.
+**SC↔task cross-reference:** `bash "@@ship/hooks/sc-crossref.sh" --index <file> --issues <dir> --proposal <file>`; fix violations, re-run until clean, before §7.
 
 ## 7. Present to the user
 

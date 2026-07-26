@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { countWords, checkBudget, skillKeyFromRelPath } = require('./build');
-const { WORD_BUDGETS, DEFAULT_BUDGET } = require('./budgets');
+const { WORD_BUDGETS, DEFAULT_BUDGET, FOOTPRINT_BUDGETS } = require('./budgets');
 
 test('countWords is deterministic for the same input', () => {
   const content = 'the quick brown fox jumps over the lazy dog';
@@ -22,12 +22,18 @@ test('checkBudget returns a violation using DEFAULT_BUDGET when a skillKey has n
   assert.deepEqual(violation, { skillKey: 'spec', wordCount: 99999, limit: DEFAULT_BUDGET });
 });
 
-test('checkBudget uses the orchestrator-tier limit for run/homolog', () => {
-  const violation = checkBudget('run', 99999, WORD_BUDGETS);
-  assert.deepEqual(violation, { skillKey: 'run', wordCount: 99999, limit: WORD_BUDGETS.run });
-  assert.equal(WORD_BUDGETS.run, 1200);
-  assert.equal(WORD_BUDGETS.homolog, 1200);
-  assert.equal(checkBudget('run', 1100, WORD_BUDGETS), null);
+test('no skill gets a per-file exception — the 1500 ceiling applies to run and homolog too', () => {
+  // The old 1200 orchestrator tier existed because 999 left run and homolog no
+  // room. At 1500 it is not an exception to anything, so it is gone rather than
+  // kept as dead policy.
+  for (const key of ['run', 'homolog']) {
+    assert.equal(checkBudget(key, DEFAULT_BUDGET - 1, WORD_BUDGETS), null);
+    assert.deepEqual(checkBudget(key, DEFAULT_BUDGET + 1, WORD_BUDGETS), {
+      skillKey: key,
+      wordCount: DEFAULT_BUDGET + 1,
+      limit: DEFAULT_BUDGET,
+    });
+  }
 });
 
 test('checkBudget returns null when an unknown skillKey stays within DEFAULT_BUDGET', () => {
@@ -48,17 +54,35 @@ test('skillKeyFromRelPath maps a nested SKILL.md path to its skill key', () => {
   assert.equal(skillKeyFromRelPath(path.join('audit', 'run', 'SKILL.md')), 'audit/run');
 });
 
-test('WORD_BUDGETS only exempts the orchestrator tier (run, homolog) — every other skillKey falls back to DEFAULT_BUDGET', () => {
-  assert.deepEqual(WORD_BUDGETS, { run: 1200, homolog: 1200 });
-  assert.equal(DEFAULT_BUDGET, 999);
+test('the ceiling is a flat 1500 with no per-skill exceptions', () => {
+  assert.deepEqual(WORD_BUDGETS, {});
+  assert.equal(DEFAULT_BUDGET, 1500);
 });
 
-test('build completes without process.exit(1) when the compiled spec skill is under the flat 999 ceiling', () => {
-  const result = checkBudget('spec', 955, WORD_BUDGETS);
-  assert.equal(result, null);
+test('every footprint group is capped below the sum of its files per-file ceilings', () => {
+  // An aggregate at or above that sum constrains nothing. This is what the old
+  // run budget of 25000 would have become the moment the per-file ceiling rose:
+  // 10 files x 1500 = 15000, so 25000 could never trip.
+  const groupSizes = { run: 10, spec: 3, audit: 11 };
+  for (const [group, files] of Object.entries(groupSizes)) {
+    const budget = FOOTPRINT_BUDGETS[group];
+    assert.ok(budget, `missing aggregate budget for ${group}`);
+    assert.ok(
+      budget < files * DEFAULT_BUDGET,
+      `${group} budget ${budget} is not below ${files} x ${DEFAULT_BUDGET} — it would never trip`
+    );
+  }
 });
 
-test('build would trigger checkBudget process.exit(1) when the compiled spec skill exceeds the flat 999 ceiling', () => {
-  const violation = checkBudget('spec', 1000, WORD_BUDGETS);
-  assert.deepEqual(violation, { skillKey: 'spec', wordCount: 1000, limit: DEFAULT_BUDGET });
+test('build completes without process.exit(1) when a compiled skill is under the ceiling', () => {
+  assert.equal(checkBudget('spec', DEFAULT_BUDGET - 1, WORD_BUDGETS), null);
+});
+
+test('build would trigger checkBudget process.exit(1) when a compiled skill exceeds the ceiling', () => {
+  const violation = checkBudget('spec', DEFAULT_BUDGET + 1, WORD_BUDGETS);
+  assert.deepEqual(violation, {
+    skillKey: 'spec',
+    wordCount: DEFAULT_BUDGET + 1,
+    limit: DEFAULT_BUDGET,
+  });
 });

@@ -48,6 +48,9 @@ jobs:
       - name: Check worker Skill wrappers stay thin
         run: ./scripts/check-wrapper-is-thin.sh
 
+      - name: Check graph.sh stays driver-agnostic
+        run: ./scripts/check-graph-driver-isolation.sh
+
   hook-tests:
     name: Hook Tests — src/hooks/tests/*.test.sh
     runs-on: ubuntu-latest

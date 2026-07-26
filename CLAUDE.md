@@ -17,6 +17,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:review` | Code review (SOLID, DRY, KISS) |
 | `/ship:homolog` | Final report + user homologation |
 | `/ship:pr` | Create PR with atomic commits and aggregated quality report |
+| `/ship:graph` | Cross-task parallelism: runs a feature's independent tasks in isolated workspaces, one `/ship:run` per node, with a merge node that verifies them together |
 | `/ship:audit:backend` | Project-wide backend performance audit (3 parallel agents) |
 | `/ship:audit:frontend` | Project-wide frontend performance audit (Next.js 5-layer or generic 11-category) |
 | `/ship:audit:database` | Project-wide database audit (MongoDB / PostgreSQL / MySQL) |
@@ -68,6 +69,13 @@ ship/
 - Parallel fan-out is allowed only where independent read-only analysis or disjoint test layers pay for the per-agent startup cost: the quality phases (`/ship:perf`, `/ship:security`, `/ship:review`), the test layers in `/ship:test`, and the `/ship:audit:*` commands
 - Everything else runs sequentially in a single context — `/ship:develop` implements all modules itself, in dependency order, with no leaf workers
 - Each parallel agent writes to separate files (no race conditions)
+- `/ship:graph` is the one exception, and it is parallelism **between tasks**, not inside one: each node is a whole `/ship:run` in its own workspace, admitted only when its dependency and file-conflict edges allow it, and integrated through a serialized merge node. Nothing inside a task changes.
+
+### Work Graph
+
+- The graph's scheduling, conflict edges, merge node and caps live in `src/hooks/graph.sh` — a deterministic script, testable in CI with no runtime installed.
+- `graph.sh` must never name a workspace runtime. Everything runtime-specific goes through `src/hooks/driver-<name>.sh` and its four verbs (`dispatch`/`collect`/`wait`/`ask`); `scripts/check-graph-driver-isolation.sh` enforces it.
+- `.context/ship-graph/<feature>/` holds the graph state. `graph.sh` is its only writer.
 
 ### Gates
 - `critical` or `high` findings → gate `fail` → pipeline stops

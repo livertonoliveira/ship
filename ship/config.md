@@ -51,9 +51,10 @@
 - e2e: disabled
 
 ## Sensitive Paths
-# Optional — paths that force 'normal' classification even for trivial diffs.
-# Format: one path prefix per line (relative to repo root).
-# Defaults if section is absent: auth/, payment/, query, migrations/
+# Path prefixes that stop a doc/config-only change from classifying as trivial,
+# so it still gets the quality fan-out. Has no effect on code diffs.
+# Empty (as below) keeps the built-in set: auth/, payment/, query, migrations/
+# `- none` turns them off. One prefix per line:
 # - auth/
 # - payment/
 # - migrations/

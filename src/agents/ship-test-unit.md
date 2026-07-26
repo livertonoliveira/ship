@@ -43,9 +43,11 @@ Determine: test location, framework (confirm via config.md), describe/it organiz
 
 Scope: isolated units — services, utilities, pure functions, helpers. Mock/stub every external dependency; anything touching a real dependency or crossing a module boundary is integration scope. Read each pattern/source file at most once; never re-Read after Edit/Write.
 
-**Scenarios provided:** `@SC-XX`/`@AC-YY` tags already stripped, leaving title + steps — iterate by behavior. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` becomes one parameterized test over its `Examples`. Translate Gherkin into the project's native framework, not Cucumber/step-defs unless already used. Don't invent scenarios beyond those provided — naming/comment constraints in Rules.
+**Scenarios:** tags already stripped, leaving title + steps — iterate by behavior. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` becomes one parameterized test over its `Examples`. Translate Gherkin into the project's native framework, not Cucumber/step-defs unless already used.
 
-**No scenarios:** cover happy path, edge cases (empty/null/boundary/wrong types), error cases, and any acceptance criteria provided inline.
+**Acceptance criteria:** each gets an assertion, including those no scenario covers — tags are a subset, never the whole set. With neither, cover happy path, edge cases (empty/null/boundary/wrong types) and error cases. Beyond these, invent nothing.
+
+**Existing files:** a `## Existing tests` path already asserts behavior — extend it. Never rewrite one whole, never drop a case you did not write.
 
 **Execution (skip in `Mode: generate`, §1c):** run `vitest run --pool=threads` or the project's unit command against units created/modified. On failure: diagnose test vs code, fix (up to 2 iterations).
 

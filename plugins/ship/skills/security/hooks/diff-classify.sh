@@ -37,8 +37,16 @@ new_endpoint_count() {
     | wc -l | tr -d ' '
 }
 
+# Three states, and the middle one was a trap. A section present but carrying no
+# entries is exactly the shape /ship:init leaves behind before anyone customises
+# it — reading that as "this project has no sensitive paths" switched the
+# built-in protection off silently, so a doc-only change under auth/ classified
+# `trivial` and skipped the quality fan-out entirely.
+#
+# Empty now means "not customised" and keeps the defaults. Turning them off is
+# possible but has to be said out loud, with `- none`.
 sensitive_paths_from_config() {
-  local cfg="$1" in_section=0 line stripped
+  local cfg="$1" in_section=0 line stripped found=0
   [ -f "$cfg" ] || return 1
   grep -q '^## Sensitive Paths' "$cfg" || return 1
   while IFS= read -r line; do
@@ -48,6 +56,7 @@ sensitive_paths_from_config() {
         '- '*)
           stripped="${line#- }"
           printf '%s\n' "$stripped"
+          found=1
           ;;
       esac
     fi
@@ -55,13 +64,14 @@ sensitive_paths_from_config() {
       '## Sensitive Paths') in_section=1 ;;
     esac
   done < "$cfg"
+  [ "$found" -eq 1 ] || return 1
   return 0
 }
 
 sensitive_path_count() {
   local f="$1" cfg="$2" paths pattern joined=""
   if paths="$(sensitive_paths_from_config "$cfg")"; then
-    if [ -z "$paths" ]; then
+    if printf '%s\n' "$paths" | grep -qx 'none'; then
       printf '0'
       return 0
     fi

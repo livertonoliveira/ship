@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -397,6 +397,27 @@ gate_usage() {
   echo "usage: pipeline.sh gate <scratch-dir> [--config <path>]" >&2
 }
 
+# Deferred homolog. The work graph runs N of these pipelines at once, so one
+# blocking acceptance prompt per task turns a single stop into N — and the whole
+# point of the graph dies there. With homolog-mode.txt == defer the report is
+# assembled from artifacts that already exist (the canonical gate index, the
+# wall-clock breakdown, the consolidated findings) and the graph presents every
+# report in one batch. No LLM, no dispatch, no new prose in a SKILL.
+homolog_defer_report() {
+  local scratch="$1" task="$2"
+  {
+    printf '# Homolog — %s (deferred)\n\n' "$task"
+    printf '## Gate by phase\n\n'
+    printf '| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |\n'
+    printf '|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|\n'
+    cmd_rows "$scratch"
+    printf '\n## Wall clock\n\n```\n'
+    cmd_report_timings "$scratch" 2>/dev/null || true
+    printf '```\n\n## Consolidated findings\n\n'
+    cat "$scratch/phase-status.md"
+  } > "$scratch/homolog-report.md"
+}
+
 rows_usage() {
   echo "usage: pipeline.sh rows <scratch-dir>" >&2
   echo "  prints the most recent full phase-status.md row for each phase, in first-seen order" >&2
@@ -757,9 +778,9 @@ next_consolidate() {
 }
 
 next_write_row() {
-  local scratch="$1" phase="$2" gate="$3" notes="$4" ts
+  local scratch="$1" phase="$2" gate="$3" notes="$4" medium="${5:-0}" ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '| %s | #<RUN> | %s | - | %s | 0 | 0 | 0 | 0 | %s |\n' "$phase" "$ts" "$gate" "$notes" \
+  printf '| %s | #<RUN> | %s | - | %s | 0 | 0 | %s | 0 | %s |\n' "$phase" "$ts" "$gate" "$medium" "$notes" \
     > "$scratch/phase-status-$phase.md"
 }
 
@@ -835,6 +856,17 @@ next_test_brief() {
         capture { print }
       ' "$plan"
     fi
+    # Acceptance criteria go in unconditionally. The scenario block below is
+    # filtered to this layer's tags, so an AC with no tagged scenario reaches the
+    # worker nowhere else — and the worker is told not to invent beyond what it
+    # was given, which turned "untagged" into "untested".
+    printf '\n## Acceptance Criteria\n\n'
+    if [ -f "$spec" ] && grep -qE '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"; then
+      grep -E '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"
+      printf '\nEvery criterion above needs an assertion, including any with no scenario below.\n'
+    else
+      printf 'None stated.\n'
+    fi
     printf '\n## Scenarios\n\n'
     if [ -f "$spec" ] && grep -qE '@(unit|integration|e2e)' "$spec"; then
       awk -v layer="$layer" '
@@ -859,6 +891,12 @@ next_test_brief() {
       printf 'Source files under test — read these first; do not explore the codebase before reading them:\n\n'
       printf '%s\n' "$files" | sed 's/^/- /'
       printf '\n'
+    fi
+    local existing
+    existing="$(git ls-files -- '*.test.*' '*.spec.*' '*_test.*' 'test_*.py' 2>/dev/null || true)"
+    if [ -n "$existing" ]; then
+      printf '\n## Existing tests\n\nThese files already exist and already assert behavior. Add to them; never rewrite one from scratch, and never remove a case you did not write:\n\n'
+      printf '%s\n' "$existing" | sed 's/^/- /'
     fi
     first="$(printf '%s\n' "$files" | head -1)"
     ref="$(next_test_pattern_ref "$first")"
@@ -1117,6 +1155,10 @@ cmd_next() {
 
   # --- verification turn A: test-layer workers ∥ quality agents ----------------
   if [ ! -f "$SCRATCH/verify-a.txt" ]; then
+    # Baseline the existing suites before any worker writes: the comparison after
+    # the fan-out is the only thing that notices coverage being replaced rather
+    # than extended.
+    bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-pre.txt" 2>/dev/null || true
     local qs qrun depth layers=""
     qs="$(bash "$HOOK_DIR/quality-scope.sh" "$class" --phases "perf security review" --scratch "$SCRATCH" --config "$CONFIG")"
     qrun="$(printf '%s\n' "$qs" | grep '^run=' | sed 's/^run=//')"
@@ -1200,7 +1242,24 @@ cmd_next() {
         [ -f "$SCRATCH/generated-tests-$l.md" ] && grep '^- ' "$SCRATCH/generated-tests-$l.md" || true
       done
     } > "$SCRATCH/generated-tests.md"
-    next_write_row "$SCRATCH" test-generate pass ""
+    local tr_out="" tr_rc=0
+    if [ -f "$SCRATCH/tests-pre.txt" ]; then
+      bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
+      set +e
+      tr_out="$(bash "$HOOK_DIR/test-regression.sh" check "$SCRATCH/tests-pre.txt" "$SCRATCH/tests-post.txt" 2>/dev/null)"
+      tr_rc=$?
+      set -e
+    fi
+    if [ "$tr_rc" -eq 1 ] && [ -n "$tr_out" ]; then
+      {
+        printf '# Test Coverage Regression\n\nThe test phase left these files with fewer cases than before it ran:\n\n'
+        printf '%s\n' "$tr_out" | awk '{ printf "- %s: %s → %s cases\n", $1, $2, $3 }'
+        printf '\nRestore the removed assertions; do not delete coverage to make a contract fit.\n'
+      } > "$SCRATCH/test-regression.md"
+      next_write_row "$SCRATCH" test-generate warn "coverage removed from pre-existing test file(s)" 1
+    else
+      next_write_row "$SCRATCH" test-generate pass ""
+    fi
     next_consolidate "$SCRATCH" "$RUN" test-generate
     # Intent-add the freshly generated (untracked) test files so every later
     # diff-based consumer sees them — test-exec/pr build a complete diff. Mirrors
@@ -1421,6 +1480,9 @@ cmd_next() {
   if [ "$(phase_toggle "$CONFIG" homolog)" != "disabled" ] && [ ! -f "$SCRATCH/homolog-approved.txt" ]; then
     if [ "$ANSWER" = "approved" ]; then
       printf 'approved\n' > "$SCRATCH/homolog-approved.txt"
+    elif [ "$(head -1 "$SCRATCH/homolog-mode.txt" 2>/dev/null || true)" = "defer" ]; then
+      homolog_defer_report "$SCRATCH" "$TASK_ID"
+      printf 'deferred\n' > "$SCRATCH/homolog-approved.txt"
     else
       if ! next_dispatched "$SCRATCH" homolog; then
         cmd_dispatch "$SCRATCH" homolog Skill ship:homolog sonnet >/dev/null
