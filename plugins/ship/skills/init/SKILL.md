@@ -84,7 +84,7 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 - e2e: [default based on project type]
 
 ## Scenario Depth
-# none=no Scenarios; light=1/AC (nominal+error); full=nominal+edge+error/AC
+# none=no Scenarios; full=nominal+edge+error per AC
 - depth: full
 
 ## Clarify
@@ -106,6 +106,15 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 
 ## Severity Overrides
 [empty by default — e.g. `high → warn` to downgrade a finding before gate evaluation]
+
+## Sensitive Paths
+# Path prefixes that stop a doc/config-only change from classifying as trivial,
+# so it still gets the quality fan-out. Empty keeps the built-in set below.
+# `- none` turns them off. One prefix per line:
+# - auth/
+# - payment/
+# - query
+# - migrations/
 
 ## Gate Behavior
 - on_fail: ask
@@ -139,7 +148,7 @@ Present all at once, in one block, wait for a single reply. Skip any question wh
 2. **Artifact/prompt language** — e.g. `pt-BR`, `en`, `es`; see ${CLAUDE_SKILL_DIR}/patterns/language.md.
 3. **Pipeline phases** — default all enabled (dev, test, perf, security, review, homolog, pr); name any to disable.
 4. **Test Scope** — show detected type + computed defaults; reply with overrides or Enter to confirm.
-5. **Scenario Depth** — `full` (default: nominal+edge+error/AC), `light` (nominal+dominant error/AC), `none`.
+5. **Scenario Depth** — `full` (default: nominal+edge+error per AC) or `none`.
 6. **Clarify step** — `on` (default, up to 5 ranked questions before spec) or `off`.
 
 Write the answers into the matching config fields above.

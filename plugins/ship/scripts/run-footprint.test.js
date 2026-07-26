@@ -38,14 +38,21 @@ function runScript(pluginRoot) {
   }
 }
 
-test('footprint lists each file of the typical run with its word count and prints the aggregate total plus the 25000 ceiling', () => {
+test('footprint lists every group with its files, totals and ceiling', () => {
   const stdout = execFileSync('node', [SCRIPT_PATH], { encoding: 'utf8' });
   const lines = stdout.trim().split('\n');
   for (const relPath of RUN_FOOTPRINT_FILES) {
     assert.ok(lines.some((line) => line.includes(relPath)), `expected output to list ${relPath}`);
   }
-  const lastLine = lines[lines.length - 1];
-  assert.match(lastLine, /Total: \d+ \/ 25000/);
+  // Three groups now, not one: spec and audit were previously bounded by no
+  // aggregate at all, so raising the per-file ceiling would have left them
+  // guarded by nothing.
+  for (const group of ['run', 'spec', 'audit']) {
+    assert.ok(lines.some((l) => l.trim() === `[${group}]`), `expected a [${group}] section`);
+  }
+  const totals = lines.filter((l) => l.startsWith('Total: '));
+  assert.equal(totals.length, 3);
+  assert.match(totals[0], new RegExp(`Total: \\d+ / ${RUN_FOOTPRINT_BUDGET}`));
 });
 
 test('a total above the ceiling fails with exit code 1 and the message reports the total, the ceiling and the overage', () => {
@@ -53,7 +60,7 @@ test('a total above the ceiling fails with exit code 1 and the message reports t
   const root = makeFixtureRoot(wordsPerFile);
   const result = runScript(root);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /excede o teto de 25000/);
+  assert.match(result.stderr, new RegExp(`excede o teto de ${RUN_FOOTPRINT_BUDGET}`));
   assert.match(result.stderr, /em \d+ palavras/);
 });
 

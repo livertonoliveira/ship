@@ -164,6 +164,46 @@ function bundleHookSiblings(skillOutDir, skillRelPath) {
     copied++;
   }
   console.log(`  ${skillRelPath} ⇢ hooks/*.sh (${copied} siblings bundled)`);
+  bundleHookPatterns(skillOutDir, skillRelPath);
+}
+
+// Hooks point the orchestrator at patterns the same way they shell out to
+// sibling hooks — `$HOOK_DIR/../patterns/<name>.md` — so a skill that bundles
+// hooks but not those patterns ships paths that resolve to nothing. Same failure
+// shape the sibling bundling above exists to prevent, and just as invisible
+// until a run reaches the instruction that names one.
+function bundleHookPatterns(skillOutDir, skillRelPath) {
+  const srcHooks = path.join(SOURCE_ROOT, 'hooks');
+  const srcPatterns = path.join(SOURCE_ROOT, 'patterns');
+  if (!fs.existsSync(srcPatterns)) return;
+
+  const referenced = new Set();
+  const patternRe = /patterns\/([a-z0-9-]+\.md)/g;
+  for (const entry of fs.readdirSync(srcHooks, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.sh')) continue;
+    const body = readFileCached(path.join(srcHooks, entry.name));
+    let m;
+    while ((m = patternRe.exec(body)) !== null) referenced.add(m[1]);
+  }
+  if (referenced.size === 0) return;
+
+  const destPatterns = path.join(skillOutDir, 'patterns');
+  fs.mkdirSync(destPatterns, { recursive: true });
+  let copied = 0;
+  for (const name of referenced) {
+    const src = path.join(srcPatterns, name);
+    if (!fs.existsSync(src)) {
+      console.error(`Erro: hook referencia um pattern inexistente: patterns/${name}`);
+      process.exit(1);
+    }
+    const dest = path.join(destPatterns, name);
+    if (fs.existsSync(dest)) continue;
+    fs.writeFileSync(dest, resolveRefs(readFileCached(src), `${skillRelPath} → patterns/${name}`), 'utf8');
+    copied++;
+  }
+  if (copied > 0) {
+    console.log(`  ${skillRelPath} ⇢ patterns/*.md (${copied} hook-referenced bundled)`);
+  }
 }
 
 function processLazyRefs(content, skillRelPath, skillOutDir) {

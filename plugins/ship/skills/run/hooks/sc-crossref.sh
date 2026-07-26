@@ -3,7 +3,19 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: sc-crossref.sh --index <file> --issues <dir|files...>" >&2
+  echo "usage: sc-crossref.sh --index <file> --issues <dir|files...> [--proposal <file>]" >&2
+}
+
+# Every AC declared in the proposal, minus the ones explicitly marked as having
+# no behavior to exercise. The marker is required to be explicit: inferring
+# "this one is static" from wording would guess wrong on a real spec and reject
+# it, and a gate that cries wolf gets switched off.
+proposal_acs() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  grep -oE 'AC-[0-9]+[[:space:]]*(\(static\))?' "$f" 2>/dev/null \
+    | awk '{ if ($0 !~ /\(static\)/) { sub(/[[:space:]].*$/, ""); print } }' \
+    | sort -u || true
 }
 
 index_pairs() {
@@ -56,13 +68,18 @@ ac_for_sc() {
 }
 
 main() {
-  local index_file="" issues_target="" issues_extra=()
+  local index_file="" issues_target="" proposal_file="" issues_extra=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --index)
         [ $# -ge 2 ] || { usage; exit 1; }
         index_file="$2"
+        shift 2
+        ;;
+      --proposal)
+        [ $# -ge 2 ] || { usage; exit 1; }
+        proposal_file="$2"
         shift 2
         ;;
       --issues)
@@ -167,6 +184,19 @@ main() {
       violations+=("missing: $sc [issue: -]")
     fi
   done
+
+  # An acceptance criterion no scenario covers reaches the test worker nowhere:
+  # the brief filters scenarios by layer tag, so an untagged AC is invisible and
+  # ships untested. Skipped when the index carries no scenarios at all — that is
+  # depth=none, where their absence is the configuration, not an omission.
+  if [ -n "$proposal_file" ] && [ -n "$index_data" ]; then
+    local covered ac_id
+    covered="$(printf '%s\n' "$index_data" | awk -F'|' '{ print $2 }' | sort -u)"
+    while IFS= read -r ac_id; do
+      [ -n "$ac_id" ] || continue
+      printf '%s\n' "$covered" | grep -qx "$ac_id" || violations+=("uncovered: $ac_id [no scenario]")
+    done <<< "$(proposal_acs "$proposal_file")"
+  fi
 
   if [ "${#violations[@]}" -eq 0 ]; then
     echo "SC cross-reference — clean."

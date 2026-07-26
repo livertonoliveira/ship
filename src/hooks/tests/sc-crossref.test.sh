@@ -331,6 +331,130 @@ test_scenario_depth_none_is_clean
 test_nested_issue_file_is_found
 test_missing_args_usage_fails
 
+
+# --- AC coverage -------------------------------------------------------------
+# An AC no scenario covers is invisible to the test worker: the brief filters
+# scenarios by layer tag, so an untagged criterion reaches it nowhere and ships
+# untested. Observed live — two workers had to add the missing assertions
+# themselves after noticing the gap.
+
+ac_fixture() {
+  local dir="$1" acs="$2" index="$3"
+  mkdir -p "$dir/issues"
+  { printf '## Requirements\n'; printf '%s\n' "$acs"; } > "$dir/proposal.md"
+  printf '%s\n' "$index" > "$dir/index.md"
+  printf '## Scenarios\n@SC-01 @AC-01 @unit\nScenario: nominal\n' > "$dir/issues/t1.md"
+}
+
+test_ac_without_scenario_is_flagged() {
+  local name="an AC with no scenario covering it is reported as uncovered"
+  local dir out rc=0
+  dir="$(mktemp -d)"
+  ac_fixture "$dir" "- AC-01: soma
+- AC-02: subtrai" "- SC-01 -> AC-01 · unit · soma"
+  out="$(bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" --proposal "$dir/proposal.md")" || rc=$?
+  rm -rf "$dir"
+
+  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^uncovered: AC-02'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out')"
+  fi
+}
+
+test_static_ac_is_exempt() {
+  local name="an AC marked (static) needs no scenario"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  ac_fixture "$dir" "- AC-01: soma
+- AC-02 (static): arquivo abaixo de 30 linhas" "- SC-01 -> AC-01 · unit · soma"
+  bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" --proposal "$dir/proposal.md" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+
+  # Without the exemption the gate rejects legitimate non-behavioral criteria,
+  # and a gate that cries wolf gets switched off.
+  if [ "$rc" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc — a (static) AC was demanded a scenario)"
+  fi
+}
+
+test_ac_check_is_skipped_without_an_index() {
+  local name="depth=none (no scenario index) skips the AC check entirely"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/issues"
+  printf '## Requirements\n- AC-01: soma\n- AC-02: subtrai\n' > "$dir/proposal.md"
+  : > "$dir/index.md"
+  bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" --proposal "$dir/proposal.md" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+
+  # At depth=none the absence of scenarios is the configuration, not an omission.
+  if [ "$rc" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc — depth=none was treated as missing coverage)"
+  fi
+}
+
+test_ac_check_is_opt_in() {
+  local name="omitting --proposal leaves the original behavior untouched"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  ac_fixture "$dir" "- AC-01: soma
+- AC-02: subtrai" "- SC-01 -> AC-01 · unit · soma"
+  bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+
+  if [ "$rc" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc — the AC check ran without being asked for)"
+  fi
+}
+
+test_fully_covered_spec_is_clean() {
+  local name="a spec whose every AC has a scenario passes"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/issues"
+  printf '## Requirements\n- AC-01: soma\n- AC-02: subtrai\n' > "$dir/proposal.md"
+  printf -- '- SC-01 -> AC-01 · unit · soma\n- SC-02 -> AC-02 · unit · subtrai\n' > "$dir/index.md"
+  printf '## Scenarios\n@SC-01 @AC-01 @unit\nScenario: soma\n@SC-02 @AC-02 @unit\nScenario: subtrai\n' > "$dir/issues/t1.md"
+  bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" --proposal "$dir/proposal.md" >/dev/null 2>&1 || rc=$?
+  rm -rf "$dir"
+
+  if [ "$rc" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+}
+
+test_depth_has_only_none_and_full() {
+  local name="Scenario Depth offers only none and full — the ambiguous middle is gone"
+  local root init spec
+  root="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+  init="$root/src/skills/init/SKILL.md"
+  spec="$root/src/skills/spec/SKILL.md"
+  # `light` was defined differently in the two files (1/AC vs nominal+error/AC),
+  # so it could not be enforced consistently. Removed rather than reconciled.
+  if ! grep -q 'light' "$init" && ! grep -q '`light`' "$spec" \
+    && grep -q 'AC-NN (static)' "$spec"; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+}
+
+test_ac_without_scenario_is_flagged
+test_static_ac_is_exempt
+test_ac_check_is_skipped_without_an_index
+test_ac_check_is_opt_in
+test_fully_covered_spec_is_clean
+test_depth_has_only_none_and_full
+
 echo ""
 echo "$pass_count passed, $fail_count failed"
 
