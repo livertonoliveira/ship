@@ -63,12 +63,14 @@ You describe what you want. Ship breaks it into tasks, implements it, tests it, 
 
 That's the complete flow. Each command handles one step; you only intervene when something needs your attention.
 
+Under the hood, phase ordering, quality gates, and fix loops are enforced by a deterministic state machine in pure bash — not by prompt prose. Runs are reproducible, resumable after a crash, and the gates can't be talked out of blocking.
+
 ### Before vs. After
 
 | Without Ship | With Ship |
 |---|---|
 | Feature planning in free-form chat | Structured project with granular tasks and acceptance criteria |
-| "Please review this" | 3 parallel agents: performance + security + code quality |
+| "Please review this" | Verify phase: tests + performance + security + code review in parallel, one consolidated gate |
 | Tests written on the spot, without criteria | Scenarios defined at spec time, generated automatically in tests |
 | Manual OWASP eyeballing | Automated security scan on every delivery, with a blocking gate |
 | "Initial commit" repeated 20 times | Atomic, standardized commits by design |
@@ -167,15 +169,32 @@ These commands are part of the normal delivery flow. Each one analyzes only **wh
 |---------|--------------|
 | `/ship:init` | Initializes Ship in the project — detects stack, conventions, configures Linear, creates `ship/config.md` |
 | `/ship:spec` | Decomposes a feature into granular tasks, defines test scenarios per acceptance criterion, creates a Linear project with milestones and issues |
-| `/ship:run` | Runs the full pipeline for a task: plan → implement → test → performance → security → review → homologation |
+| `/ship:run` | Runs the full pipeline for a task: develop → verify (tests and quality analyses in parallel, one consolidated gate) → homologation — sequenced by a deterministic state machine, not by prompt prose |
 | `/ship:plan` | Test-aware planning: decomposes the task into independent modules and maps each scenario to a test slot — one `plan.md` that both develop and test consume, so code and tests stay in sync |
-| `/ship:develop` | Reads the plan and implements code following project conventions, fanning out one worker per module (can run standalone or inside `/ship:run`) |
-| `/ship:test` | Generates and runs unit, integration, and e2e tests from the plan's test contract (falls back to scenarios when no plan exists) |
+| `/ship:develop` | Reads the plan and implements all modules sequentially in one context, in dependency order (can run standalone or inside `/ship:run`) |
+| `/ship:test` | Generates and runs unit, integration, and e2e tests from the plan's test contract. Standalone command — inside the pipeline, the state machine dispatches the test workers directly |
 | `/ship:perf` | Analyzes diff performance — detects project type and adapts agents accordingly |
 | `/ship:security` | OWASP security scan of the diff with 3 parallel agents by attack category |
 | `/ship:review` | Code review focused on SOLID, DRY, KISS, Clean Code, and project consistency |
 | `/ship:homolog` | Presents the final quality report and awaits approval |
 | `/ship:pr` | Creates the Pull Request with atomic commits and aggregated quality report |
+| `/ship:graph` | Runs a feature's independent tasks in parallel — one isolated workspace per task, dependency and file-conflict edges, and a merge node that verifies everything together |
+
+#### Cross-task parallelism — `/ship:graph`
+
+`/ship:run` handles one task at a time. When a feature has several **independent** tasks, `/ship:graph` runs them in parallel without changing anything inside a task:
+
+- Each node of the graph is a complete `/ship:run` in its own isolated workspace.
+- A task is only admitted when its dependency edges allow it **and** no in-flight task touches the same files (file-conflict edges).
+- A serialized **merge node** integrates the finished branches and verifies them together — it gets at most 2 fix rounds, then asks you.
+- All homologation reports are presented in a single batch at the end, instead of interrupting you per task.
+
+```bash
+/ship:graph "My Feature"                 # Linear project name or ship/changes/<dir>
+/ship:graph <linear-project-url> --driver local --max-in-flight 2
+```
+
+The `--driver` flag selects how workspaces are provisioned: `manual` (default — Ship tells you what to open), `local` (git worktrees), or `orca` (the Orca workspace CLI, if installed). `--max-in-flight` caps concurrent tasks (default 2 — each node is a full pipeline, so this is already a lot of concurrent agents).
 
 ### Audit — for periodic project-wide reviews
 
@@ -262,6 +281,8 @@ At each phase, Ship classifies findings by severity and decides what to do:
 - `low` or no findings → gate **PASS** → pipeline continues
 
 The `on_fail` field controls what happens on a FAIL gate: `ask` (pause and ask), `fix` (agent attempts to fix automatically), or `defer` (creates a tracking issue and continues). The `on_warn` field does the same for WARNs: `ask`, `fix`, or `pass` (continues without action). The `on_fail_rerun` field controls the scope when a phase reruns: `surgical` (only the files with findings) or `full` (entire phase from scratch).
+
+Automatic fix loops are bounded: a failing gate gets at most 3 fix attempts per phase. If the same findings persist after that, Ship stops and asks you instead of looping forever.
 
 ### Storage: Linear or Local
 
