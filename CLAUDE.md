@@ -8,10 +8,10 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 |---------|---------|
 | `/ship:init` | Initialize Ship in a project (run once) |
 | `/ship:spec` | Deep specification: requirements, design, granular tasks (<400 lines), Linear project/milestones/issues |
-| `/ship:run` | Development pipeline for a task: plan → develop → test → quality → homologation |
+| `/ship:run` | Development pipeline for a task: develop → verify (test ∥ quality, one consolidated gate) → homolog — a thin loop over `pipeline.sh next` |
 | `/ship:plan` | Test-aware planning: decompose the task into modules and map scenarios to a test contract (single source of truth for develop + test) |
 | `/ship:develop` | Direct implementer: reads the plan and implements all modules sequentially in one context |
-| `/ship:test` | Generate and run tests (unit, integration, e2e) |
+| `/ship:test` | Standalone test fan-out (unit, integration, e2e) — inside the pipeline, `pipeline.sh next` dispatches the test workers directly |
 | `/ship:perf` | Performance analysis of the diff |
 | `/ship:security` | OWASP security scan of the diff |
 | `/ship:review` | Code review (SOLID, DRY, KISS) |
@@ -71,6 +71,12 @@ ship/
 - Each parallel agent writes to separate files (no race conditions)
 - `/ship:graph` is the one exception, and it is parallelism **between tasks**, not inside one: each node is a whole `/ship:run` in its own workspace, admitted only when its dependency and file-conflict edges allow it, and integrated through a serialized merge node. Nothing inside a task changes.
 
+### Pipeline State Machine
+
+- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, fix loops (cap of 3 per phase, findings-identity ledger, churn guard) and re-runs. It is a deterministic script, testable in CI with no runtime installed.
+- `run/SKILL.md` is only the executor of what `pipeline.sh next` prints — never re-add phase choreography, gate arithmetic, or ordering decisions to a SKILL or agent file.
+- Fix-loop counters and the findings ledger NEVER reset on resume — resetting restarts the loop.
+
 ### Work Graph
 
 - The graph's scheduling, conflict edges, merge node and caps live in `src/hooks/graph.sh` — a deterministic script, testable in CI with no runtime installed.
@@ -90,7 +96,7 @@ ship/
 - Follow Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `chore:`
 - Atomic commits — one logical change per commit
 - Never group unrelated changes
-- Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+- Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 - Branch naming: `<type>/<issue-id>-<short-description>`
 
 ### Stack Agnostic
@@ -99,8 +105,9 @@ ship/
 - Never hardcode stack-specific assumptions — always read from config.
 
 ### Word-Budget Gate
-- Each compiled `SKILL.md` must stay under a per-tier word ceiling enforced by `plugins/ship/scripts/build.js`.
-- See `plugins/ship/scripts/BUDGETS.md` for the tiers, ceilings, rationale, and the procedure to follow when a skill legitimately grows.
+- Each compiled `SKILL.md` and agent `.md` must stay under a flat 1500-word ceiling enforced by `plugins/ship/scripts/build.js` — no per-file exceptions.
+- Aggregate per-group budgets (`run`, `spec`, `audit`) are enforced by `plugins/ship/scripts/run-footprint.js`; they are the guard that actually bounds total context cost.
+- See `plugins/ship/scripts/BUDGETS.md` for the ceilings, rationale, and the procedure to follow when a skill legitimately grows.
 
 ### Anti-Bloat Rule
 - This rule exists because Ship's bloat came from an identifiable dynamic: every behavior bug got fixed by adding defensive prose to a SKILL or agent instead of removing surface or moving the fix to a script, and that pushed a run to 6,900 words even under the word-budget ceiling — new prose can fit under the ceiling and still be the wrong fix.
