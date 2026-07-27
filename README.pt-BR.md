@@ -63,12 +63,14 @@ Você descreve o que quer. O Ship quebra em tarefas, implementa, testa, revisa s
 
 Isso é o fluxo completo. Cada comando faz uma etapa; você só intervém quando algo merece atenção.
 
+Por baixo do capô, a ordem das fases, os gates de qualidade e os loops de correção são impostos por um state machine determinístico em bash puro — não por prosa de prompt. As execuções são reproduzíveis, retomáveis após uma queda, e os gates não podem ser "convencidos" a deixar passar.
+
 ### Antes vs. Depois
 
 | Sem Ship | Com Ship |
 |---|---|
 | Planejamento em chat livre | Projeto com tarefas granulares e critérios de aceite |
-| "Por favor, revise isso" | 3 agentes em paralelo: performance + segurança + qualidade de código |
+| "Por favor, revise isso" | Fase de verify: testes + performance + segurança + revisão de código em paralelo, um gate consolidado |
 | Testes escritos na hora, sem critério | Cenários definidos no spec, gerados automaticamente nos testes |
 | Verificação de segurança manual | Scan OWASP automatizado em cada entrega, com gate de bloqueio |
 | "Initial commit" repetido 20 vezes | Commits atômicos e padronizados por design |
@@ -167,16 +169,32 @@ Esses comandos fazem parte do fluxo normal de entrega. Cada um analisa apenas **
 |---------|-----------|
 | `/ship:init` | Inicializa o Ship no projeto — detecta stack, convenções, configura o Linear, cria `ship/config.md` |
 | `/ship:spec` | Decompõe uma feature em tarefas granulares, define cenários de teste por critério de aceite, cria projeto no Linear com milestones e issues |
-| `/ship:run` | Executa a pipeline completa para uma tarefa: planejamento → implementação → testes → performance → segurança → revisão → homologação |
+| `/ship:run` | Executa a pipeline completa para uma tarefa: develop → verify (testes e análises de qualidade em paralelo, um gate consolidado) → homologação — sequenciada por um state machine determinístico, não por prosa de prompt |
 | `/ship:plan` | Planejamento orientado a testes: decompõe a tarefa em módulos independentes e mapeia cada cenário para um slot de teste — um único `plan.md` que develop e test consomem, mantendo código e testes em sincronia |
-| `/ship:develop` | Lê o plano e implementa o código seguindo as convenções do projeto, paralelizando um worker por módulo (pode rodar sozinho ou dentro do `/ship:run`) |
-| `/ship:test` | Gera e executa testes unitários, de integração e e2e a partir do test contract do plano (cai para os cenários quando não há plano) |
+| `/ship:develop` | Lê o plano e implementa todos os módulos sequencialmente num único contexto, em ordem de dependência (pode rodar sozinho ou dentro do `/ship:run`) |
+| `/ship:test` | Gera e executa testes unitários, de integração e e2e a partir do test contract do plano. Comando standalone — dentro da pipeline, o state machine despacha os workers de teste diretamente |
 | `/ship:perf` | Analisa performance do diff — detecta o tipo de projeto e adapta os agentes |
 | `/ship:security` | Scan de segurança OWASP do diff com 3 agentes em paralelo por categoria de ataque |
 | `/ship:review` | Revisão de código focada em SOLID, DRY, KISS, Clean Code e consistência com o projeto |
-| `/ship:analyze` | Detecta drift entre spec, código e testes — gate PASS/WARN/FAIL |
 | `/ship:homolog` | Apresenta o relatório final de qualidade e aguarda aprovação |
 | `/ship:pr` | Cria o Pull Request com commits atômicos e relatório de qualidade agregado |
+| `/ship:graph` | Executa as tarefas independentes de uma feature em paralelo — uma workspace isolada por tarefa, arestas de dependência e de conflito de arquivos, e um merge node que verifica tudo junto |
+
+#### Paralelismo entre tarefas — `/ship:graph`
+
+O `/ship:run` cuida de uma tarefa por vez. Quando uma feature tem várias tarefas **independentes**, o `/ship:graph` as executa em paralelo sem mudar nada dentro de cada tarefa:
+
+- Cada nó do grafo é um `/ship:run` completo na sua própria workspace isolada.
+- Uma tarefa só é admitida quando suas arestas de dependência permitem **e** nenhuma tarefa em execução toca nos mesmos arquivos (arestas de conflito de arquivos).
+- Um **merge node** serializado integra as branches finalizadas e as verifica em conjunto — ele tem no máximo 2 rodadas de correção, depois pergunta a você.
+- Todos os relatórios de homologação são apresentados num único lote ao final, em vez de interromper você a cada tarefa.
+
+```bash
+/ship:graph "Minha Feature"                 # nome do projeto no Linear ou ship/changes/<dir>
+/ship:graph <url-do-projeto-linear> --driver local --max-in-flight 2
+```
+
+A flag `--driver` escolhe como as workspaces são provisionadas: `manual` (padrão — o Ship diz o que abrir), `local` (git worktrees) ou `orca` (a CLI de workspaces Orca, se instalada). `--max-in-flight` limita as tarefas simultâneas (padrão 2 — cada nó é uma pipeline completa, então isso já significa muitos agentes concorrentes).
 
 ### Auditoria — para revisões periódicas do projeto
 
@@ -264,6 +282,8 @@ Em cada fase, o Ship classifica os achados por severidade e decide o que fazer:
 
 O campo `on_fail` controla o que acontece num FAIL: `ask` (pausa e pergunta), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). O campo `on_warn` faz o mesmo para WARNs: `ask`, `fix` ou `pass` (continua sem ação). O campo `on_fail_rerun` controla o escopo quando a fase roda de novo: `surgical` (só os arquivos com problemas) ou `full` (fase inteira do zero).
 
+Os loops de correção automática são limitados: um gate reprovado tem no máximo 3 tentativas de correção por fase. Se os mesmos achados persistirem depois disso, o Ship para e pergunta a você em vez de ficar em loop para sempre.
+
 ### Armazenamento: Linear ou Local
 
 Ship funciona em dois modos dependendo de você ter o Linear MCP configurado:
@@ -305,7 +325,7 @@ O campo `Test Scope` controla quais camadas de teste o `/ship:test` gera durante
 
 Camadas desabilitadas não são geradas durante o pipeline normal. Para auditar e preencher essas lacunas, use `/ship:audit:tests`.
 
-> O `/ship:analyze` detecta drift apenas nas camadas habilitadas; o `/ship:audit:tests` audita todas as camadas do projeto independente dessa configuração.
+> O `/ship:audit:tests` audita a cobertura de testes em todas as camadas do projeto, independente de quais camadas a pipeline gera.
 
 ### Profundidade dos Cenários
 
@@ -322,8 +342,7 @@ Quando `depth` é `light` ou `full`, cada cenário recebe tags como `@SC-01`, `@
 - `/ship:plan` — mapeia cada `@SC-XX` para um módulo e um slot de teste numa única interpretação
 - `/ship:develop` — implementa código para satisfazer cada `@SC-XX` (seguindo o plano)
 - `/ship:test` — gera um teste por cenário sem precisar rederivá-los
-- `/ship:analyze` — correlaciona cenários com testes e reporta o que está coberto
-- `/ship:audit:tests` — faz essa correlação em todo o projeto por camada
+- `/ship:audit:tests` — correlaciona cenários com testes em todo o projeto por camada e reporta o que está coberto
 
 ---
 
