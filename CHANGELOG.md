@@ -2,6 +2,607 @@
 
 Histórico reconstruído a partir do versionamento automático (`plugin.json`) e dos commits de cada release. Versões em ordem decrescente.
 
+## 4.1.0 — 2026-07-26
+
+### Features
+- **Graph mode implementado** — `/ship:graph` executa o pipeline em paralelo **entre tarefas**.
+- Scheduler de work-graph agnóstico de runtime (`src/hooks/graph.sh`): arestas de dependência + conflito de arquivos e um merge node serializado que verifica as tarefas em conjunto.
+- Cada nó roda um `/ship:run` completo em workspace isolada, via drivers plugáveis (`manual`/`local`/`orca`) com quatro verbos (`dispatch`/`collect`/`wait`/`ask`); nada muda dentro de uma tarefa.
+- Word budget dos skills sobe de 999 para 1500 palavras para acomodar o novo orquestrador.
+- Corrige bypass silencioso de Sensitive Paths no `diff-classify.sh`.
+- Novo guard de regressão impede o fan-out de testes de apagar cobertura existente.
+
+## 4.0.0 — 2026-07-24
+
+### Docs
+- Proposta e plano de build do graph mode para execução paralela de tarefas (#201) — o major marca a chegada do novo modo de execução cross-task.
+- Documenta a arquitetura baseada em Orca para rodar tarefas independentes do Ship em paralelo em worktrees, sem tocar no `pipeline.sh`.
+- O plano cruza a proposta com o código real (`pipeline.sh`, `build.js`, CI) e corrige seis pontos onde o design quebraria (hook bundling, fronteira de I/O do Linear, defer do homolog, ordem de claim, custo do merge node, binário do Orca ausente), transformando-os em fases, commits e testes concretos.
+
+## 3.0.0 — 2026-07-23
+
+### Changes
+- **BREAKING**: fase analyze/drift removida do pipeline (#200). O comando `/ship:analyze` e a fase de análise deixam de existir; análise de cobertura project-wide continua disponível via `/ship:audit:tests`.
+- Motivo: em runs reais o correlator Jaccard por keyword produzia quase só falsos positivos em projetos com spec em PT e código em EN — zero drift real detectado, escalações manuais forçadas e, em um run, o fix-loop do gate estourou o cap de 3 iterações perseguindo um artefato de correlação incorrigível.
+- Como o `develop` de contexto único implementa o plano/test contract diretamente, drift spec→code→test é raro por construção; a fase só adicionava latência e ruído. Remover a superfície (em vez de adicionar prosa defensiva) segue a Anti-Bloat Rule.
+- Deletados o skill analyze, o agente `ship-analyze` e os hooks `analyze-correlate.sh`/`analyze-precheck.sh`; analyze excisado do state machine do `pipeline.sh` (fases, hooks obrigatórios, fan-out, gate, re-run cirúrgico).
+- Simplificados `quality-scope.sh`, `rerun-scope.sh`, `findings-gate.sh` e `findings-identity.sh`; patterns, templates, README e CLAUDE.md atualizados; `audit:tests` agora é autocontido.
+
+## 2.77.0 — 2026-07-23
+
+### Features
+- Gate estático + fixes no test worker para cortar loops de review (#199).
+- Typecheck/lint rodam como gate determinístico logo após o develop e **antes** do fan-out de perf/security/review — nenhum reviewer LLM gasta tokens em código que não compila (`test-exec.sh --static-only` + fix-loop próprio limitado a 2 iterações).
+- Fixes agrupados: arquivos de teste saem da denylist do test worker; testes gerados são intent-added (`git add -N`); design doc passa a ser fornecido aos reviewers de perf/security; telemetria de parada de loop (fixpoint / churn-deferred / capped-deferred).
+
+## 2.76.2 — 2026-07-23
+
+### Fixes
+- Fix-loop do gate deixa de rodar desenfreado (#198): cap resume-safe (contador não reseta em re-invocação) + guard de identidade por finding (`findings-identity.sh` emite `<phase>|<severity>|<file>|<slug>`), distinguindo finding novo de nit regenerado por reviewer subjetivo.
+
+## 2.76.1 — 2026-07-22
+
+### Fixes
+- Falsos positivos de orphan cross-language eliminados: arquivos de teste alterados saem da detecção de orphan (já correlacionados via passes AC/SC→test) (#197).
+- Fix-loop do gate ganha fixpoint de convergência: se um ciclo de fix não muda os inputs do gate, os findings vão ao usuário (ask) em vez de re-despachar.
+
+## 2.76.0 — 2026-07-22
+
+### Fixes
+- Agente de fix recebe os erros reais quando a suíte falha sem parse estruturado (#196).
+
+## 2.75.0 — 2026-07-22
+
+### Features
+- Subcomando `pipeline.sh next`: state machine determinístico que dirige o run inteiro (#195) — deriva o estado do scratch dir a cada chamada, executa todos os passos determinísticos e emite exatamente uma instrução (dispatch/work/ask/stop/done). Ordenação de fases, detecção de silent-write-failure e caps de fix-loop passam a ser propriedade do script, não de prosa.
+- Briefs de teste fatiados por SUT.
+
+## 2.74.10 — 2026-07-22
+
+### Fixes
+- Build passa a empacotar os siblings transitivos de `$HOOK_DIR` (#194): skill que lazy-referencia um único hook não gera mais instalação quebrada que só falhava no meio do run.
+
+## 2.74.9 — 2026-07-22
+
+### Fixes
+- Falha ruidosa em hook de pipeline ausente via preflight `require_hooks` (#193).
+
+## 2.74.8 — 2026-07-22
+
+### Internals
+- CI reconhece o wiring transitivo do `evidence-gate.sh` via `pipeline.sh` (#192).
+
+## 2.74.7 — 2026-07-22
+
+### Changes
+- Overhead de orquestração reduzido para diffs pequenos (#191): timings de wall-clock por fase (`timings.tsv` + `report-timings`) e sequência pós-develop colapsada em um único subcomando `pipeline.sh post-develop` (menos round-trips do orquestrador).
+
+## 2.74.6 — 2026-07-20
+
+### Internals
+- `develop` excluído do guard wrapper-thin do CI (#190) — ele agora é implementador direto, não wrapper.
+
+## 2.74.5 — 2026-07-20
+
+### Changes
+- Paralelismo restrito a quality/test/audit; `ship:develop` vira implementador direto (#189) — escreve todos os módulos ele mesmo, em ordem de dependência, num único contexto (Edit/Write, sem leaf workers). Remove o custo de recarga de contexto por worker e o overlap develop/test-generate; agente `ship-develop-implement` deletado.
+- `ship:spec` também passa a coletar contexto inline.
+
+## 2.74.4 — 2026-07-20
+
+### Fixes
+- Gates do `config.md` aplicados deterministicamente por script, não por prosa de LLM (#188).
+
+## 2.74.3 — 2026-07-20
+
+### Refactors
+- Lógica de diff/gate/scope do Ship movida para scripts determinísticos em `hooks/` (#187).
+
+## 2.74.2 — 2026-07-19
+
+### Fixes
+- Gate do `ship:run` bloqueia em fases despachadas-mas-incompletas (#186) — sem mais consolidar por cima de worker que não terminou.
+
+## 2.74.1 — 2026-07-19
+
+### Docs
+- Proposta SPEC-18 removida agora que está implementada (#185).
+
+## 2.74.0 — 2026-07-19
+
+### Docs
+- Categoria de secrets e sweep condicional documentados no hygiene-gate (#184).
+
+## 2.73.0 — 2026-07-19
+
+### Features
+- Sweep de hygiene do `ship:test` condicionado ao marcador hygiene-hit (#183) — só roda quando o hook registrou violação.
+
+## 2.72.0 — 2026-07-19
+
+### Features
+- Caps de iteração do fix-loop persistem através de compaction de contexto (#182).
+
+## 2.71.2 — 2026-07-19
+
+### Changes
+- Latência do pipeline/audit reduzida e wiring de testes endurecido (#181): typecheck e lint rodam concorrentes no `test-exec` (wall-clock = o mais lento dos dois); `audit:run` consolida inline em vez de spawnar agente; novo analisador de session-timing.
+
+## 2.71.1 — 2026-07-18
+
+### Changes
+- Forks de subprocess redundantes eliminados em `evidence-gate`/`hygiene-scan` (#180).
+
+## 2.71.0 — 2026-07-18
+
+### Changes
+- Forks de shell por registro eliminados no `analyze-correlate` (#179).
+
+## 2.70.0 — 2026-07-18
+
+### Features
+- Sweep de hygiene do `develop` condicionado ao marcador `.hygiene-hit` da TASK-001 (#178).
+
+## 2.69.2 — 2026-07-18
+
+### Fixes
+- Gate de typecheck/lint determinístico + hygiene scan restrito ao escopo do diff (#177).
+
+## 2.69.1 — 2026-07-18
+
+### Internals
+- Suíte de testes do `hygiene-scan.sh` cobrindo ciclo de vida do marker e detecção de secrets (#176).
+
+## 2.69.0 — 2026-07-18
+
+### Fixes
+- Sem pedido de confirmação para mover issue do Linear para In Progress (#175).
+
+## 2.68.0 — 2026-07-18
+
+### Features
+- Detecção de secrets + marcador de violação no `hygiene-scan.sh` (#174).
+
+## 2.67.0 — 2026-07-18
+
+### Features
+- Overlap develop∥test-generate generalizado para o caso sem planner (#173).
+
+## 2.66.0 — 2026-07-18
+
+### Features
+- `run-footprint.js`: gate de CI para o instruction footprint de um run (#172).
+
+## 2.65.5 — 2026-07-18
+
+### Docs
+- Anti-Bloat Rule registrada em CLAUDE.md e BUDGETS.md (#171).
+
+## 2.65.4 — 2026-07-18
+
+### Docs
+- Specs obsoletas podadas do framework-comparison e restantes ranqueadas por prioridade (#170).
+
+## 2.65.3 — 2026-07-18
+
+### Fixes
+- `analyze` captura o corpo do REQ + escalação semântica de gray-zone (#169).
+
+## 2.65.2 — 2026-07-18
+
+### Fixes
+- Linha de proibição de audit no `run` reescrita para passar no grep guard do CI (#168).
+
+## 2.65.1 — 2026-07-18
+
+### Changes
+- Word budget de skill/agent achatado para 999 palavras (exceção do orquestrador: 1200) (#167).
+
+## 2.65.0 — 2026-07-18
+
+### Changes
+- test-exec ∥ quality paralelizados com reconciliação cirúrgica (#166).
+
+## 2.64.0 — 2026-07-18
+
+### Features
+- `test-exec.sh`: execução determinística da suíte de testes via hook (#165).
+
+## 2.63.2 — 2026-07-18
+
+### Internals
+- Guard anti-bookkeeping no CI + testes gateSemantics para o `pipeline.sh gate` (#164).
+
+## 2.63.1 — 2026-07-18
+
+### Refactors
+- Seções quality/gate/homolog do `run/SKILL.md` reescritas; budget reduzido para 2000 palavras (#163).
+
+## 2.63.0 — 2026-07-18
+
+### Refactors
+- Fases de construção do `run/SKILL.md` consolidadas via `pipeline.sh` (#162).
+
+## 2.62.0 — 2026-07-18
+
+### Features
+- Subcomando `gate` no `pipeline.sh` — aritmética determinística de gates (#161).
+
+## 2.61.0 — 2026-07-18
+
+### Features
+- Subcomandos `dispatch`/`complete` no `pipeline.sh` (#160).
+
+## 2.60.0 — 2026-07-18
+
+### Internals
+- Testes de hooks (`.test.sh`) integrados ao CI com runner dedicado (#159).
+
+## 2.59.0 — 2026-07-18
+
+### Features
+- Fachada `pipeline.sh` com subcomando `init` (#158) — início da migração do sequenciamento do run para script.
+
+## 2.58.1 — 2026-07-17
+
+### Docs
+- Specs implementadas e design docs obsoletos podados (#157).
+
+## 2.58.0 — 2026-07-17
+
+### Changes
+- Engine de correlação determinística no `analyze` + consolidação do setup do pipeline (#156).
+
+## 2.57.0 — 2026-07-17
+
+### Features
+- Linha `Status` nos Reports dos workers de build (MOB-2432) (#155).
+
+## 2.56.0 — 2026-07-17
+
+### Fixes
+- Todos os skills do Ship fixados em Sonnet; tier Haiku eliminado (#154).
+
+### Features
+- `worker-status-gate.sh` determinístico com testes unitários (#153).
+
+## 2.55.0 — 2026-07-17
+
+### Features
+- Pattern de enum worker-status com testes unitários (#152).
+
+## 2.54.0 — 2026-07-15
+
+### Internals
+- Verificação do wiring do wrapper MOB-2378 e validação de build (#151).
+
+## 2.53.0 — 2026-07-15
+
+### Features
+- `analyze`: derivação de gate explícita e orphans cobertos no rendering lazy-load (#150).
+
+## 2.52.0 — 2026-07-15
+
+### Features
+- `analyze`: passes semânticos via LLM (AMBIG/SUBSPEC/PRINCIPLE) (#149).
+
+## 2.51.0 — 2026-07-14
+
+### Features
+- `analyze`: passes determinísticos de detecção DUP e TERM (#148).
+
+## 2.50.0 — 2026-07-14
+
+### Features
+- `analyze`: pass de detecção reversa de orphans (#147).
+
+## 2.49.0 — 2026-07-14
+
+### Features
+- `analyze`: cobertura renderizada como percentual inteiro por item e agregada por tier (#146).
+
+## 2.48.0 — 2026-07-14
+
+### Features
+- Schema de drift-findings estendido com novas categorias, confiança em % e template de orphans (#145).
+
+## 2.47.0 — 2026-07-13
+
+### Features
+- Fase analyze e 6 novas categorias de drift finding registradas no `severity.md` (#144).
+
+## 2.46.0 — 2026-07-12
+
+### Features
+- `spec`: passo §3.5 Clarify + gate por marcador + regra de no-leakage (#143).
+
+## 2.45.0 — 2026-07-12
+
+### Features
+- Hook de gate `needs-clarification-scan` + testes (#142).
+
+## 2.44.0 — 2026-07-12
+
+### Features
+- `init`: seção `## Clarify` no config, pergunta ao usuário e regra de preservação (#141).
+
+## 2.43.1 — 2026-07-12
+
+### Internals
+- Teto do word budget do skill `spec` elevado para 4400 palavras (#140).
+
+## 2.43.0 — 2026-07-11
+
+### Docs
+- Filosofia e how-to do pressure-testing harness + seção Tier 3 (#139).
+
+## 2.42.0 — 2026-07-11
+
+### Features
+- Pressure harness: caso de fixture real + integração com CI (MOB-2313) (#138).
+
+## 2.41.0 — 2026-07-11
+
+### Features
+- Pressure harness: orquestrador `pressure-run` com modos record/replay (#137).
+
+## 2.40.0 — 2026-07-11
+
+### Features
+- Pressure harness: builder do braço de controle — remove a instrução e reconstrói isolado (#136).
+
+## 2.39.0 — 2026-07-11
+
+### Features
+- Pressure harness: rendering de report e semântica de exit code (#135).
+
+## 2.38.0 — 2026-07-09
+
+### Features
+- Pressure harness: agregação de pass-rate, variância, delta e veredicto (#134).
+
+## 2.37.0 — 2026-07-09
+
+### Features
+- Pressure harness: biblioteca determinística de assertions (MOB-2308) (#133).
+
+## 2.36.0 — 2026-07-09
+
+### Docs
+- Diagrama de arquitetura do Ship reconstruído como grafo interativo (#132).
+
+## 2.35.0 — 2026-07-09
+
+### Features
+- Pressure harness: loader/validator de cases e enumeração de cassettes (#131).
+
+## 2.34.2 — 2026-07-09
+
+### Docs
+- Diagrama interativo de arquitetura do Ship adicionado (#130).
+
+## 2.34.1 — 2026-07-09
+
+### Docs
+- Sistema de word-budget documentado no BUDGETS.md (#129).
+
+## 2.34.0 — 2026-07-09
+
+### Internals
+- Passo `npm test` adicionado ao job build-drift do CI (MOB-2281) (#128).
+
+## 2.33.0 — 2026-07-08
+
+### Features
+- Gate de word-budget para arquivos SKILL.md no build (MOB-2280) (#127).
+
+## 2.32.8 — 2026-07-08
+
+### Refactors
+- Poda de no-ops nos agentes de test e develop-implement (#126).
+
+## 2.32.7 — 2026-07-08
+
+### Refactors
+- Poda de no-ops em security, audit-tests, review e perf (#125).
+
+## 2.32.6 — 2026-07-08
+
+### Refactors
+- Poda de no-ops em ship-audit-{backend,database,security} (#124).
+
+## 2.32.5 — 2026-07-08
+
+### Refactors
+- Poda de no-ops em ship-audit-frontend e ship-analyze (#123).
+
+## 2.32.4 — 2026-07-08
+
+### Refactors
+- Poda de no-ops e consolidação de boilerplate em 9 skills pequenos (#122).
+
+## 2.32.3 — 2026-07-08
+
+### Refactors
+- Poda de no-ops em test, plan, develop e audit:run (#121).
+
+## 2.32.2 — 2026-07-08
+
+### Refactors
+- Poda de no-ops em pr, init e homolog (#120).
+
+## 2.32.1 — 2026-07-08
+
+### Refactors
+- Poda de no-ops e compressão de leading-words no `ship:spec` (#119).
+
+## 2.32.0 — 2026-07-07
+
+### Refactors
+- Poda de no-ops e compressão de leading-words no `ship:run` (#118).
+
+## 2.31.0 — 2026-07-07
+
+### Internals
+- Guard de wiring dos status-scripts + registro no CI (MOB-2212) (#117).
+
+## 2.30.0 — 2026-07-07
+
+### Features
+- Hook que bloqueia comandos git destrutivos antes de executarem (#116).
+
+## 2.29.0 — 2026-07-07
+
+### Features
+- Hooks status-consolidate/evidence-gate/rerun-scope conectados ao orquestrador do `run` (#115).
+
+## 2.28.0 — 2026-07-06
+
+### Features
+- `rerun-scope.sh`: escopo determinístico de re-run cirúrgico (#112).
+- `evidence-gate.sh`: reporta arquivos-fonte sem teste (#114).
+- Script `status-consolidate` + harness de teste (MOB-2208) (#113).
+
+## 2.27.0 — 2026-07-06
+
+### Features
+- Gate de validação pós-planner + wiring guard no `ship:run` (#111).
+
+## 2.26.0 — 2026-07-06
+
+### Internals
+- Harness de teste do `plan-validate.sh` como guard de regressão (#110).
+
+## 2.25.0 — 2026-07-06
+
+### Features
+- `plan-validate.sh`: validador determinístico do `plan.md` (#109).
+
+## 2.24.4 — 2026-07-06
+
+### Internals
+- Guard de regressão: lazy-load do orquestrador travado no CI (#108).
+
+## 2.24.3 — 2026-07-06
+
+### Refactors
+- `ship:run`: patterns inline convertidos em lazy-load `@@ship/` (#107).
+
+## 2.24.2 — 2026-07-05
+
+### Docs
+- Análise comparativa de frameworks e specs de melhoria adicionadas (#106).
+
+## 2.24.1 — 2026-07-05
+
+### Fixes
+- `ship:run`: eliminada a race de phase-status e as lacunas de dispatch em background (#105).
+
+## 2.24.0 — 2026-07-05
+
+### Fixes
+- `ship:run`: proteção contra busca filesystem-wide quando a resolução de path falha (#104).
+
+## 2.23.0 — 2026-07-05
+
+### Features
+- `ship:run`: test-generate despachado em paralelo com o develop (#103).
+
+## 2.22.0 — 2026-07-05
+
+### Features
+- `ship:run`: analyze movido para o fan-out de qualidade da Fase 4 com gate único agregado (#102).
+
+## 2.21.0 — 2026-07-04
+
+### Features
+- `ship:test`: dispatch de geração e execução de testes baseado em modo (#101).
+
+## 2.20.0 — 2026-07-04
+
+### Features
+- `ship:run`: planner pulado deterministicamente para tarefas de módulo único (#100).
+
+## 2.19.0 — 2026-07-04
+
+### Features
+- `ship:plan`: validação do file map da issue e registro de divergências (#99).
+
+## 2.18.0 — 2026-07-04
+
+### Features
+- `ship:run`: `spec.md` fatiado por tarefa no scratch dir (#98).
+
+## 2.17.0 — 2026-07-04
+
+### Features
+- `ship:spec`: seção `## Files` com referências de âncora por tarefa (#97).
+
+## 2.16.0 — 2026-07-04
+
+### Features
+- `sc-crossref.sh`: validação de referência cruzada SC↔AC (#96).
+
+## 2.15.0 — 2026-07-04
+
+### Features
+- `capture-diff.sh` com assertion de unified-diff (#95).
+
+## 2.14.0 — 2026-07-04
+
+### Features
+- `diff-classify.sh`: classificador determinístico de diff (#94).
+
+## 2.13.0 — 2026-07-04
+
+### Features
+- `snapshot-files.sh` substitui os blocos inline de content-snapshot (#93).
+
+## 2.12.8 — 2026-07-04
+
+### Refactors
+- `ship:run`: passo de session banner removido (#92).
+
+## 2.12.7 — 2026-07-04
+
+### Refactors
+- `hygiene-scan.sh` empacotado nos skills via referência lazy `CLAUDE_SKILL_DIR` (#91).
+
+## 2.12.6 — 2026-06-28
+
+### Fixes
+- Hygiene gate interpretado por LLM substituído por scan Bash explícito (#90).
+
+## 2.12.5 — 2026-06-16
+
+### Fixes
+- Gate de review determinístico + orquestrador sem poder de override sobre findings (#89).
+
+## 2.12.4 — 2026-06-16
+
+### Changes
+- Corte no footprint de tokens em runtime — run −61%, todos os skills −33% (#88): orquestrador grava `spec.md`/`design.md` uma vez no scratch dir e passa só o path; agentes de fase leem os arquivos, sem re-inlining do diff/spec/design em cada dispatch.
+
+## 2.12.3 — 2026-06-16
+
+### Fixes
+- Captura de diff confiável (merge-base da working tree em vez do range three-dot vazio), cobertura por outcome de AC no planner e `ship:run` em Sonnet (#87).
+
+## 2.12.2 — 2026-06-05
+
+### Fixes
+- Issue do Linear marcada como Done de forma confiável: transição de estado verificada e resolvida por ID (#86).
+
+## 2.12.1 — 2026-06-05
+
+### Refactors
+- Contexto de runtime do Ship enxugado: migração thin-wrapper + build anchor-aware (#85); lint `check-wrapper-is-thin` reconhece `subagent_type` com prefixo de plugin.
+
+## 2.12.0 — 2026-06-05
+
+### Features
+- Release que publica a hygiene zero-comentário/zero-spec-ID endurecida (#84) — de-identificação de contexto + hook PostToolUse determinístico, descritos em detalhe na entrada 2.11.0 abaixo (o merge ocorreu antes do bump de versão).
+
 ## 2.11.0 — 2026-06-04
 
 ### Changes
