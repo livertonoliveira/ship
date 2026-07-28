@@ -197,11 +197,11 @@ if [ -n "$SCR" ]; then
   for f in diff.md spec.md design.md phase-status.md; do
     if [ -s "$SCR/$f" ]; then ok "scratch artifact: $f"; else bad "missing/empty scratch artifact: $f"; fi
   done
-  # plan.md exists only when the planner runs. For single-module tasks the
-  # pipeline legitimately skips it (run/SKILL.md §1.9), logging `plan ... skipped`
-  # in dispatch-log.md — so require plan.md only when the planner actually ran.
+  # plan.md exists only when the planner runs. A trivial/minor baseline diff
+  # legitimately skips it, logging `plan ... skipped` in dispatch-log.md — so
+  # require plan.md only when the planner actually ran.
   if grep -qE '^\| *plan .*\| *skipped ' "$SCR/dispatch-log.md" 2>/dev/null; then
-    ok "planner skipped (single-module task) — plan.md not expected"
+    ok "planner skipped (trivial/minor baseline) — plan.md not expected"
   elif [ -s "$SCR/plan.md" ]; then
     ok "scratch artifact: plan.md"
   else

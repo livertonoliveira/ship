@@ -791,41 +791,6 @@ next_write_row() {
     > "$scratch/phase-status-$phase.md"
 }
 
-# Independent when the `## Deps` section holds nothing but a "none" marker —
-# the shape ship:spec documents and writes. The predictor used to grep for a
-# literal `Dependencies: None`, which appears in no real spec and, being English,
-# could never appear in one written in another artifact language.
-plan_deps_none() {
-  local spec="$1" deps
-  deps="$(awk '/^## Deps/{d=1;next} /^#/{d=0} d' "$spec" 2>/dev/null \
-    | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/^[[:space:]]+//; s/[[:space:]]+$//' \
-    | grep -v '^$' || true)"
-  if [ -n "$deps" ]; then
-    # Any line that is not a no-dependencies marker means the task has deps.
-    printf '%s\n' "$deps" | grep -qviE '^(none|nenhuma|nenhum|n/a)$' && return 1
-    return 0
-  fi
-  grep -qiE 'Dependencies:[[:space:]]*None' "$spec"
-}
-
-# Predict a single-module task from the spec slice: ## Files with ≤3 code entries
-# (plugins/** rebuild lines excluded), no dependencies, and at most one test-layer
-# tag across its scenarios. Entries are matched with or without a leading "- ":
-# local-mode specs write the dash, Linear-mode specs do not, and requiring it made
-# the count come back 0 on half of them.
-plan_predict_single_module() {
-  local spec="$1" files layers
-  [ -f "$spec" ] || return 1
-  grep -qE '^## Files' "$spec" || return 1
-  files="$(awk '/^## Files/{f=1;next} /^#/{f=0} f' "$spec" \
-    | sed -E 's/^[[:space:]]*-[[:space:]]*//' \
-    | grep -E '^(create|modify)[[:space:]]' | grep -cvE '`?plugins/' || true)"
-  [ "${files:-0}" -ge 1 ] && [ "${files:-0}" -le 3 ] || return 1
-  plan_deps_none "$spec" || return 1
-  layers="$(grep -oE '@(unit|integration|e2e)' "$spec" | sort -u | wc -l | tr -d ' ')"
-  [ "${layers:-0}" -le 1 ]
-}
-
 # Module file list: plan.md `- Files:` lines when a plan exists, spec.md
 # `## Files` bullets otherwise. Feeds both the denylist (never write) and the
 # SUT slice (read first) of the worker brief.
@@ -1072,21 +1037,10 @@ cmd_next() {
 
   if [ ! -f "$SCRATCH/plan-decision.txt" ]; then
     local decision="run" baseline="$class"
-    # An empty baseline diff means no work exists yet — greenfield always plans
-    # (unless the issue itself predicts a single module). trivial/minor only
-    # skip the planner on top of pre-existing work.
+    # An empty baseline diff means no work exists yet — greenfield always plans.
+    # trivial/minor only skip the planner on top of pre-existing work.
     if ! grep -q '^diff --git ' "$SCRATCH/diff.md" 2>/dev/null; then
       baseline="greenfield"
-    fi
-    # Staged rollout. The shortcut's matching is repaired but deliberately not
-    # acted on yet: it has been dead on every real spec, so switching it on flips
-    # behaviour for every task at once on the strength of two samples. Record what
-    # it WOULD decide; enabling it later means restoring the `elif` that consumed
-    # plan-prediction.txt and skipped the planner.
-    if plan_predict_single_module "$SCRATCH/spec.md"; then
-      printf 'single-module\n' > "$SCRATCH/plan-prediction.txt"
-    else
-      printf 'multi-module\n' > "$SCRATCH/plan-prediction.txt"
     fi
     if [ "$(phase_toggle "$CONFIG" dev)" = "disabled" ]; then
       decision="skip:dev-disabled"
@@ -1563,9 +1517,6 @@ cmd_next() {
     *no-batch) next_body_add "Gate resolved: red gate with no remediable item extracted — surfaced as-is." ;;
     *deferred) next_body_add "Gate resolved: residue deferred to homolog by user decision." ;;
   esac
-  if [ -f "$SCRATCH/plan-prediction.txt" ]; then
-    next_body_add "Planner shortcut (report-only, not acted on): predicted $(head -1 "$SCRATCH/plan-prediction.txt"), actual decision was $(head -1 "$SCRATCH/plan-decision.txt" 2>/dev/null). Report both to the user so the shortcut can be enabled on evidence."
-  fi
   if [ -f "$SCRATCH/remediation-verdict.txt" ]; then
     next_body_add "Remediation: $(tr '\n' ' ' < "$SCRATCH/remediation-verdict.txt")"
   fi
