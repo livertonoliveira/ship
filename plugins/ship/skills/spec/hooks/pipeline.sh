@@ -952,6 +952,20 @@ next_fix_dispatch() {
   next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the COMPLETE list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for EVERY item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
+# The static commands the pipeline itself will run, resolved once and handed to
+# the implementer. Develop resolved them on its own from `ship/config.md` only,
+# and never covered lint at all — so a repo whose scripts live in package.json
+# had develop skip silently and the gate fail on what it skipped.
+next_static_cmds() {
+  local scratch="$1" config="$2" out tc lint parts=""
+  out="$(bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" --print-static 2>/dev/null || true)"
+  tc="$(printf '%s\n' "$out" | grep -m1 '^typecheck=' | cut -d= -f2-)"
+  lint="$(printf '%s\n' "$out" | grep -m1 '^lint=' | cut -d= -f2-)"
+  [ -n "$tc" ] && parts="typecheck: $tc"
+  [ -n "$lint" ] && parts="${parts:+$parts; }lint: $lint"
+  printf '%s' "$parts"
+}
+
 next_plan_review_dispatch() {
   local scratch="$1" task="$2" lang="$3"
   cmd_dispatch "$scratch" plan-review Agent general-purpose sonnet >/dev/null
@@ -1165,7 +1179,9 @@ cmd_next() {
   else
     if ! next_dispatched "$SCRATCH" dev; then
       cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
-      next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
+      local dev_static
+      dev_static="$(next_static_cmds "$SCRATCH" "$CONFIG")"
+      next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir${dev_static:+ | Static checks: $dev_static}\""
       next_body_add "Dispatch develop ALONE — no other tool call this turn."
       next_common_after
       next_emit "develop" "dispatch" "$RUN" "${resumed}dispatching the implementer"

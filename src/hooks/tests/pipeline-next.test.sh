@@ -268,6 +268,48 @@ test_invalid_plan_asks_then_replans() {
   rm -rf "$dir"
 }
 
+test_develop_receives_resolved_static_commands() {
+  local name="develop is handed the same typecheck AND lint commands the pipeline will run, resolved from package.json"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  # Scripts live only in package.json — the case where develop used to skip
+  # silently because ship/config.md carries no Typecheck field.
+  printf '{"scripts":{"typecheck":"tsc --noEmit","lint":"eslint ."}}\n' > "$dir/package.json"
+  (cd "$dir" && git add -A && git commit -q --amend --no-edit && git update-ref refs/remotes/origin/main HEAD) >/dev/null
+  local scratch="$dir/.context/ship-run/TC1"
+  next "$dir" TC1 >/dev/null
+  single_module_spec > "$scratch/spec.md"
+  local out; out="$(next "$dir" TC1)"
+  if [ "$(field "$out" state)" = "develop" ] \
+    && printf '%s' "$out" | grep -q 'Static checks: typecheck: npm run typecheck; lint: npm run lint'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
+test_develop_gets_no_static_field_when_unresolvable() {
+  local name="a repo with no typecheck or lint gets no Static checks field at all"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local scratch="$dir/.context/ship-run/TC2"
+  next "$dir" TC2 >/dev/null
+  single_module_spec > "$scratch/spec.md"
+  local out; out="$(next "$dir" TC2)"
+  if [ "$(field "$out" state)" = "develop" ] \
+    && ! printf '%s' "$out" | grep -q 'Static checks:'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
 test_post_develop_no_mutation_stops() {
   local name="develop returning without mutating the tree yields action=stop"
   local dir; dir="$(mktemp -d)"
@@ -782,6 +824,8 @@ test_plan_review_ok_proceeds_to_develop
 test_plan_review_blockers_ask_then_replan_once
 test_plan_review_blockers_can_be_overridden
 test_post_develop_no_mutation_stops
+test_develop_receives_resolved_static_commands
+test_develop_gets_no_static_field_when_unresolvable
 test_verify_a_dispatches_worker_with_brief
 test_report_timings_prints_worker_start_lag
 test_silent_worker_failure_redispatches_then_stops

@@ -22,7 +22,7 @@ Decomposition already happened in `ship:plan` (`plan.md`); you follow its module
 
 ## 1. Load context
 
-Extract the task ID. Scratch dir: `.context/ship-run/<task-id>/`. Read `ship/config.md` for storage mode, `Artifact language`, typecheck command (unless already injected).
+Extract the task ID. Scratch dir: `.context/ship-run/<task-id>/`. Read `ship/config.md` for storage mode and `Artifact language` (static-check commands arrive injected).
 
 Pipeline mode: read `spec.md` + `design.md` from the scratch dir. Standalone (no scratch dir): fetch directly — Linear via `get_issue`/`get_document`; Local via `ship/changes/<feature>/proposal.md` + `design.md`.
 
@@ -59,9 +59,9 @@ Apply the plan's `## Integration` notes — verify cross-module imports/exports 
 
 ---
 
-## 5. Typecheck
+## 5. Static checks
 
-Run the typecheck command from `ship/config.md` (e.g. `pnpm typecheck`, `mypy`, `go vet`); skip if unconfigured.
+Run every command the caller passed under `Static checks` — typecheck **and** lint, already resolved for you. None passed and none in `ship/config.md` → skip.
 
 On failure: apply the minimal fix for the reported errors (no unrelated refactors), re-run. After 2 failed cycles, record errors and report to the caller instead of looping.
 
