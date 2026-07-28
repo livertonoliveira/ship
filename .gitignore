@@ -35,6 +35,9 @@ ship/.tmp/
 # Ship work-graph state (node claims, footprints, merge scratch — generated)
 .context/ship-graph/
 
+# Ship audit inventory (regenerated per audit run — derived from git ls-files)
+.context/ship-audit/
+
 # Ship plugin source lives in src/ (committed). Built output is
 # plugins/ship/skills/ — also committed, since the marketplace ships
 # whatever is in git. Run `npm run build` in plugins/ship/ after

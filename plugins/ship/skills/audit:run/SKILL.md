@@ -40,11 +40,19 @@ Read `ship/config.md` (Project Type, Database, Frontend, Workspaces). `audit:sec
 
 **Monorepo:** per `backend` workspace → audit:backend (+database if present); per `frontend` workspace → audit:frontend. One shared security + tests audit for the repo.
 
-### 2. Launch in parallel
+### 2. Index the tree once
+
+```bash
+bash "${CLAUDE_SKILL_DIR}/hooks/audit-inventory.sh" --out .context/ship-audit/inventory.md
+```
+
+Each audit below fans out to its own sub-agents, and every one of them would otherwise glob the same tree for the same routes, services, models and tests — a dozen-plus identical discovery passes. Pass `Inventory: .context/ship-audit/inventory.md` to every skill you launch.
+
+### 3. Launch in parallel
 
 Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently — never sequentially. Each declares `context: fork` + `model: sonnet` and delegates to its `ship-audit-*` agent; do NOT wrap any in an `Agent` call. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
 
-### 3. Consolidate
+### 4. Consolidate
 
 Extract the JSON summary from each tool result (see # Audit Summary Schema
 
@@ -99,7 +107,7 @@ After all parallel audit agents complete, their tool results are already in the 
 
 **Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 
-### 4. Write report
+### 5. Write report
 
 **Local:** `ship/audits/run-<YYYY-MM-DD>.md`. **Linear:** Document "Audit Suite — <YYYY-MM-DD>" linking each audit's document.
 

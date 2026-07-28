@@ -1,0 +1,1576 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  echo "usage: pipeline.sh <subcommand> [args...]" >&2
+  echo "  next            <task-id> [--mode check|fresh|resume] [--answer <token>] [--config <path>]" >&2
+  echo "  init            <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
+  echo "  dispatch        <scratch-dir> <phase> <tool> <name> <model>" >&2
+  echo "  complete        <scratch-dir> <run-number> <phase>..." >&2
+  echo "  gate            <scratch-dir> [--config <path>]" >&2
+  echo "  rows            <scratch-dir>" >&2
+  echo "  iter            <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  report-timings  <scratch-dir>" >&2
+  echo "  post-develop    <scratch-dir>" >&2
+}
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
+# install fails with the resolved path instead of a raw "No such file" mid-run
+# (or an agent guessing "missing" from reading a call site it never confirmed).
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+
+require_hooks() {
+  local missing="" h
+  for h in $REQUIRED_HOOKS; do
+    [ -f "$HOOK_DIR/$h" ] || missing="$missing $h"
+  done
+  if [ -n "$missing" ]; then
+    echo "pipeline.sh: MISSING HOOK(S)$missing at HOOK_DIR=$HOOK_DIR (resolved from \$0=$0)" >&2
+    exit 1
+  fi
+}
+
+KNOWN_PHASES="plan plan-review dev test perf security review homolog"
+
+is_known_phase() {
+  local phase="$1"
+  local candidate
+  for candidate in $KNOWN_PHASES; do
+    [ "$candidate" = "$phase" ] && return 0
+  done
+  return 1
+}
+
+init_usage() {
+  echo "usage: pipeline.sh init <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
+  echo "  check  (default): detect an interrupted prior run; exit 3 with a RESUME report" >&2
+  echo "                    when dispatch rows exist, otherwise perform a fresh init" >&2
+  echo "  fresh:  initialize the scratch dir from scratch (overwrites canonical files)" >&2
+  echo "  resume: preserve existing state; only re-capture diff.md and re-classify" >&2
+}
+
+cmd_init() {
+  local TASK_ID=""
+  local MODE="check"
+  local CONFIG="ship/config.md"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mode) MODE="$2"; shift 2 ;;
+      --config) CONFIG="$2"; shift 2 ;;
+      -h|--help) init_usage; exit 0 ;;
+      -*) init_usage; exit 1 ;;
+      *)
+        if [ -z "$TASK_ID" ]; then TASK_ID="$1"; else init_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$TASK_ID" ]; then
+    init_usage
+    exit 1
+  fi
+  case "$TASK_ID" in
+    *[!a-zA-Z0-9_-]*)
+      echo "pipeline.sh init: invalid task id (allowed: [a-zA-Z0-9_-]): $TASK_ID" >&2
+      exit 1 ;;
+  esac
+  case "$MODE" in
+    check|fresh|resume) ;;
+    *) init_usage; exit 1 ;;
+  esac
+
+  require_hooks
+
+  local SCRATCH=".context/ship-run/$TASK_ID"
+  local DISPATCH_LOG="$SCRATCH/dispatch-log.md"
+  local PHASE_STATUS="$SCRATCH/phase-status.md"
+
+  init_phases_in() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    awk -F'|' 'NR > 2 { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 != "" && $2 != "Phase" && $2 !~ /^-+$/) print $2 }' "$f" | sort -u
+  }
+
+  if [ "$MODE" = "check" ]; then
+    local rows=0
+    if [ -f "$DISPATCH_LOG" ]; then
+      rows="$(awk -F'|' 'NR > 2 && NF > 2 { p = $2; gsub(/[[:space:]]/, "", p); if (p != "" && p !~ /^-+$/) n++ } END { print n + 0 }' "$DISPATCH_LOG")"
+    fi
+    if [ "$rows" -gt 0 ]; then
+      local dispatched completed unfinished last
+      dispatched="$(init_phases_in "$DISPATCH_LOG" | tr '\n' ',' | sed 's/,$//')"
+      completed="$(init_phases_in "$PHASE_STATUS" | tr '\n' ',' | sed 's/,$//')"
+      unfinished="$(comm -23 <(init_phases_in "$DISPATCH_LOG") <(init_phases_in "$PHASE_STATUS") | tr '\n' ',' | sed 's/,$//')"
+      last="$(tail -1 "$DISPATCH_LOG" | awk -F'|' '{ gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6); print $2 " " $6 }')"
+      printf 'RESUME\n'
+      printf 'last_dispatch=%s\n' "$last"
+      printf 'dispatched=%s\n' "${dispatched:-none}"
+      printf 'completed=%s\n' "${completed:-none}"
+      printf 'unfinished=%s\n' "${unfinished:-none}"
+      exit 3
+    fi
+    MODE="fresh"
+  fi
+
+  mkdir -p "$SCRATCH"
+
+  # Reset the retry counters and the remediation marker ONLY on a fresh init. A
+  # resume continues a live run (a re-queued /ship:run, or recovery after an
+  # interruption), so remediation-done.txt MUST survive — clearing it would hand
+  # the run a second automatic fix round it already spent.
+  # (A mid-run context compaction never calls init at all, so it survives that
+  # case naturally.)
+  if [ "$MODE" = "fresh" ]; then
+    rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/remediation-*.txt "$SCRATCH"/remediation.md
+
+    if [ ! -f "$CONFIG" ]; then
+      echo "pipeline.sh init: config not found: $CONFIG (run /ship:init first)" >&2
+      exit 1
+    fi
+
+    init_field() {
+      grep -m1 -E "^- $1:" "$CONFIG" 2>/dev/null | sed -E "s/^- $1:[[:space:]]*//" || true
+    }
+    {
+      printf '# Stack\n\n'
+      local f v
+      for f in Runtime Framework 'Package Manager' 'Test Framework' Typecheck Lint; do
+        v="$(init_field "$f")"
+        printf -- '- %s: %s\n' "$f" "${v:-unknown}"
+      done
+    } > "$SCRATCH/stack.md"
+
+    printf '# Phase Status\n\n| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |\n|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|\n' > "$PHASE_STATUS"
+    printf '# Dispatch Log\n\n| Phase | Tool | Name | Model | Timestamp |\n|-------|------|------|-------|-----------|\n' > "$DISPATCH_LOG"
+
+    git rev-parse HEAD > "$SCRATCH/pre-quality-snapshot.sha"
+    bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-develop-files.txt"
+  fi
+
+  bash "$HOOK_DIR/capture-diff.sh" "$SCRATCH/diff.md"
+  local CLASS_OUT
+  CLASS_OUT="$(bash "$HOOK_DIR/diff-classify.sh" "$SCRATCH/diff.md" "$SCRATCH/diff-class.txt")"
+
+  printf 'INIT %s\n' "$MODE"
+  printf 'scratch=%s\n' "$SCRATCH"
+  printf 'diff_class=%s\n' "$CLASS_OUT"
+}
+
+cmd_dispatch() {
+  if [ $# -ne 5 ]; then
+    usage
+    exit 1
+  fi
+  local scratch_dir="$1"
+  local phase="$2"
+  local tool="$3"
+  local name="$4"
+  local model="$5"
+
+  if ! is_known_phase "$phase"; then
+    echo "pipeline.sh dispatch: unknown phase: $phase" >&2
+    exit 1
+  fi
+
+  local ts epoch
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  epoch="$(date -u +%s)"
+
+  printf '| %s | %s | %s | %s | %s |\n' "$phase" "$tool" "$name" "$model" "$ts" >> "$scratch_dir/dispatch-log.md"
+  # Wall-clock instrumentation: one row per dispatch. report-timings pairs
+  # consecutive rows into per-phase durations — the breakdown that turns "the
+  # pipeline felt slow" into "phase X took N seconds". Skipped dispatches
+  # (tool=skipped) are recorded too so a zero-duration skip is visible.
+  printf '%s\t%s\t%s\t%s\n' "$epoch" "$phase" "$tool" "$name" >> "$scratch_dir/timings.tsv"
+  echo "▶ Fase: $phase | tool=$tool | name=$name | model=$model"
+}
+
+cmd_complete() {
+  if [ $# -lt 3 ]; then
+    usage
+    exit 1
+  fi
+  local scratch_dir="$1"
+  local run_number="$2"
+  shift 2
+
+  local files=()
+  local phase
+  for phase in "$@"; do
+    files+=("$scratch_dir/phase-status-$phase.md")
+  done
+
+  local output
+  if ! output="$(bash "$HOOK_DIR/status-consolidate.sh" "$run_number" "${files[@]}")"; then
+    exit 1
+  fi
+
+  printf '%s\n' "$output" >> "$scratch_dir/phase-status.md"
+}
+
+iter_usage() {
+  echo "usage: pipeline.sh iter <scratch-dir> <counter-name> [--max N]" >&2
+  echo "  increments a persisted counter (survives context resets); exits 2 once it exceeds --max" >&2
+}
+
+cmd_iter() {
+  local scratch="" name="" max=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max) max="$2"; shift 2 ;;
+      -h|--help) iter_usage; exit 0 ;;
+      -*) iter_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1";
+        elif [ -z "$name" ]; then name="$1";
+        else iter_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ] || [ -z "$name" ]; then
+    iter_usage
+    exit 1
+  fi
+  case "$name" in
+    *[!a-zA-Z0-9_-]*)
+      echo "pipeline.sh iter: invalid counter name (allowed: [a-zA-Z0-9_-]): $name" >&2
+      exit 1 ;;
+  esac
+  if [ -n "$max" ]; then
+    case "$max" in
+      *[!0-9]*|'')
+        echo "pipeline.sh iter: --max must be a positive integer: $max" >&2
+        exit 1 ;;
+    esac
+  fi
+
+  mkdir -p "$scratch"
+  local counter_file="$scratch/iteration-$name.txt"
+  local current=0
+  if [ -f "$counter_file" ]; then
+    current="$(cat "$counter_file")"
+  fi
+  local next=$((current + 1))
+  printf '%s\n' "$next" > "$counter_file"
+
+  printf 'count=%s\n' "$next"
+  if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
+    exit 2
+  fi
+}
+
+post_develop_usage() {
+  echo "usage: pipeline.sh post-develop <scratch-dir>" >&2
+  echo "  Runs the full post-develop sequence in one call: refresh diff.md, re-classify," >&2
+  echo "  snapshot the tree, diff it against the pre-develop snapshot for mutation evidence," >&2
+  echo "  and check untested touched files. Replaces five separate orchestrator invocations." >&2
+  echo "  Prints: diff_class=<class>  evidence=ok|warn|fail  untested=<n>" >&2
+}
+
+cmd_post_develop() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) post_develop_usage; exit 0 ;;
+      -*) post_develop_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else post_develop_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  if [ -z "$scratch" ]; then post_develop_usage; exit 1; fi
+
+  local pre="$scratch/pre-develop-files.txt"
+  if [ ! -f "$pre" ]; then
+    echo "pipeline.sh post-develop: pre-develop snapshot not found: $pre (run 'init' first)" >&2
+    exit 1
+  fi
+
+  # 1. develop writes to the tree without committing, so refresh the diff + class.
+  bash "$HOOK_DIR/capture-diff.sh" "$scratch/diff.md"
+  local class
+  class="$(bash "$HOOK_DIR/diff-classify.sh" "$scratch/diff.md" "$scratch/diff-class.txt")"
+
+  # 2. Mutation evidence: snapshot the tree, diff against the pre-develop snapshot.
+  #    A non-empty set is develop's verified footprint — trusted over its self-report.
+  bash "$HOOK_DIR/snapshot-files.sh" snapshot "$scratch/post-develop-files.txt"
+  bash "$HOOK_DIR/snapshot-files.sh" diff "$pre" "$scratch/post-develop-files.txt" \
+    > "$scratch/develop-touched-files.txt"
+
+  local evidence
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    evidence="ok"
+  elif [ -s "$scratch/diff.md" ] && grep -q '^diff --git ' "$scratch/diff.md"; then
+    # No new mutation this turn but the tree already carries work → re-run, not a no-op.
+    evidence="warn"
+  else
+    # No mutation and an empty diff → develop never ran. Caller must STOP.
+    evidence="fail"
+  fi
+
+  # 3. Untested touched files (non-blocking): count source files with no sibling test.
+  local untested=0
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    untested="$(bash "$HOOK_DIR/evidence-gate.sh" "$scratch/develop-touched-files.txt" \
+      | grep -oE '"untested":\[[^]]*\]' | sed 's/"untested"://' \
+      | grep -oE '"[^"]*"' | grep -c '"' || true)"
+    untested="${untested:-0}"
+  fi
+
+  printf 'diff_class=%s\n' "$class"
+  printf 'evidence=%s\n' "$evidence"
+  printf 'untested=%s\n' "$untested"
+}
+
+report_timings_usage() {
+  echo "usage: pipeline.sh report-timings <scratch-dir>" >&2
+  echo "  prints per-phase wall-clock durations from timings.tsv (consecutive-dispatch deltas) + total" >&2
+}
+
+cmd_report_timings() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) report_timings_usage; exit 0 ;;
+      -*) report_timings_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else report_timings_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then report_timings_usage; exit 1; fi
+  local timings="$scratch/timings.tsv"
+  if [ ! -f "$timings" ]; then
+    echo "pipeline.sh report-timings: timings.tsv not found: $timings" >&2
+    exit 1
+  fi
+
+  local now
+  now="$(date -u +%s)"
+
+  # Each row's duration = next row's epoch − this row's epoch; the final row runs
+  # until now (the phase is still in flight, or just handed control back). Total =
+  # last dispatch's start-to-now span, i.e. the whole pipeline's wall-clock.
+  awk -F'\t' -v now="$now" '
+    { epoch[NR] = $1; phase[NR] = $2; tool[NR] = $3; n = NR }
+    END {
+      if (n == 0) { print "no dispatches recorded"; exit }
+      printf "%-10s %-8s %8s\n", "phase", "tool", "seconds"
+      for (i = 1; i <= n; i++) {
+        end = (i < n) ? epoch[i + 1] : now
+        dur = end - epoch[i]
+        if (dur < 0) dur = 0
+        printf "%-10s %-8s %8d\n", phase[i], tool[i], dur
+      }
+      total = now - epoch[1]
+      if (total < 0) total = 0
+      printf "%-10s %-8s %8d\n", "TOTAL", "", total
+    }
+  ' "$timings"
+
+  # Worker start lag: each Agent worker writes its start epoch to
+  # worker-start-<name>.txt as its first action; lag = start − dispatch is the
+  # scheduling-starvation measurement (dispatch time alone can't show it).
+  local epoch phase tool name f start header=0
+  while IFS="$(printf '\t')" read -r epoch phase tool name; do
+    [ "$tool" = "Agent" ] || continue
+    f="$scratch/worker-start-$name.txt"
+    [ -s "$f" ] || continue
+    start="$(head -1 "$f" | tr -cd '0-9')"
+    [ -n "$start" ] || continue
+    if [ "$header" -eq 0 ]; then
+      printf '\n%-24s %8s\n' "worker" "lag-s"
+      header=1
+    fi
+    printf '%-24s %8d\n' "$name" "$((start - epoch))"
+  done < "$timings"
+}
+
+gate_usage() {
+  echo "usage: pipeline.sh gate <scratch-dir> [--config <path>]" >&2
+}
+
+# Deferred homolog. The work graph runs N of these pipelines at once, so one
+# blocking acceptance prompt per task turns a single stop into N — and the whole
+# point of the graph dies there. With homolog-mode.txt == defer the report is
+# assembled from artifacts that already exist (the canonical gate index, the
+# wall-clock breakdown, the consolidated findings) and the graph presents every
+# report in one batch. No LLM, no dispatch, no new prose in a SKILL.
+homolog_defer_report() {
+  local scratch="$1" task="$2"
+  {
+    printf '# Homolog — %s (deferred)\n\n' "$task"
+    printf '## Gate by phase\n\n'
+    printf '| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |\n'
+    printf '|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|\n'
+    cmd_rows "$scratch"
+    printf '\n## Wall clock\n\n```\n'
+    cmd_report_timings "$scratch" 2>/dev/null || true
+    printf '```\n\n## Consolidated findings\n\n'
+    cat "$scratch/phase-status.md"
+  } > "$scratch/homolog-report.md"
+}
+
+rows_usage() {
+  echo "usage: pipeline.sh rows <scratch-dir>" >&2
+  echo "  prints the most recent full phase-status.md row for each phase, in first-seen order" >&2
+}
+
+cmd_rows() {
+  local scratch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) rows_usage; exit 0 ;;
+      -*) rows_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else rows_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then rows_usage; exit 1; fi
+  local phase_status="$scratch/phase-status.md"
+  if [ ! -f "$phase_status" ]; then
+    echo "pipeline.sh rows: phase-status.md not found: $phase_status" >&2
+    exit 1
+  fi
+
+  awk -F'|' '
+    $0 ~ /^\|/ {
+      phase = $2
+      gsub(/^[ \t]+|[ \t]+$/, "", phase)
+      if (phase == "" || phase == "Phase" || phase ~ /^-+$/) next
+      if (!(phase in seen)) order[++n] = phase
+      seen[phase] = 1
+      line[phase] = $0
+    }
+    END { for (i = 1; i <= n; i++) print line[order[i]] }
+  ' "$phase_status"
+}
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+config_field() {
+  local config="$1" key="$2"
+  grep -m1 -E "^- $key:" "$config" 2>/dev/null | sed -E "s/^- $key:[[:space:]]*//" || true
+}
+
+dispatched_phases_in_log() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  awk -F'|' '
+    NR > 2 {
+      phase = $2; tool = $3; name = $4
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", phase)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", tool)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (phase != "" && phase != "Phase" && phase !~ /^-+$/ && tool != "skipped" && name != "skipped") print phase
+    }
+  ' "$f" | sort -u
+}
+
+last_rows_by_phase() {
+  local phase_status="$1"
+  awk -F'|' '
+    $0 ~ /^\|/ {
+      phase = $2
+      gsub(/^[ \t]+|[ \t]+$/, "", phase)
+      if (phase == "" || phase == "Phase" || phase ~ /^-+$/) next
+      gate = $6; crit = $7; high = $8; med = $9; low = $10
+      gsub(/^[ \t]+|[ \t]+$/, "", gate)
+      gsub(/^[ \t]+|[ \t]+$/, "", crit)
+      gsub(/^[ \t]+|[ \t]+$/, "", high)
+      gsub(/^[ \t]+|[ \t]+$/, "", med)
+      gsub(/^[ \t]+|[ \t]+$/, "", low)
+      if (!(phase in seen)) order[++n] = phase
+      seen[phase] = 1
+      gatev[phase] = gate
+      critv[phase] = crit
+      highv[phase] = high
+      medv[phase] = med
+      lowv[phase] = low
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        p = order[i]
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", p, critv[p] + 0, highv[p] + 0, medv[p] + 0, lowv[p] + 0, gatev[p]
+      }
+    }
+  ' "$phase_status"
+}
+
+normalize_severity() {
+  local s="$1"
+  case "$s" in
+    critical|high|medium|low) printf '%s' "$s"; return 0 ;;
+    warn) printf '%s' "medium"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+get_eff() {
+  case "$1" in
+    critical) printf '%s' "$eff_crit" ;;
+    high) printf '%s' "$eff_high" ;;
+    medium) printf '%s' "$eff_med" ;;
+    low) printf '%s' "$eff_low" ;;
+  esac
+}
+
+set_eff() {
+  case "$1" in
+    critical) eff_crit="$2" ;;
+    high) eff_high="$2" ;;
+    medium) eff_med="$2" ;;
+    low) eff_low="$2" ;;
+  esac
+}
+
+severity_override_lines() {
+  local config="$1"
+  [ -f "$config" ] || return 0
+  awk '
+    /^## Severity Overrides/ { insection = 1; next }
+    /^## / { insection = 0 }
+    insection && /^-[[:space:]]*[A-Za-z0-9_-]+:/ { print }
+  ' "$config"
+}
+
+run_gate() {
+  local scratch=""
+  local config="ship/config.md"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --config) config="$2"; shift 2 ;;
+      -h|--help) gate_usage; exit 0 ;;
+      -*) gate_usage; exit 1 ;;
+      *)
+        if [ -z "$scratch" ]; then scratch="$1"; else gate_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+
+  if [ -z "$scratch" ]; then
+    gate_usage
+    exit 1
+  fi
+
+  local phase_status="$scratch/phase-status.md"
+
+  if [ ! -f "$phase_status" ]; then
+    echo "pipeline.sh gate: phase-status.md not found: $phase_status" >&2
+    exit 1
+  fi
+
+  local rows
+  rows="$(last_rows_by_phase "$phase_status")"
+  if [ -z "$rows" ]; then
+    echo "pipeline.sh gate: phase-status.md has no phase rows: $phase_status" >&2
+    exit 1
+  fi
+
+  local valid_phases="dev test perf security review frontend-perf database backend"
+
+  local dispatched completed_phases scored_dispatched unfinished
+  dispatched="$(dispatched_phases_in_log "$scratch/dispatch-log.md")"
+  completed_phases="$(printf '%s\n' "$rows" | awk -F'\t' '{print $1}' | sort -u)"
+  scored_dispatched="$(comm -12 <(printf '%s\n' "$dispatched") <(printf '%s\n' "$valid_phases" | tr ' ' '\n' | sort -u))"
+  unfinished="$(comm -23 <(printf '%s\n' "$scored_dispatched") <(printf '%s\n' "$completed_phases") | sed '/^$/d')"
+  if [ -n "$unfinished" ]; then
+    echo "pipeline.sh gate: phase(s) dispatched but not completed — missing phase-status.md row(s): $(printf '%s' "$unfinished" | tr '\n' ',' | sed 's/,$//')" >&2
+    echo "pipeline.sh gate: wait for the dispatched phase to finish (or re-dispatch it) before evaluating the gate" >&2
+    exit 1
+  fi
+
+  local -a override_phase=() override_from=() override_to=()
+  local line phase from to rest is_valid_phase p norm_from norm_to
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    phase="$(printf '%s\n' "$line" | sed -E 's/^-[[:space:]]*([A-Za-z0-9_-]+):.*/\1/')"
+    rest="$(printf '%s\n' "$line" | sed -E 's/^-[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*//')"
+    IFS=$'\t' read -r from to <<< "$(printf '%s' "$rest" | awk -F'→' '{ printf "%s\t%s", $1, $2 }')"
+    from="$(trim "$from")"
+    to="$(trim "$to")"
+
+    is_valid_phase="false"
+    for p in $valid_phases; do
+      if [ "$p" = "$phase" ]; then is_valid_phase="true"; fi
+    done
+    if [ "$is_valid_phase" = "false" ]; then
+      echo "Severity override refers to unknown phase: $phase" >&2
+      exit 1
+    fi
+
+    if ! norm_from="$(normalize_severity "$from")"; then
+      echo "Severity override refers to unknown severity level: $from" >&2
+      exit 1
+    fi
+    if ! norm_to="$(normalize_severity "$to")"; then
+      echo "Severity override refers to unknown severity level: $to" >&2
+      exit 1
+    fi
+
+    override_phase+=("$phase")
+    override_from+=("$norm_from")
+    override_to+=("$norm_to")
+  done < <(severity_override_lines "$config")
+
+  local i j
+  for ((i = 0; i < ${#override_phase[@]}; i++)); do
+    for ((j = i + 1; j < ${#override_phase[@]}; j++)); do
+      if [ "${override_phase[$i]}" = "${override_phase[$j]}" ]; then
+        echo "Severity override refers to phase already overridden: ${override_phase[$i]}" >&2
+        exit 1
+      fi
+    done
+  done
+
+  local total_crit=0 total_high=0 total_med=0 hard_fail=0
+  local crit high med low row_gate eff_crit eff_high eff_med eff_low i n_over from_val to_val
+
+  n_over="${#override_phase[@]}"
+
+  while IFS=$'\t' read -r p crit high med low row_gate; do
+    # A red typecheck, a red suite or any phase that reported `fail` carries no
+    # severity counts — its row is 0/0/0/0. Without this the gate would score a
+    # broken build as PASS now that those phases no longer block the pipeline
+    # themselves and instead report into this one consolidated gate.
+    [ "$row_gate" = "fail" ] && hard_fail=1
+    eff_crit="$crit"
+    eff_high="$high"
+    eff_med="$med"
+    eff_low="$low"
+
+    for ((i = 0; i < n_over; i++)); do
+      if [ "${override_phase[$i]}" != "$p" ]; then continue; fi
+      from="${override_from[$i]}"
+      to="${override_to[$i]}"
+      from_val="$(get_eff "$from")"
+      set_eff "$from" 0
+      to_val="$(get_eff "$to")"
+      set_eff "$to" $((to_val + from_val))
+    done
+
+    total_crit=$((total_crit + eff_crit))
+    total_high=$((total_high + eff_high))
+    total_med=$((total_med + eff_med))
+  done <<< "$rows"
+
+  local decision exit_code
+  if [ "$hard_fail" -eq 1 ] || [ "$total_crit" -gt 0 ] || [ "$total_high" -gt 0 ]; then
+    decision="FAIL"
+    exit_code=2
+  elif [ "$total_med" -gt 0 ]; then
+    decision="WARN"
+    exit_code=1
+  else
+    decision="PASS"
+    exit_code=0
+  fi
+
+  local on_fail on_warn action
+  on_fail="$(config_field "$config" "on_fail")"
+  on_warn="$(config_field "$config" "on_warn")"
+  on_fail="${on_fail:-ask}"
+  on_warn="${on_warn:-ask}"
+
+  case "$decision" in
+    FAIL) action="$on_fail" ;;
+    WARN) action="$on_warn" ;;
+    PASS) action="continue" ;;
+  esac
+
+  printf 'decision=%s\n' "$decision"
+  printf 'action=%s\n' "$action"
+  exit "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# next — the pipeline state machine. Each call derives the current state from
+# the scratch dir's on-disk artifacts, performs every deterministic step it
+# can (init, scoping, validation, consolidation, test execution, gating), and
+# stops at the first point that needs an LLM or the user — emitting exactly
+# one instruction block for the orchestrator to execute before calling next
+# again. The orchestrator never sequences phases itself; it is a loop around
+# this subcommand.
+#
+# Output protocol (stdout):
+#   state=<name>      current state machine node
+#   action=work|dispatch|ask|stop|done
+#   run=<N>           current run number (increments per surgical re-run round)
+#   log=<one-liner>
+#   instruction:      free-text block with the exact tool calls / question
+# ---------------------------------------------------------------------------
+
+next_usage() {
+  echo "usage: pipeline.sh next <task-id> [--mode check|fresh|resume] [--answer <token>] [--config <path>]" >&2
+  echo "  Derives the pipeline state from .context/ship-run/<task-id> and prints the" >&2
+  echo "  next instruction. --answer resolves a pending action=ask (token depends on" >&2
+  echo "  the asking state). --mode fresh discards prior state." >&2
+}
+
+config_section_field() {
+  local config="$1" section="$2" key="$3" v
+  [ -f "$config" ] || return 0
+  v="$(awk -v h="$section" '
+    $0 ~ "^## " h "$" { insection = 1; next }
+    /^## / { insection = 0 }
+    insection { print }
+  ' "$config" | grep -m1 -E "^-[[:space:]]*$key:" | sed -E "s/^-[[:space:]]*$key:[[:space:]]*//" || true)"
+  printf '%s' "$v"
+}
+
+# dev/test/homolog have no profile defaults — enabled unless a Pipeline Phases
+# override disables them (perf/security/review enablement lives in quality-scope.sh).
+phase_toggle() {
+  local config="$1" phase="$2" v
+  v="$(config_section_field "$config" "Pipeline Phases" "$phase" | awk '{print $1}')"
+  printf '%s' "${v:-enabled}"
+}
+
+artifact_lang() {
+  local config="$1" v
+  v="$(config_field "$config" "Artifact language")"
+  printf '%s' "${v:-English}"
+}
+
+storage_mode() {
+  local config="$1" v
+  v="$(config_section_field "$config" "Linear Integration" "Configured" | awk '{print $1}')"
+  if [ "$v" = "yes" ]; then printf 'linear'; else printf 'local'; fi
+}
+
+next_dispatched() {
+  local scratch="$1" phase="$2"
+  dispatched_phases_in_log "$scratch/dispatch-log.md" | grep -qx "$phase"
+}
+
+next_run_number() {
+  local scratch="$1"
+  if [ -f "$scratch/run-number.txt" ]; then cat "$scratch/run-number.txt"; else printf '1'; fi
+}
+
+# Consolidate every per-phase scratch row not yet folded into phase-status.md.
+# Tracked via consolidated-<phase>.txt markers so rows are appended exactly once
+# per (phase, run) pair.
+next_consolidate() {
+  local scratch="$1" run="$2" phase f marker
+  shift 2
+  for phase in "$@"; do
+    f="$scratch/phase-status-$phase.md"
+    marker="$scratch/consolidated-$phase.txt"
+    [ -f "$f" ] || continue
+    # The marker holds a copy of the last consolidated scratch row — a phase is
+    # re-consolidated only when its agent wrote a genuinely new row (re-runs).
+    if [ -f "$marker" ] && cmp -s "$f" "$marker"; then
+      continue
+    fi
+    bash "$HOOK_DIR/status-consolidate.sh" "$run" "$f" >> "$scratch/phase-status.md"
+    cp "$f" "$marker"
+  done
+}
+
+next_write_row() {
+  local scratch="$1" phase="$2" gate="$3" notes="$4" medium="${5:-0}" ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '| %s | #<RUN> | %s | - | %s | 0 | 0 | %s | 0 | %s |\n' "$phase" "$ts" "$gate" "$medium" "$notes" \
+    > "$scratch/phase-status-$phase.md"
+}
+
+# Predict a single-module task from the spec slice: ## Files with ≤3 code file
+# bullets (plugins/** rebuild lines excluded), Dependencies: None, and at most
+# one test-layer tag across its scenarios.
+plan_predict_single_module() {
+  local spec="$1" files layers
+  [ -f "$spec" ] || return 1
+  grep -qE '^## Files' "$spec" || return 1
+  files="$(awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /' "$spec" | grep -cvE '(^- *`?plugins/)' || true)"
+  [ "${files:-0}" -ge 1 ] && [ "${files:-0}" -le 3 ] || return 1
+  grep -qiE 'Dependencies:[[:space:]]*None' "$spec" || return 1
+  layers="$(grep -oE '@(unit|integration|e2e)' "$spec" | sort -u | wc -l | tr -d ' ')"
+  [ "${layers:-0}" -le 1 ]
+}
+
+# Module file list: plan.md `- Files:` lines when a plan exists, spec.md
+# `## Files` bullets otherwise. Feeds both the denylist (never write) and the
+# SUT slice (read first) of the worker brief.
+next_module_files() {
+  local plan="$1" spec="$2"
+  # A test file the planner listed under a module's `Files:` must never reach the
+  # test worker's denylist (the worker must be free to WRITE it) nor its SUT list
+  # (a test is not source-under-test) — otherwise the worker refuses to generate
+  # the test and the suite comes up empty. Filter with the same test-path shapes
+  # next_test_pattern_ref uses to FIND tests.
+  local test_re='(\.test\.|\.spec\.|_test\.|_spec\.|__tests__/|(^|/)tests?/|(^|/)test_[^/]*\.py)'
+  if [ -f "$plan" ]; then
+    grep -E '^- Files:' "$plan" | sed -E 's/^- Files:[[:space:]]*//' | tr ',' '\n' \
+      | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/`//g' | grep -v '^$' \
+      | grep -vE "$test_re" || true
+  elif [ -f "$spec" ]; then
+    awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /{sub(/^- */,"");print}' "$spec" 2>/dev/null \
+      | sed 's/`//g' | grep -vE "$test_re" || true
+  fi
+}
+
+# Nearest existing test file to the first SUT path (longest shared directory
+# prefix, git ls-files order breaks ties) — cited in the brief as a style
+# reference so workers skip standalone pattern discovery.
+next_test_pattern_ref() {
+  local target="$1"
+  [ -n "$target" ] || return 0
+  git ls-files -- '*.spec.*' '*.test.*' '*_test.*' '*_spec.rb' 'test_*.py' 2>/dev/null \
+    | awk -v target="$target" '
+      BEGIN { n = split(target, t, "/"); best = -1 }
+      {
+        m = split($0, c, "/")
+        score = 0
+        for (i = 1; i <= n && i <= m; i++) { if (t[i] == c[i]) score++; else break }
+        if (score > best) { best = score; pick = $0 }
+      }
+      END { if (pick != "") print pick }
+    '
+}
+
+# Per-layer worker brief: contract slots + de-identified scenarios + denylist +
+# SUT slice (source files + style reference), derived deterministically from
+# plan.md/spec.md. Replaces the ship:test orchestrator's inline context slicing.
+next_test_brief() {
+  local scratch="$1" layer="$2"
+  local plan="$scratch/plan.md" spec="$scratch/spec.md" out="$scratch/test-brief-$layer.md"
+  {
+    printf '# Test Brief — %s\n\n## Test Contract\n\n' "$layer"
+    if [ -f "$plan" ]; then
+      awk -v layer="$layer" '
+        /^### / {
+          if ($0 ~ /^### @?SC-[0-9]+/ && $0 ~ ("->[[:space:]]*" layer "[[:space:]]*->")) capture = 1
+          else capture = 0
+        }
+        /^## / { capture = 0 }
+        capture { print }
+      ' "$plan"
+    fi
+    # Acceptance criteria go in unconditionally. The scenario block below is
+    # filtered to this layer's tags, so an AC with no tagged scenario reaches the
+    # worker nowhere else — and the worker is told not to invent beyond what it
+    # was given, which turned "untagged" into "untested".
+    printf '\n## Acceptance Criteria\n\n'
+    if [ -f "$spec" ] && grep -qE '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"; then
+      grep -E '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"
+      printf '\nEvery criterion above needs an assertion, including any with no scenario below.\n'
+    else
+      printf 'None stated.\n'
+    fi
+    printf '\n## Scenarios\n\n'
+    if [ -f "$spec" ] && grep -qE '@(unit|integration|e2e)' "$spec"; then
+      awk -v layer="$layer" '
+        /^[[:space:]]*@/ { tags = tags " " $0; capture = 0; next }
+        /^[[:space:]]*(Scenario Outline:|Scenario:|Cenário:)/ {
+          capture = (tags ~ ("@" layer)) ? 1 : 0
+          tags = ""
+          if (capture) { print; next } else next
+        }
+        /^#/ { capture = 0; tags = ""; next }
+        capture { print }
+      ' "$spec"
+    else
+      printf 'No tagged scenarios found — derive behaviors from the Acceptance Criteria in %s.\n' "$spec"
+    fi
+    local files first ref
+    files="$(next_module_files "$plan" "$spec")"
+    printf '\n## Denylist\n\n'
+    [ -n "$files" ] && printf '%s\n' "$files" | sed 's/^/- /'
+    printf '\n## Source\n\n'
+    if [ -n "$files" ]; then
+      printf 'Source files under test — read these first; do not explore the codebase before reading them:\n\n'
+      printf '%s\n' "$files" | sed 's/^/- /'
+      printf '\n'
+    fi
+    local existing
+    existing="$(git ls-files -- '*.test.*' '*.spec.*' '*_test.*' 'test_*.py' 2>/dev/null || true)"
+    if [ -n "$existing" ]; then
+      printf '\n## Existing tests\n\nThese files already exist and already assert behavior. Add to them; never rewrite one from scratch, and never remove a case you did not write:\n\n'
+      printf '%s\n' "$existing" | sed 's/^/- /'
+    fi
+    first="$(printf '%s\n' "$files" | head -1)"
+    ref="$(next_test_pattern_ref "$first")"
+    [ -n "$ref" ] && printf 'Style reference: mirror the structure and conventions of `%s` — skip standalone pattern discovery.\n\n' "$ref"
+    printf 'Full diff: %s/diff.md. Read other project code only where the files above leave a gap.\n' "$scratch"
+  } > "$out"
+}
+
+NEXT_BODY=""
+
+next_emit() {
+  local state="$1" action="$2" run="$3" log="$4"
+  printf 'state=%s\naction=%s\nrun=%s\nlog=%s\ninstruction:\n%s\n' "$state" "$action" "$run" "$log" "$NEXT_BODY"
+  exit 0
+}
+
+next_body_add() {
+  NEXT_BODY="${NEXT_BODY}$1
+"
+}
+
+next_common_after() {
+  next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
+}
+
+next_quality_dispatch() {
+  local scratch="$1" task="$2" lang="$3" mode="$4" phase="$5" depth="$6"
+  local extra=""
+  case "$phase" in
+    security) extra=" | Security Focus: ship/config.md → ## Security Focus | Diff slice script: $HOOK_DIR/diff-slice.sh" ;;
+    review)   extra=" | Write review-findings.md to the scratch dir only (never ship/changes/ in Linear mode)" ;;
+  esac
+  cmd_dispatch "$scratch" "$phase" Agent "ship-$phase" sonnet >/dev/null
+  next_body_add "- Agent subagent_type=ship:ship-$phase (model sonnet), prompt: \"Task: $task | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-$phase.txt | Artifact language: $lang | Storage mode: $mode | Scratch dir: $scratch | Fan-out: $depth (flat = no sub-agents) | Findings gate script: $HOOK_DIR/findings-gate.sh | Severity overrides: ship/config.md → ## Severity Overrides | Stack: $scratch/stack.md | Design decisions: $scratch/design.md — honor settled decisions; don't relitigate | Read the diff from $scratch/diff.md — never recompute it$extra\""
+}
+
+next_test_dispatch() {
+  local scratch="$1" task="$2" lang="$3" layer="$4"
+  next_test_brief "$scratch" "$layer"
+  cmd_dispatch "$scratch" test Agent "ship-test-$layer" sonnet >/dev/null
+  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create, as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when empty). Generate only — never run a test command.\""
+}
+
+next_fix_dispatch() {
+  local scratch="$1" task="$2" lang="$3"
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the COMPLETE list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for EVERY item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+}
+
+# The static commands the pipeline itself will run, resolved once and handed to
+# the implementer. Develop resolved them on its own from `ship/config.md` only,
+# and never covered lint at all — so a repo whose scripts live in package.json
+# had develop skip silently and the gate fail on what it skipped.
+next_static_cmds() {
+  local scratch="$1" config="$2" out tc lint parts=""
+  out="$(bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" --print-static 2>/dev/null || true)"
+  tc="$(printf '%s\n' "$out" | grep -m1 '^typecheck=' | cut -d= -f2-)"
+  lint="$(printf '%s\n' "$out" | grep -m1 '^lint=' | cut -d= -f2-)"
+  [ -n "$tc" ] && parts="typecheck: $tc"
+  [ -n "$lint" ] && parts="${parts:+$parts; }lint: $lint"
+  printf '%s' "$parts"
+}
+
+next_plan_review_dispatch() {
+  local scratch="$1" task="$2" lang="$3"
+  cmd_dispatch "$scratch" plan-review Agent general-purpose sonnet >/dev/null
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/plan.md and open ONLY the files each module lists under '- Files:'. Do not survey the wider codebase and do not review code quality — this is a closed question set about the module map: (1) is each module implementable in exactly the files it claims, or does it need one it does not list? (2) is any integration or registration point missing (module registration, route table, barrel export, DI container)? (3) does any module boundary split a unit that cannot be split? Write $scratch/plan-review.md: first line 'verdict: ok' when none of the three raised anything, otherwise 'verdict: blockers' followed by one '- <module-id>: <what is wrong and what the plan should say instead>' line per blocker. Nothing else.\""
+}
+
+next_remediation_verify_dispatch() {
+  local scratch="$1" task="$2" lang="$3"
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set — do NOT audit the code for new problems and do NOT report anything outside the list. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
+}
+
+cmd_next() {
+  local TASK_ID="" MODE="check" CONFIG="ship/config.md" ANSWER=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mode) MODE="$2"; shift 2 ;;
+      --answer) ANSWER="$2"; shift 2 ;;
+      --config) CONFIG="$2"; shift 2 ;;
+      -h|--help) next_usage; exit 0 ;;
+      -*) next_usage; exit 1 ;;
+      *)
+        if [ -z "$TASK_ID" ]; then TASK_ID="$1"; else next_usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  if [ -z "$TASK_ID" ]; then next_usage; exit 1; fi
+  case "$TASK_ID" in
+    *[!a-zA-Z0-9_-]*)
+      echo "pipeline.sh next: invalid task id (allowed: [a-zA-Z0-9_-]): $TASK_ID" >&2
+      exit 1 ;;
+  esac
+
+  local SCRATCH=".context/ship-run/$TASK_ID"
+  local RUN LANG_ STORE resumed=""
+
+  # --- init (first call, or forced fresh/resume) -------------------------------
+  if [ ! -f "$SCRATCH/diff-class.txt" ] || [ "$MODE" != "check" ]; then
+    local init_out init_rc=0
+    set +e
+    init_out="$(cmd_init "$TASK_ID" --mode "$MODE" --config "$CONFIG" 2>&1)"
+    init_rc=$?
+    set -e
+    if [ "$init_rc" -eq 3 ]; then
+      set +e
+      init_out="$(cmd_init "$TASK_ID" --mode resume --config "$CONFIG" 2>&1)"
+      init_rc=$?
+      set -e
+      resumed="resumed interrupted run — state preserved (use --mode fresh to discard); "
+    fi
+    if [ "$init_rc" -ne 0 ]; then
+      printf '%s\n' "$init_out" >&2
+      exit 1
+    fi
+  fi
+
+  RUN="$(next_run_number "$SCRATCH")"
+  LANG_="$(artifact_lang "$CONFIG")"
+  STORE="$(storage_mode "$CONFIG")"
+
+  # --- context staging (judgment: Linear/local artifact slicing) ---------------
+  if [ ! -s "$SCRATCH/spec.md" ]; then
+    next_body_add "Stage the task context yourself (no sub-agent):"
+    if [ "$STORE" = "linear" ]; then
+      next_body_add "- Fetch the issue and project documents via Linear MCP (get_issue/get_project/list_documents+get_document) and move the issue to its started state per $HOOK_DIR/../patterns/linear-status.md."
+    else
+      next_body_add "- Read ship/changes/<feature>/proposal.md and design.md per $HOOK_DIR/../patterns/load-artifacts.md."
+    fi
+    next_body_add "- Write $SCRATCH/spec.md (per-task slice) and $SCRATCH/design.md per $HOOK_DIR/../patterns/run-context.md (spec slice + scope-index format)."
+    next_common_after
+    next_emit "context" "work" "$RUN" "${resumed}task context not yet staged"
+  fi
+
+  # --- plan decision + dispatch + validation -----------------------------------
+  local class
+  class="$(head -1 "$SCRATCH/diff-class.txt" 2>/dev/null | awk '{print $1}')"
+  class="${class:-normal}"
+
+  if [ ! -f "$SCRATCH/plan-decision.txt" ]; then
+    local decision="run" baseline="$class"
+    # An empty baseline diff means no work exists yet — greenfield always plans
+    # (unless the issue itself predicts a single module). trivial/minor only
+    # skip the planner on top of pre-existing work.
+    if ! grep -q '^diff --git ' "$SCRATCH/diff.md" 2>/dev/null; then
+      baseline="greenfield"
+    fi
+    if [ "$(phase_toggle "$CONFIG" dev)" = "disabled" ]; then
+      decision="skip:dev-disabled"
+    elif plan_predict_single_module "$SCRATCH/spec.md"; then
+      decision="skip:single-module"
+    elif [ "$baseline" = "trivial" ] || [ "$baseline" = "minor" ]; then
+      decision="skip:baseline-$baseline"
+    fi
+    printf '%s\n' "$decision" > "$SCRATCH/plan-decision.txt"
+    if [ "$decision" != "run" ]; then
+      bash "$HOOK_DIR/plan-scope.sh" "$SCRATCH" >/dev/null
+    fi
+  fi
+
+  if [ "$(head -1 "$SCRATCH/plan-decision.txt")" = "run" ] && [ "$(phase_toggle "$CONFIG" dev)" != "disabled" ]; then
+    if [ ! -f "$SCRATCH/plan.md" ]; then
+      if next_dispatched "$SCRATCH" plan; then
+        local iter_out iter_rc=0
+        set +e
+        iter_out="$(cmd_iter "$SCRATCH" plan-redispatch --max 2)"
+        iter_rc=$?
+        set -e
+        if [ "$iter_rc" -eq 2 ]; then
+          next_body_add "The planner returned twice without writing $SCRATCH/plan.md. Report the failure to the user and stop."
+          next_emit "plan" "stop" "$RUN" "planner wrote no plan.md after retries"
+        fi
+        next_body_add "The planner returned without writing $SCRATCH/plan.md (silent write failure). Re-dispatch it:"
+      fi
+      cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+      next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
+      next_common_after
+      next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
+    fi
+    if [ ! -f "$SCRATCH/plan-validated.txt" ]; then
+      local pv_rc=0 pv_spec=""
+      [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
+      set +e
+      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
+      pv_rc=$?
+      set -e
+      if [ "$pv_rc" -eq 0 ]; then
+        printf 'ok\n' > "$SCRATCH/plan-validated.txt"
+      else
+        case "$ANSWER" in
+          replan)
+            rm -f "$SCRATCH/plan.md"
+            cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
+            next_common_after
+            next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
+            ;;
+          abort)
+            next_body_add "Plan validation failed and the user chose to abort. Report and stop."
+            next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
+            ;;
+          *)
+            next_body_add "plan.md failed validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md $pv_spec — surface its stderr to the user, in the artifact language)."
+            next_body_add "Ask the user: re-plan or abort? Then re-run next with --answer replan | --answer abort."
+            next_emit "plan" "ask" "$RUN" "plan failed validation"
+            ;;
+        esac
+      fi
+    fi
+
+    # --- plan confrontation: is this map implementable in these files? ----------
+    # plan-validate proves the plan is coherent with itself, with the spec and
+    # with the repo's file tree — none of which reads the files. The planner is
+    # forbidden from deep-reading them (that is develop's job), so module
+    # boundaries and integration points are decided by someone who only globbed.
+    # One closed question set over the plan's own files closes that gap here,
+    # before develop, the tests and the gate all inherit the same mistake.
+    if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
+      if [ ! -f "$SCRATCH/plan-review.md" ]; then
+        local prr_rc=0
+        if next_dispatched "$SCRATCH" plan-review; then
+          set +e
+          ( cmd_iter "$SCRATCH" plan-review --max 2 ) >/dev/null
+          prr_rc=$?
+          set -e
+          next_body_add "The plan reviewer returned without writing $SCRATCH/plan-review.md (silent write failure). Re-dispatch it:"
+        fi
+        if [ "$prr_rc" -eq 2 ]; then
+          # Advisory: never block the run on the confrontation's own failure.
+          printf 'skipped\n' > "$SCRATCH/plan-confronted.txt"
+        else
+          next_plan_review_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+          next_common_after
+          next_emit "plan-review" "dispatch" "$RUN" "confronting the plan with the files it claims"
+        fi
+      fi
+      if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
+        if grep -qiE '^[[:space:]]*verdict:[[:space:]]*ok' "$SCRATCH/plan-review.md"; then
+          printf 'ok\n' > "$SCRATCH/plan-confronted.txt"
+        else
+          case "$ANSWER" in
+            replan)
+              # One confrontation per run: the marker is set before re-planning,
+              # so a second plan is validated but not re-confronted.
+              printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
+              rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
+              cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
+              next_common_after
+              next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
+              ;;
+            proceed)
+              printf 'proceed\n' > "$SCRATCH/plan-confronted.txt"
+              ;;
+            *)
+              next_body_add "The plan reviewer read the files each module claims and raised blockers — present $SCRATCH/plan-review.md to the user in the artifact language."
+              next_body_add "Options: re-plan addressing them | proceed anyway. Re-run next with --answer replan | --answer proceed."
+              next_emit "plan-review" "ask" "$RUN" "plan confrontation raised blockers"
+              ;;
+          esac
+        fi
+      fi
+    fi
+  fi
+
+  # --- develop ------------------------------------------------------------------
+  if [ "$(phase_toggle "$CONFIG" dev)" = "disabled" ]; then
+    if [ ! -f "$SCRATCH/dev-skipped.txt" ]; then
+      cmd_dispatch "$SCRATCH" dev - skipped - >/dev/null
+      touch "$SCRATCH/dev-skipped.txt" "$SCRATCH/post-develop-done.txt"
+    fi
+  else
+    if ! next_dispatched "$SCRATCH" dev; then
+      cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
+      local dev_static
+      dev_static="$(next_static_cmds "$SCRATCH" "$CONFIG")"
+      next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir${dev_static:+ | Static checks: $dev_static}\""
+      next_body_add "Dispatch develop ALONE — no other tool call this turn."
+      next_common_after
+      next_emit "develop" "dispatch" "$RUN" "${resumed}dispatching the implementer"
+    fi
+    if [ ! -f "$SCRATCH/post-develop-done.txt" ]; then
+      local pd_out evidence untested
+      pd_out="$(cmd_post_develop "$SCRATCH")"
+      evidence="$(printf '%s\n' "$pd_out" | grep '^evidence=' | cut -d= -f2)"
+      untested="$(printf '%s\n' "$pd_out" | grep '^untested=' | cut -d= -f2)"
+      class="$(printf '%s\n' "$pd_out" | grep '^diff_class=' | cut -d= -f2 | awk '{print $1}')"
+      if [ "$evidence" = "fail" ]; then
+        next_body_add "ship:develop returned but wrote nothing to the tree (no mutation vs the pre-develop snapshot, empty diff). Report the failure and stop — manual intervention required."
+        next_emit "post-develop" "stop" "$RUN" "develop produced no mutation"
+      fi
+      local note=""
+      [ "$evidence" = "warn" ] && note="re-run, no new mutation"
+      next_write_row "$SCRATCH" dev pass "$note"
+      next_consolidate "$SCRATCH" "$RUN" dev
+      printf '%s\n' "${untested:-0}" > "$SCRATCH/untested-count.txt"
+      touch "$SCRATCH/post-develop-done.txt"
+    fi
+  fi
+
+  # --- static checks: typecheck + lint (recorded, never blocking) --------------
+  # Red static used to halt the pipeline and run its own fix loop before verify-a,
+  # to spare the LLM reviewers tokens on code that won't compile. That saving cost
+  # a whole serialized detect→fix→re-detect cycle, and it guaranteed the three
+  # detectors (static, test, quality) never held their findings at the same
+  # instant — so a single complete list of required adjustments could not exist.
+  # Now the result is only recorded; it reaches the one consolidated gate below.
+  if [ "$(phase_toggle "$CONFIG" dev)" != "disabled" ] && [ ! -f "$SCRATCH/static-exec-done.txt" ]; then
+    local se_rc=0
+    set +e
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
+    se_rc=$?
+    set -e
+    case "$se_rc" in
+      0) next_write_row "$SCRATCH" static pass "" ;;
+      2) next_write_row "$SCRATCH" static skip "no static checks" ;;
+      # Non-zero: test-exec.sh already wrote phase-status-static.md with gate=fail
+      # plus static-failures.md. Leave both for the gate and the batch.
+    esac
+    next_consolidate "$SCRATCH" "$RUN" static
+    touch "$SCRATCH/static-exec-done.txt"
+  fi
+
+  # --- verification turn A: test-layer workers ∥ quality agents ----------------
+  if [ ! -f "$SCRATCH/verify-a.txt" ]; then
+    # Baseline the existing suites before any worker writes: the comparison after
+    # the fan-out is the only thing that notices coverage being replaced rather
+    # than extended.
+    bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-pre.txt" 2>/dev/null || true
+    local qs qrun depth layers=""
+    qs="$(bash "$HOOK_DIR/quality-scope.sh" "$class" --phases "perf security review" --scratch "$SCRATCH" --config "$CONFIG")"
+    qrun="$(printf '%s\n' "$qs" | grep '^run=' | sed 's/^run=//')"
+    depth="$(printf '%s\n' "$qs" | grep '^depth=' | sed 's/^depth=//')"
+    if [ "$(phase_toggle "$CONFIG" test)" != "disabled" ] && [ ! -f "$SCRATCH/generated-tests.md" ]; then
+      layers="$(bash "$HOOK_DIR/test-scope.sh" --config "$CONFIG" | grep '^run=' | sed 's/^run=//')"
+    fi
+    {
+      printf 'quality=%s\n' "$qrun"
+      printf 'depth=%s\n' "$depth"
+      printf 'layers=%s\n' "$layers"
+    } > "$SCRATCH/verify-a.txt"
+
+    local pending="" l p
+    for l in $layers; do
+      next_test_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$l"
+      pending="$pending layer:$l"
+    done
+    for p in $qrun; do
+      next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$p" "$depth"
+      pending="$pending quality:$p"
+    done
+    printf '%s\n' "${pending# }" > "$SCRATCH/pending.txt"
+    if [ -n "${pending# }" ]; then
+      next_body_add "Dispatch ALL of the above concurrently in this turn (synchronous, never backgrounded)."
+      next_common_after
+      next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}] + quality [$qrun]"
+    fi
+  fi
+
+  # --- resolve pending dispatches (silent-write-failure guard) -----------------
+  if [ -s "$SCRATCH/pending.txt" ]; then
+    local still="" missing="" entry kind name f
+    for entry in $(cat "$SCRATCH/pending.txt"); do
+      kind="${entry%%:*}"
+      name="${entry#*:}"
+      case "$kind" in
+        layer)   f="$SCRATCH/generated-tests-$name.md" ;;
+        quality) f="$SCRATCH/phase-status-$name.md" ;;
+      esac
+      if [ ! -f "$f" ]; then
+        missing="$missing $entry"
+        still="$still $entry"
+      fi
+    done
+    printf '%s\n' "${still# }" > "$SCRATCH/pending.txt"
+    if [ -n "${missing# }" ]; then
+      local depth_v
+      depth_v="$(grep '^depth=' "$SCRATCH/verify-a.txt" | sed 's/^depth=//')"
+      for entry in ${missing# }; do
+        kind="${entry%%:*}"
+        name="${entry#*:}"
+        local rd_rc=0
+        set +e
+        ( cmd_iter "$SCRATCH" "redispatch-$kind-$name" --max 2 ) >/dev/null
+        rd_rc=$?
+        set -e
+        if [ "$rd_rc" -eq 2 ]; then
+          next_body_add "Phase '$entry' returned twice without writing its expected file. Report the failure and stop — manual intervention required."
+          next_emit "verify-pending" "stop" "$RUN" "phase $entry silently failed twice"
+        fi
+        case "$kind" in
+          layer)   next_test_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$name" ;;
+          quality) next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$name" "$depth_v" ;;
+        esac
+      done
+      next_body_add "The above phase(s) returned without writing their expected output (silent write failure) — re-dispatch them now."
+      next_common_after
+      next_emit "verify-pending" "dispatch" "$RUN" "re-dispatching phases with missing outputs"
+    fi
+  fi
+
+  # --- consolidate generated-test manifests ------------------------------------
+  local layers_v
+  layers_v="$(grep '^layers=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^layers=//')"
+  if [ -n "$layers_v" ] && [ ! -f "$SCRATCH/generated-tests.md" ]; then
+    {
+      printf '# Generated Tests\n\n'
+      local l
+      for l in $layers_v; do
+        [ -f "$SCRATCH/generated-tests-$l.md" ] && grep '^- ' "$SCRATCH/generated-tests-$l.md" || true
+      done
+    } > "$SCRATCH/generated-tests.md"
+    local tr_out="" tr_rc=0
+    if [ -f "$SCRATCH/tests-pre.txt" ]; then
+      bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
+      set +e
+      tr_out="$(bash "$HOOK_DIR/test-regression.sh" check "$SCRATCH/tests-pre.txt" "$SCRATCH/tests-post.txt" 2>/dev/null)"
+      tr_rc=$?
+      set -e
+    fi
+    if [ "$tr_rc" -eq 1 ] && [ -n "$tr_out" ]; then
+      {
+        printf '# Test Coverage Regression\n\nThe test phase left these files with fewer cases than before it ran:\n\n'
+        printf '%s\n' "$tr_out" | awk '{ printf "- %s: %s → %s cases\n", $1, $2, $3 }'
+        printf '\nRestore the removed assertions; do not delete coverage to make a contract fit.\n'
+      } > "$SCRATCH/test-regression.md"
+      next_write_row "$SCRATCH" test-generate warn "coverage removed from pre-existing test file(s)" 1
+    else
+      next_write_row "$SCRATCH" test-generate pass ""
+    fi
+    next_consolidate "$SCRATCH" "$RUN" test-generate
+    # Intent-add the freshly generated (untracked) test files so every later
+    # diff-based consumer sees them — test-exec/pr build a complete diff. Mirrors
+    # the intent-adds capture-diff/snapshot-files already do at init/pre-develop.
+    git add -A -N >/dev/null 2>&1 || true
+  fi
+
+  # --- test execution (recorded, never blocking) --------------------------------
+  # Like the static checks above: a red suite is recorded and carried into the one
+  # consolidated gate instead of running its own detect→fix→re-detect cycle here.
+  if [ ! -f "$SCRATCH/test-exec-done.txt" ]; then
+    local te_rc=0
+    set +e
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    else
+      bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    fi
+    te_rc=$?
+    set -e
+    case "$te_rc" in
+      124)
+        # A hung suite is the one case the batch cannot absorb: there is no
+        # failure list to remediate, only an unknown.
+        next_body_add "Test suite timed out after 300s. Report and stop — manual intervention required."
+        next_emit "test-exec" "stop" "$RUN" "suite timeout"
+        ;;
+      2)  next_write_row "$SCRATCH" test skip "runner unresolved" ;;
+    esac
+    next_consolidate "$SCRATCH" "$RUN" test
+    touch "$SCRATCH/test-exec-done.txt"
+  fi
+
+  # --- remediation fix returned → hand over to the confirmation pass -----------
+  if [ -f "$SCRATCH/remediation-fix-inflight.txt" ]; then
+    rm -f "$SCRATCH/remediation-fix-inflight.txt"
+    touch "$SCRATCH/remediation-verify-inflight.txt"
+    if grep -q '|finding|' "$SCRATCH/remediation-items.txt" 2>/dev/null; then
+      next_remediation_verify_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+      next_common_after
+      next_emit "remediation-verify" "dispatch" "$RUN" "confirming the remediation batch item by item"
+    fi
+    # Batch was purely deterministic — the checks below are the whole verdict.
+  fi
+
+  # --- remediation confirmation (closed set) -----------------------------------
+  # The fix agent has returned. Re-run the deterministic checks (their verdict is
+  # the checks themselves) and score the agent's per-item answers, then let the
+  # gate below re-evaluate. Nothing here re-audits the code, so no finding can be
+  # minted that did not exist when the batch was built: the set shrinks or stalls,
+  # never grows.
+  if [ -f "$SCRATCH/remediation-verify-inflight.txt" ]; then
+    rm -f "$SCRATCH/remediation-verify-inflight.txt"
+    RUN=$((RUN + 1))
+    printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
+
+    rm -f "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
+    local rse_rc=0
+    set +e
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
+    rse_rc=$?
+    set -e
+    case "$rse_rc" in
+      0) next_write_row "$SCRATCH" static pass "" ;;
+      2) next_write_row "$SCRATCH" static skip "no static checks" ;;
+    esac
+    local rte_rc=0
+    set +e
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    else
+      bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    fi
+    rte_rc=$?
+    set -e
+    [ "$rte_rc" -eq 2 ] && next_write_row "$SCRATCH" test skip "runner unresolved"
+    if [ -f "$SCRATCH/tests-pre.txt" ]; then
+      bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
+      local rtr_rc=0
+      set +e
+      bash "$HOOK_DIR/test-regression.sh" check "$SCRATCH/tests-pre.txt" "$SCRATCH/tests-post.txt" >/dev/null 2>&1
+      rtr_rc=$?
+      set -e
+      if [ "$rtr_rc" -eq 0 ]; then
+        rm -f "$SCRATCH/test-regression.md"
+        next_write_row "$SCRATCH" test-generate pass ""
+      fi
+    fi
+    touch "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
+
+    local rv_out
+    rv_out="$(bash "$HOOK_DIR/remediation-verify.sh" "$SCRATCH" --config "$CONFIG" 2>/dev/null || true)"
+    printf '%s\n' "$rv_out" > "$SCRATCH/remediation-verdict.txt"
+    next_consolidate "$SCRATCH" "$RUN" static test test-generate perf security review
+  fi
+
+  # --- gate --------------------------------------------------------------------
+  if [ ! -f "$SCRATCH/gate-resolved.txt" ]; then
+    next_consolidate "$SCRATCH" "$RUN" static perf security review test test-generate
+    local g_out g_rc=0 g_decision g_action
+    set +e
+    g_out="$(run_gate "$SCRATCH" --config "$CONFIG" 2>&1)"
+    g_rc=$?
+    set -e
+    if [ "$g_rc" -gt 2 ] || ! printf '%s' "$g_out" | grep -q '^decision='; then
+      printf '%s\n' "$g_out" >&2
+      exit 1
+    fi
+    g_decision="$(printf '%s\n' "$g_out" | grep '^decision=' | cut -d= -f2)"
+    g_action="$(printf '%s\n' "$g_out" | grep '^action=' | cut -d= -f2)"
+    if [ "$g_decision" = "PASS" ]; then
+      printf 'PASS\n' > "$SCRATCH/gate-resolved.txt"
+    else
+      local choice="$ANSWER"
+      [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
+      case "$choice" in
+        fix)
+          # One automatic remediation round per pipeline. remediation.md is the
+          # complete list of adjustments this verification round requires, built
+          # once from every detector at the same instant; the confirmation pass
+          # then scores it as a closed set. Because nothing re-audits the code,
+          # the set cannot grow — so there is no loop to cap, no identity ledger
+          # to keep and no churn to guard against. Residue after that round is a
+          # human decision, not another automatic attempt.
+          if [ -f "$SCRATCH/remediation-done.txt" ] && [ "$ANSWER" != "fix" ]; then
+            local residue
+            residue="$(grep '^unresolved_ids=' "$SCRATCH/remediation-verdict.txt" 2>/dev/null | cut -d= -f2)"
+            next_body_add "Gate decision: $g_decision after the remediation round. Items still open: ${residue:-see phase-status.md}. Present them in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
+            if [ "$g_decision" = "FAIL" ]; then
+              next_body_add "Options: fix now (another remediation round) | fix manually then --answer defer | defer (proceed registering pending findings). Re-run next with --answer fix | --answer defer."
+            else
+              next_body_add "Options: fix now (another remediation round) | pass (proceed). Re-run next with --answer fix | --answer pass."
+            fi
+            next_emit "gate" "ask" "$RUN" "gate $g_decision — remediation round done, user decision required"
+          fi
+
+          local rem_out rem_items
+          rem_out="$(bash "$HOOK_DIR/remediation.sh" "$SCRATCH" 2>/dev/null || true)"
+          rem_items="$(printf '%s\n' "$rem_out" | grep '^items=' | cut -d= -f2)"
+          if [ "${rem_items:-0}" -eq 0 ]; then
+            # The gate is red but nothing addressable was extracted (e.g. a phase
+            # reported fail with no findings artifact) — a human has to look.
+            printf '%s no-batch\n' "$g_decision" > "$SCRATCH/gate-resolved.txt"
+            next_body_add "Gate decision: $g_decision, but no remediable item could be extracted from the phase artifacts. Present phase-status.md to the user in the artifact language."
+          else
+            rm -f "$SCRATCH/remediation-verify.md"
+            touch "$SCRATCH/remediation-done.txt" "$SCRATCH/remediation-fix-inflight.txt"
+            next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+            next_common_after
+            next_emit "remediation-fix" "dispatch" "$RUN" "gate $g_decision — dispatching one fix agent for all $rem_items item(s)"
+          fi
+          ;;
+        defer|pass)
+          printf '%s deferred\n' "$g_decision" > "$SCRATCH/gate-resolved.txt"
+          ;;
+        *)
+          next_body_add "Gate decision: $g_decision. Present the findings to the user in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode — Linear sub-issues or tracking.md)."
+          if [ "$g_decision" = "FAIL" ]; then
+            next_body_add "Options: fix now | defer (proceed registering pending findings). Re-run next with --answer fix | --answer defer."
+          else
+            next_body_add "Options: fix now | pass (proceed). Re-run next with --answer fix | --answer pass."
+          fi
+          next_emit "gate" "ask" "$RUN" "gate $g_decision — user decision required"
+          ;;
+      esac
+    fi
+  fi
+
+  # --- homolog ------------------------------------------------------------------
+  if [ "$(phase_toggle "$CONFIG" homolog)" != "disabled" ] && [ ! -f "$SCRATCH/homolog-approved.txt" ]; then
+    if [ "$ANSWER" = "approved" ]; then
+      printf 'approved\n' > "$SCRATCH/homolog-approved.txt"
+    elif [ "$(head -1 "$SCRATCH/homolog-mode.txt" 2>/dev/null || true)" = "defer" ]; then
+      homolog_defer_report "$SCRATCH" "$TASK_ID"
+      printf 'deferred\n' > "$SCRATCH/homolog-approved.txt"
+    else
+      if ! next_dispatched "$SCRATCH" homolog; then
+        cmd_dispatch "$SCRATCH" homolog Skill ship:homolog sonnet >/dev/null
+      fi
+      next_body_add "Invoke ship:homolog via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH | Consolidate findings from phase-status.md and present for acceptance\"."
+      next_body_add "MANDATORY STOP while homolog awaits the user. On approval, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> --answer approved. On adjustment requests, apply them and re-invoke ship:homolog first."
+      next_emit "homolog" "work" "$RUN" "awaiting user acceptance"
+    fi
+  fi
+
+  # --- done ---------------------------------------------------------------------
+  local timings gate_reason
+  timings="$(cmd_report_timings "$SCRATCH" 2>/dev/null || true)"
+  # Telemetry: how the gate resolved (durable, shown at completion).
+  gate_reason="$(head -1 "$SCRATCH/gate-resolved.txt" 2>/dev/null || true)"
+  case "$gate_reason" in
+    *no-batch) next_body_add "Gate resolved: red gate with no remediable item extracted — surfaced as-is." ;;
+    *deferred) next_body_add "Gate resolved: residue deferred to homolog by user decision." ;;
+  esac
+  if [ -f "$SCRATCH/remediation-verdict.txt" ]; then
+    next_body_add "Remediation: $(tr '\n' ' ' < "$SCRATCH/remediation-verdict.txt")"
+  fi
+  if [ "$STORE" = "linear" ]; then
+    next_body_add "Verify the Linear lifecycle: resolve the completed state per $HOOK_DIR/../patterns/linear-status.md (never hardcode), confirm state.type == \"completed\" and that the quality-report comment exists."
+  else
+    next_body_add "Write report-$TASK_ID.md under ship/changes/<feature>/ and mark the task done in tasks.md."
+  fi
+  next_body_add "Surface the per-phase wall-clock to the user:"
+  next_body_add "$timings"
+  next_body_add "Then inform: task complete — run /ship:pr when ready. NEVER auto-invoke /ship:pr. Multi-task: ask to continue with the next task."
+  next_emit "done" "done" "$RUN" "pipeline complete"
+}
+
+if [ $# -lt 1 ]; then
+  usage
+  exit 1
+fi
+
+SUBCOMMAND="$1"
+shift
+
+case "$SUBCOMMAND" in
+  next)
+    cmd_next "$@" ;;
+  init)
+    cmd_init "$@" ;;
+  dispatch)
+    cmd_dispatch "$@" ;;
+  complete)
+    cmd_complete "$@" ;;
+  gate)
+    run_gate "$@" ;;
+  rows)
+    cmd_rows "$@" ;;
+  iter)
+    cmd_iter "$@" ;;
+  report-timings)
+    cmd_report_timings "$@" ;;
+  post-develop)
+    cmd_post_develop "$@" ;;
+  *)
+    usage
+    exit 1 ;;
+esac

@@ -9,6 +9,8 @@ model: sonnet
 
 Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite via Jaccard similarity; never modifies test/source files. Read `ship/config.md` for storage mode, language, Test Scope (absent = all enabled). Input: $ARGUMENTS.
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ## 1. Launch 2 agents in parallel (one Agent call)
 
 **Agent A — spec discovery:** REQ-XX/AC-XX plus Gherkin `@SC-XX`/`@layer` scenarios from Linear docs/issues, or local `proposal.md`/`tasks.md`; no markers → infer sequentially.

@@ -11,6 +11,8 @@ Project-wide AppSec audit of the codebase (not a diff).
 
 **Input:** $ARGUMENTS.
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ## 1. Focus
 
 `ship/config.md`: `Security Focus → categories` (default `all`), `Severity Overrides`. `none` → stop (use `security: disabled` instead); invalid → error. Categories → OWASP: ## Category Mapping {#category-mapping}

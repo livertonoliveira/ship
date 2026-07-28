@@ -19,6 +19,8 @@ context: fork
 Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty for standalone runs.
 Extract any `Security focus override` (e.g., `web-api`, `mobile`, `infrastructure`); default to `none` (no override) if absent.
 
+`Inventory: <path>` in `$ARGUMENTS` (set by `ship:audit:run`) → forward the same line to the agent. Absent → omit it; the agent discovers files itself.
+
 ## 2. Load minimal context from `ship/config.md`
 
 - `Linear Integration → Configured` → storage mode (`yes` = Linear, `no` = local)
