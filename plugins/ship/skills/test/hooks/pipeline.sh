@@ -1053,9 +1053,10 @@ cmd_next() {
       next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
     fi
     if [ ! -f "$SCRATCH/plan-validated.txt" ]; then
-      local pv_rc=0
+      local pv_rc=0 pv_spec=""
+      [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
       set +e
-      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" >/dev/null 2>&1
+      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
       pv_rc=$?
       set -e
       if [ "$pv_rc" -eq 0 ]; then
@@ -1065,7 +1066,7 @@ cmd_next() {
           replan)
             rm -f "$SCRATCH/plan.md"
             cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed schema validation — fix module map/test contract per plan-validate.sh\""
+            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
             next_common_after
             next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
             ;;
@@ -1074,7 +1075,7 @@ cmd_next() {
             next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
             ;;
           *)
-            next_body_add "plan.md failed schema validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md — surface its stderr to the user, in the artifact language)."
+            next_body_add "plan.md failed validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md $pv_spec — surface its stderr to the user, in the artifact language)."
             next_body_add "Ask the user: re-plan or abort? Then re-run next with --answer replan | --answer abort."
             next_emit "plan" "ask" "$RUN" "plan failed validation"
             ;;

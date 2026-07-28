@@ -50,10 +50,48 @@ make_plan_fixture() {
 }
 
 run_validator() {
-  local plan_file="$1"
+  local plan_file="$1" spec_file="${2:-}"
   local stderr_output rc=0
-  stderr_output="$(bash "$PLAN_VALIDATE_SCRIPT" "$plan_file" 2>&1 1>/dev/null)" || rc=$?
+  if [ -n "$spec_file" ]; then
+    stderr_output="$(bash "$PLAN_VALIDATE_SCRIPT" "$plan_file" --spec "$spec_file" 2>&1 1>/dev/null)" || rc=$?
+  else
+    stderr_output="$(bash "$PLAN_VALIDATE_SCRIPT" "$plan_file" 2>&1 1>/dev/null)" || rc=$?
+  fi
   printf '%s\x1f%s' "$rc" "$stderr_output"
+}
+
+# The confrontation checks run inside the fixture dir so the on-disk existence
+# test sees the fixture's tree, not the repo's.
+run_validator_in() {
+  local dir="$1" plan_file="$2" spec_file="$3"
+  local stderr_output rc=0
+  stderr_output="$(cd "$dir" && bash "$PLAN_VALIDATE_SCRIPT" "$plan_file" --spec "$spec_file" 2>&1 1>/dev/null)" || rc=$?
+  printf '%s\x1f%s' "$rc" "$stderr_output"
+}
+
+assert_spec_check() {
+  local name="$1" dir="$2" expected_rc="$3" expected_substring="$4"
+  local result rc stderr_output
+  result="$(run_validator_in "$dir" plan.md spec.md)"
+  rc="${result%%$'\x1f'*}"
+  stderr_output="${result#*$'\x1f'}"
+
+  if [ "$rc" != "$expected_rc" ]; then
+    log_fail "$name (exit code was $rc, expected $expected_rc; stderr: $stderr_output)"
+    return
+  fi
+  if [ -n "$expected_substring" ] && ! printf '%s' "$stderr_output" | grep -qF "$expected_substring"; then
+    log_fail "$name (stderr did not contain '$expected_substring': $stderr_output)"
+    return
+  fi
+  log_pass "$name"
+}
+
+make_spec_fixture() {
+  local dir="$1" files_block="$2" scenarios="$3"
+  {
+    printf '## Files\n%s\n\n## Scenarios\n%s\n' "$files_block" "$scenarios"
+  } > "$dir/spec.md"
 }
 
 assert_exit_and_message() {
@@ -245,6 +283,118 @@ test_overlap_regression_guard() {
   rm -rf "$dir"
 }
 
+test_spec_scenario_without_module_fails() {
+  local name="a spec scenario no module claims fails with cenário do spec sem módulo"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak" \
+    "$(scenario_tag 01) @unit
+$(scenario_tag 02) @unit"
+
+  assert_spec_check "$name" "$dir" 2 "plan-validate: cenário do spec sem módulo — $(scenario_tag 02)"
+  rm -rf "$dir"
+}
+
+test_spec_file_without_module_fails() {
+  local name="a spec file no module claims fails with arquivo do spec sem módulo"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak
+- create \`src/b.ts\` — new" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 2 "plan-validate: arquivo do spec sem módulo"
+  rm -rf "$dir"
+}
+
+test_spec_file_logged_as_divergence_passes() {
+  local name="a spec file logged under Map Divergences is accounted for"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" \
+    "## Map Divergences" \
+    "- src/b.ts — removido, sem sucessor" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak
+- create \`src/b.ts\` — new" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 0 ""
+  rm -rf "$dir"
+}
+
+test_missing_modify_target_fails() {
+  local name="a path the spec marks modify that is absent on disk fails"
+  local dir
+  dir="$(mktemp -d)"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 2 "plan-validate: alvo 'modify' inexistente no repositório — src/a.ts"
+  rm -rf "$dir"
+}
+
+test_create_target_absent_passes() {
+  local name="a path the spec marks create needs no file on disk"
+  local dir
+  dir="$(mktemp -d)"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/b.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/b.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- create \`src/b.ts\` — new" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 0 ""
+  rm -rf "$dir"
+}
+
+test_anchor_line_is_not_an_owned_file() {
+  local name="an Ancora reference line is not treated as a file the plan must claim"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak
+- Âncora: siga o padrão de \`src/z.ts\` — reason" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 0 ""
+  rm -rf "$dir"
+}
+
 test_empty_module_map_fails
 test_file_overlap_fails
 test_orphan_scenario_fails
@@ -256,6 +406,12 @@ test_three_node_cycle_fails
 test_multi_module_happy_path
 test_single_module_happy_path
 test_overlap_regression_guard
+test_spec_scenario_without_module_fails
+test_spec_file_without_module_fails
+test_spec_file_logged_as_divergence_passes
+test_missing_modify_target_fails
+test_create_target_absent_passes
+test_anchor_line_is_not_an_owned_file
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
