@@ -94,14 +94,73 @@ build_test_command() {
   esac
 }
 
-collect_test_files() {
+# `- <path> (<layer>)` manifest rows, kept as "<layer><TAB><path>" lines. The
+# layer used to be parsed off and thrown away, which is what let an e2e file
+# reach a runner whose config cannot even see it.
+collect_test_entries() {
   local generated="$1"
-  TEST_FILES=()
+  TEST_ENTRIES=""
   [ -f "$generated" ] || return 0
-  grep -q '^- ' "$generated" 2>/dev/null || return 0
-  while IFS= read -r line; do
-    TEST_FILES+=("$line")
-  done < <(grep '^- ' "$generated" | sed -E 's/^- ([^ ]+) \([a-zA-Z0-9_-]+\)$/\1/')
+  TEST_ENTRIES="$(awk '
+    /^- / {
+      if (match($0, /^- [^ ]+ \([a-zA-Z0-9_-]+\)$/)) {
+        path = $2
+        layer = $3
+        gsub(/[()]/, "", layer)
+        printf "%s\t%s\n", layer, path
+      } else {
+        sub(/^- /, "")
+        if ($0 != "") printf "unknown\t%s\n", $1
+      }
+    }
+  ' "$generated" || true)"
+}
+
+# A layer whose files only run under a dedicated package script — a separate
+# config, a different testRegex — is invisible to the generic `test` script: the
+# suite reports green having never loaded them. Prefer `test:<layer>` when the
+# project defines it; fall back to the generic command otherwise.
+layer_command_words() {
+  local layer="$1"
+  LAYER_CMD_WORDS=("${CMD_WORDS[@]}")
+  LAYER_USES_PKG_SCRIPT="$CMD_USES_PKG_SCRIPT"
+  case "$layer" in
+    unit|integration|e2e) ;;
+    *) return 0 ;;
+  esac
+  if is_resolved "$PKG" && pkg_script_exists "test:$layer"; then
+    LAYER_CMD_WORDS=("$PKG" run "test:$layer")
+    LAYER_USES_PKG_SCRIPT=1
+  fi
+}
+
+# One run per layer, outputs concatenated so parse_failed_files and the report
+# see every failure regardless of which runner produced it.
+run_suites_by_layer() {
+  if [ -z "$TEST_ENTRIES" ]; then
+    run_suite "${CMD_WORDS[@]}"
+    return 0
+  fi
+  local combined layers l p rc=0
+  combined="$(mktemp)"
+  layers="$(printf '%s\n' "$TEST_ENTRIES" | cut -f1 | sort -u)"
+  for l in $layers; do
+    layer_command_words "$l"
+    local words=("${LAYER_CMD_WORDS[@]}")
+    if [ "$LAYER_USES_PKG_SCRIPT" -eq 1 ] && [ "$PKG" = "npm" ]; then
+      words+=(--)
+    fi
+    while IFS= read -r p; do
+      [ -n "$p" ] && words+=("$p")
+    done < <(printf '%s\n' "$TEST_ENTRIES" | awk -F'\t' -v L="$l" '$1==L{print $2}')
+    run_suite "${words[@]}"
+    cat "$RUN_OUTPUT_FILE" >> "$combined"
+    rm -f "$RUN_OUTPUT_FILE"
+    [ "$RUN_EXIT_CODE" -ne 0 ] && rc=1
+  done
+  RUN_OUTPUT_FILE="$combined"
+  RUN_EXIT_CODE="$rc"
+  return 0
 }
 
 run_suite() {
@@ -266,6 +325,9 @@ main() {
   SUITE_SKIPPED=0
   RUN_OUTPUT_FILE=""
   RUN_EXIT_CODE=0
+  TEST_ENTRIES=""
+  LAYER_CMD_WORDS=()
+  LAYER_USES_PKG_SCRIPT=0
 
   # --print-static: resolve the two commands and print them, running nothing. The
   # implementer is handed these in its dispatch args so it checks exactly what the
@@ -330,20 +392,14 @@ main() {
     run_static_checks
   fi
 
-  collect_test_files "$scratch/generated-tests.md"
-  if [ "${#TEST_FILES[@]}" -gt 0 ]; then
-    if [ "$CMD_USES_PKG_SCRIPT" -eq 1 ] && [ "$PKG" = "npm" ]; then
-      CMD_WORDS+=(--)
-    fi
-    CMD_WORDS+=("${TEST_FILES[@]}")
-  fi
+  collect_test_entries "$scratch/generated-tests.md"
 
   if [ "$TYPECHECK_EXIT" -gt 0 ]; then
     SUITE_SKIPPED=1
     RUN_EXIT_CODE=1
     FAILED_FILES=""
   else
-    run_suite "${CMD_WORDS[@]}"
+    run_suites_by_layer
     parse_failed_files "$RUN_OUTPUT_FILE"
   fi
 
