@@ -53,15 +53,21 @@ field() {
 # Scenario-id tokens are built by concatenation so this file itself carries no
 # spec-id literals (the hygiene gate forbids them); the fixtures still exercise
 # the real tag-parsing behavior at runtime.
+#
+# De-identification applies to the `## Scenarios` block the worker turns into test
+# names — the `## Test Contract` headers keep their ids on purpose, being the
+# routing table (scenario → layer → file) copied verbatim from plan.md.
 SCEN_ID="@S"'C-01'
 
 single_module_spec() {
   cat <<EOF
 ## Files
-- src/b.js
+- create \`src/b.js\` — the module
 
-Dependencies: None
+## Deps
+none
 
+## Scenarios
 $SCEN_ID @unit
 Scenario: greets
   Given a name
@@ -193,6 +199,24 @@ test_plan_review_blockers_can_be_overridden() {
   rm -rf "$dir"
 }
 
+# The single-module shortcut is repaired but report-only, so the planner runs for
+# every task. This walks past the planning phases, satisfying each, and returns
+# the first output beyond them.
+advance_past_planning() {
+  local dir="$1" task="$2" scratch out state i
+  scratch="$dir/.context/ship-run/$task"
+  for i in 1 2 3 4 5; do
+    out="$(next "$dir" "$task")"
+    state="$(field "$out" state)"
+    case "$state" in
+      plan)        valid_plan > "$scratch/plan.md" ;;
+      plan-review) plan_review_ok "$scratch" ;;
+      *)           printf '%s' "$out"; return 0 ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 test_first_call_asks_for_context_staging() {
   local name="first call inits the scratch dir and asks for context staging (action=work)"
   local dir; dir="$(mktemp -d)"
@@ -209,8 +233,8 @@ test_first_call_asks_for_context_staging() {
   rm -rf "$dir"
 }
 
-test_single_module_spec_skips_planner() {
-  local name="a single-module spec skips the planner and dispatches develop alone"
+test_single_module_spec_is_predicted_but_still_planned() {
+  local name="a single-module spec is recorded as such while the planner still runs (report-only shortcut)"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -218,13 +242,12 @@ test_single_module_spec_skips_planner() {
   next "$dir" TASK-1 >/dev/null
   single_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   local out; out="$(next "$dir" TASK-1)"
-  if [ "$(field "$out" state)" = "develop" ] && [ "$(field "$out" action)" = "dispatch" ] \
-    && printf '%s' "$out" | grep -q 'Skill ship:develop' \
-    && grep -q 'skip:single-module' "$dir/.context/ship-run/TASK-1/plan-decision.txt" \
-    && grep -q '| plan | - | skipped |' "$dir/.context/ship-run/TASK-1/dispatch-log.md"; then
+  if [ "$(field "$out" state)" = "plan" ] && [ "$(field "$out" action)" = "dispatch" ] \
+    && [ "$(head -1 "$dir/.context/ship-run/TASK-1/plan-prediction.txt")" = "single-module" ] \
+    && [ "$(head -1 "$dir/.context/ship-run/TASK-1/plan-decision.txt")" = "run" ]; then
     log_pass "$name"
   else
-    log_fail "$name"
+    log_fail "$name (state=$(field "$out" state) prediction=$(head -1 "$dir/.context/ship-run/TASK-1/plan-prediction.txt" 2>/dev/null))"
   fi
   rm -rf "$dir"
 }
@@ -281,7 +304,7 @@ test_develop_receives_resolved_static_commands() {
   local scratch="$dir/.context/ship-run/TC1"
   next "$dir" TC1 >/dev/null
   single_module_spec > "$scratch/spec.md"
-  local out; out="$(next "$dir" TC1)"
+  local out; out="$(advance_past_planning "$dir" TC1)"
   if [ "$(field "$out" state)" = "develop" ] \
     && printf '%s' "$out" | grep -q 'Static checks: typecheck: npm run typecheck; lint: npm run lint'; then
     log_pass "$name"
@@ -300,7 +323,7 @@ test_develop_gets_no_static_field_when_unresolvable() {
   local scratch="$dir/.context/ship-run/TC2"
   next "$dir" TC2 >/dev/null
   single_module_spec > "$scratch/spec.md"
-  local out; out="$(next "$dir" TC2)"
+  local out; out="$(advance_past_planning "$dir" TC2)"
   if [ "$(field "$out" state)" = "develop" ] \
     && ! printf '%s' "$out" | grep -q 'Static checks:'; then
     log_pass "$name"
@@ -318,7 +341,7 @@ test_post_develop_no_mutation_stops() {
 - e2e: disabled' ''
   next "$dir" TASK-1 >/dev/null
   single_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
-  next "$dir" TASK-1 >/dev/null
+  advance_past_planning "$dir" TASK-1 >/dev/null
   local out; out="$(next "$dir" TASK-1)"
   if [ "$(field "$out" state)" = "post-develop" ] && [ "$(field "$out" action)" = "stop" ]; then
     log_pass "$name"
@@ -339,7 +362,7 @@ test_verify_a_dispatches_worker_with_brief() {
   (cd "$dir" && git add -A && git commit -qm tests && git update-ref refs/remotes/origin/main HEAD) >/dev/null
   next "$dir" TASK-1 >/dev/null
   single_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
-  next "$dir" TASK-1 >/dev/null
+  advance_past_planning "$dir" TASK-1 >/dev/null
   echo 'module.exports=1' > "$dir/src/b.js"
   local out brief
   out="$(next "$dir" TASK-1)"
@@ -349,7 +372,7 @@ test_verify_a_dispatches_worker_with_brief() {
     && printf '%s' "$out" | grep -q 'worker-start-ship-test-unit.txt' \
     && [ -f "$brief" ] \
     && grep -q 'Scenario: greets' "$brief" \
-    && ! grep -q "$SCEN_ID" "$brief" \
+    && ! awk '/^## Scenarios/{c=1;next} /^## /{c=0} c' "$brief" | grep -q "$SCEN_ID" \
     && grep -q 'src/b.js' "$brief" \
     && grep -q 'read these first' "$brief" \
     && grep -q 'src/existing.test.js' "$brief" \
@@ -384,7 +407,7 @@ test_silent_worker_failure_redispatches_then_stops() {
 - e2e: disabled' ''
   next "$dir" TASK-1 >/dev/null
   single_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
-  next "$dir" TASK-1 >/dev/null
+  advance_past_planning "$dir" TASK-1 >/dev/null
   mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
   next "$dir" TASK-1 >/dev/null
   local r1 r2 r3
@@ -409,7 +432,7 @@ test_happy_path_reaches_done_with_status_rows() {
   next "$dir" TASK-1 >/dev/null
   local scratch="$dir/.context/ship-run/TASK-1"
   single_module_spec > "$scratch/spec.md"
-  next "$dir" TASK-1 >/dev/null
+  advance_past_planning "$dir" TASK-1 >/dev/null
   mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
   next "$dir" TASK-1 >/dev/null
   printf -- '- src/b.test.js (unit)\n' > "$scratch/generated-tests-unit.md"
@@ -784,7 +807,7 @@ test_generated_tests_are_intent_added() {
   local scratch="$dir/.context/ship-run/TG1"
   next "$dir" TG1 >/dev/null
   single_module_spec > "$scratch/spec.md"
-  next "$dir" TG1 >/dev/null
+  advance_past_planning "$dir" TG1 >/dev/null
   mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
   next "$dir" TG1 >/dev/null
   mkdir -p "$dir/test" && echo 'it(1)' > "$dir/test/b.test.js"
@@ -816,7 +839,7 @@ test_static_gate_skip_when_no_checks() {
 }
 
 test_first_call_asks_for_context_staging
-test_single_module_spec_skips_planner
+test_single_module_spec_is_predicted_but_still_planned
 test_greenfield_multi_module_runs_planner
 test_invalid_plan_asks_then_replans
 test_plan_is_confronted_before_develop

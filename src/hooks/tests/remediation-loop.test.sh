@@ -73,6 +73,21 @@ Scenario: works
 EOF
 }
 
+plan_fixture() {
+  cat <<EOF
+## Modules
+### M1: core
+- Files: src/a.js
+- Depends on: none
+- Scenarios: $SCEN_ID
+- Contract: does things
+
+## Test Contract
+### $SCEN_ID -> unit -> src/a.test.js
+- arrange/act/assert: x
+EOF
+}
+
 # --- scripted agents ---------------------------------------------------------
 
 # Over 100 changed lines on purpose: diff-classify calls anything under that in a
@@ -152,7 +167,8 @@ drive() {
     esac
     case "$state" in
       context)            spec_fixture > "$scratch/spec.md" ;;
-      plan)               return 1 ;;
+      plan)               plan_fixture > "$scratch/plan.md" ;;
+      plan-review)        printf 'verdict: ok\n' > "$scratch/plan-review.md" ;;
       develop)            mock_develop "$dir" ;;
       verify-a|verify-pending) mock_quality_workers "$dir" "$scratch" "$out" ;;
       remediation-fix)    mock_fix_agent "$dir" "$scratch" ;;
