@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -812,23 +812,194 @@ next_module_files() {
   fi
 }
 
-# Nearest existing test file to the first SUT path (longest shared directory
-# prefix, git ls-files order breaks ties) — cited in the brief as a style
-# reference so workers skip standalone pattern discovery.
+next_existing_tests() {
+  git ls-files -- '*.test.*' '*.spec.*' '*_test.*' '*_spec.rb' 'test_*.py' 2>/dev/null || true
+}
+
+# Every existing test as "<layer>\t<path>", classified in ONE call. Classifying
+# per file spawned a subprocess per candidate — 908 of them on the repo this was
+# built against, twice per layer.
+NEXT_CLASSIFIED_CACHE=""
+NEXT_CLASSIFIED_DONE=0
+
+next_classified_tests() {
+  if [ "$NEXT_CLASSIFIED_DONE" -eq 0 ]; then
+    local all
+    all="$(next_existing_tests)"
+    if [ -n "$all" ]; then
+      NEXT_CLASSIFIED_CACHE="$(printf '%s\n' "$all" | tr '\n' '\0' \
+        | xargs -0 bash "$HOOK_DIR/test-layer.sh" classify 2>/dev/null || true)"
+    fi
+    NEXT_CLASSIFIED_DONE=1
+  fi
+  [ -n "$NEXT_CLASSIFIED_CACHE" ] || return 0
+  printf '%s\n' "$NEXT_CLASSIFIED_CACHE"
+}
+
+# Nearest existing test to the SUT, as a style reference so workers skip
+# standalone pattern discovery.
+#
+# Scoring by shared LEADING path segments was worthless in the dominant layout:
+# with sources under `src/` and tests under `test/`, segment 1 already diverges,
+# so every candidate scored 0 and the first line of `git ls-files` won — a DTO
+# test got cited as the pattern for a controller. Score on the shared TRAILING
+# directory segments (which is what mirrored test trees actually share), on
+# basename tokens, and above all on the candidate being in the layer we are
+# briefing. Nothing beats zero: no reference is better than a misleading one.
 next_test_pattern_ref() {
-  local target="$1"
+  local target="$1" layer="${2:-}" candidates
   [ -n "$target" ] || return 0
-  git ls-files -- '*.spec.*' '*.test.*' '*_test.*' '*_spec.rb' 'test_*.py' 2>/dev/null \
-    | awk -v target="$target" '
-      BEGIN { n = split(target, t, "/"); best = -1 }
-      {
-        m = split($0, c, "/")
-        score = 0
-        for (i = 1; i <= n && i <= m; i++) { if (t[i] == c[i]) score++; else break }
-        if (score > best) { best = score; pick = $0 }
+  candidates="$(next_classified_tests)"
+  [ -n "$candidates" ] || return 0
+  printf '%s\n' "$candidates" \
+    | awk -F'\t' -v target="$target" -v layer="$layer" '
+      function tokens(p,   base) {
+        base = p; sub(/.*\//, "", base)
+        gsub(/\.(spec|test|e2e-spec|e2e|integration|unit)\./, ".", base)
+        sub(/\.[A-Za-z0-9]+$/, "", base)
+        gsub(/[-_.]/, " ", base)
+        return " " base " "
       }
-      END { if (pick != "") print pick }
+      BEGIN {
+        tn = split(target, td, "/"); tn--          # drop basename → directory segments
+        ttok = tokens(target)
+        split(ttok, twords, " ")
+        best = 0
+      }
+      {
+        cand = $2
+        if (cand == target) next
+        cn = split(cand, cd, "/"); cn--
+        suffix = 0
+        while (suffix < tn && suffix < cn && td[tn - suffix] == cd[cn - suffix]) suffix++
+        shared = 0
+        ctok = tokens(cand)
+        for (i in twords) {
+          if (twords[i] != "" && index(ctok, " " twords[i] " ") > 0) shared++
+        }
+        score = suffix * 10 + shared
+        if (layer != "" && $1 == layer) score += 100
+        if (score > best) { best = score; pick = cand }
+      }
+      END { if (best > 0 && pick != "") print pick }
     '
+}
+
+# The `## Existing tests` block used to be an unfiltered `git ls-files` of the
+# whole test tree — 908 paths / 66KB in the run that motivated this, ~95% of the
+# brief, repeated per layer worker. Keep only what a worker in THIS layer could
+# plausibly extend: same layer, and adjacent to a SUT path by directory or by
+# basename token. Truncation is reported, never silent.
+next_relevant_tests() {
+  local layer="$1" files="$2" limit=40 all scored
+  all="$(next_classified_tests)"
+  [ -n "$all" ] || return 0
+  local joined
+  joined="$(printf '%s\n' "$files" | grep -v '^$' | tr '\n' '|' || true)"
+  scored="$(printf '%s\n' "$all" \
+    | awk -F'\t' -v layer="$layer" -v targets="$joined" '
+      function tokens(p,   base) {
+        base = p; sub(/.*\//, "", base)
+        gsub(/\.(spec|test|e2e-spec|e2e|integration|unit)\./, ".", base)
+        sub(/\.[A-Za-z0-9]+$/, "", base)
+        gsub(/[-_.]/, " ", base)
+        return " " base " "
+      }
+      BEGIN { tcount = split(targets, tlist, "|") }
+      {
+        if ($1 != layer && $1 != "unknown") next
+        cand = $2
+        cn = split(cand, cd, "/"); cn--
+        ctok = tokens(cand)
+        best = 0
+        for (k = 1; k <= tcount; k++) {
+          if (tlist[k] == "") continue
+          tn = split(tlist[k], td, "/"); tn--
+          suffix = 0
+          while (suffix < tn && suffix < cn && td[tn - suffix] == cd[cn - suffix]) suffix++
+          shared = 0
+          split(tokens(tlist[k]), twords, " ")
+          for (i in twords) {
+            if (twords[i] != "" && index(ctok, " " twords[i] " ") > 0) shared++
+          }
+          score = suffix * 10 + shared
+          if (score > best) best = score
+        }
+        if (best > 0) printf "%d\t%s\n", best, cand
+      }
+    ' | sort -rn -k1,1 | cut -f2)"
+  [ -n "$scored" ] || return 0
+  local total
+  total="$(printf '%s\n' "$scored" | grep -c . || true)"
+  printf '%s\n' "$scored" | head -"$limit"
+  if [ "$total" -gt "$limit" ]; then
+    printf '(%s more existing test files in this layer are not listed — read them only if the ones above leave a gap.)\n' \
+      "$((total - limit))"
+  fi
+}
+
+# Test Contract slot paths for one layer: the trailing field of each
+# "### <scenario> -> <layer> -> <path>" heading.
+next_contract_paths() {
+  local plan="$1" layer="$2"
+  [ -f "$plan" ] || return 0
+  grep -E "^### .*->[[:space:]]*$layer[[:space:]]*->" "$plan" 2>/dev/null \
+    | sed -E 's/^### .* -> [^>]* -> //' \
+    | sed -E 's/[[:space:]]*\(derived[^)]*\)[[:space:]]*$//' \
+    | sed 's/`//g' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
+}
+
+# Test files develop wrote itself, as manifest rows, minus anything a layer
+# worker already claimed. Same test-path shapes next_module_files uses to strip
+# tests back out of the module set.
+next_develop_authored_tests() {
+  local scratch="$1" touched
+  touched="$scratch/develop-touched-files.txt"
+  [ -s "$touched" ] || return 0
+  local test_re='(\.test\.|\.spec\.|_test\.|_spec\.|__tests__/|(^|/)tests?/|(^|/)test_[^/]*\.py)'
+  local claimed p layer
+  claimed="$(cat "$scratch"/generated-tests-*.md 2>/dev/null | sed -E 's/^- ([^ ]+) .*/\1/' || true)"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf '%s\n' "$p" | grep -qE "$test_re" || continue
+    if [ -n "$claimed" ] && printf '%s\n' "$claimed" | grep -qxF "$p"; then
+      continue
+    fi
+    layer="$(bash "$HOOK_DIR/test-layer.sh" classify "$p" | cut -f1)"
+    printf -- '- %s (%s)\n' "$p" "$layer"
+  done < "$touched"
+}
+
+# Whether this layer is worth a worker at all.
+#
+# Layers came only from `ship/config.md → Test Scope`, never from the plan. A
+# task whose contract has zero rows for a layer still got a worker, which then
+# had an empty Test Contract in its brief and invented a test outside the
+# contract; and a layer whose every contract file develop already authored got a
+# worker that produced nothing. Both are pure cost. No plan (or a plan with no
+# contract at all) keeps the old config-driven behavior.
+next_layer_worth_dispatch() {
+  local scratch="$1" layer="$2" plan touched
+  plan="$scratch/plan.md"
+  touched="$scratch/develop-touched-files.txt"
+  [ -f "$plan" ] || return 0
+  grep -qE '^### .* -> .* -> ' "$plan" 2>/dev/null || return 0
+
+  local paths
+  paths="$(next_contract_paths "$plan" "$layer")"
+  if [ -z "$paths" ]; then
+    printf 'no-contract'
+    return 1
+  fi
+
+  [ -s "$touched" ] || return 0
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    grep -qxF "$p" "$touched" || return 0
+  done <<< "$paths"
+  printf 'authored-by-develop'
+  return 1
 }
 
 # Per-layer worker brief: contract slots + de-identified scenarios + denylist +
@@ -854,8 +1025,24 @@ next_test_brief() {
     # worker nowhere else — and the worker is told not to invent beyond what it
     # was given, which turned "untagged" into "untested".
     printf '\n## Acceptance Criteria\n\n'
-    if [ -f "$spec" ] && grep -qE '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"; then
-      grep -E '^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]' "$spec"
+    local acs=""
+    # Scoped to the spec's own `## Acceptance Criteria` heading. Grepping the
+    # whole file also swept in the criteria quoted under a `## Full requirement
+    # text` / scope-index section — criteria belonging to OTHER slices of the
+    # same requirement — and then told the worker every one of them needs an
+    # assertion. That is an instruction to write tests for work this task does
+    # not contain.
+    if [ -f "$spec" ]; then
+      acs="$(awk '
+        /^##+[[:space:]]+(Acceptance Criteria|Acceptance criteria|Critérios de Aceitação|Criterios de Aceitacao)[[:space:]]*$/ {
+          insection = 1; next
+        }
+        /^##+[[:space:]]/ { insection = 0 }
+        insection && /^[[:space:]]*[-*]?[[:space:]]*(\*\*)?AC-[0-9]/ { print }
+      ' "$spec")"
+    fi
+    if [ -n "$acs" ]; then
+      printf '%s\n' "$acs"
       printf '\nEvery criterion above needs an assertion, including any with no scenario below.\n'
     else
       printf 'None stated.\n'
@@ -886,13 +1073,13 @@ next_test_brief() {
       printf '\n'
     fi
     local existing
-    existing="$(git ls-files -- '*.test.*' '*.spec.*' '*_test.*' 'test_*.py' 2>/dev/null || true)"
+    existing="$(next_relevant_tests "$layer" "$files")"
     if [ -n "$existing" ]; then
-      printf '\n## Existing tests\n\nThese files already exist and already assert behavior. Add to them; never rewrite one from scratch, and never remove a case you did not write:\n\n'
-      printf '%s\n' "$existing" | sed 's/^/- /'
+      printf '\n## Existing tests\n\nThese %s-layer files already exist near the code under test and already assert behavior. Add to them; never rewrite one from scratch, and never remove a case you did not write:\n\n' "$layer"
+      printf '%s\n' "$existing" | sed 's/^\([^(]\)/- \1/'
     fi
     first="$(printf '%s\n' "$files" | head -1)"
-    ref="$(next_test_pattern_ref "$first")"
+    ref="$(next_test_pattern_ref "$first" "$layer")"
     [ -n "$ref" ] && printf 'Style reference: mirror the structure and conventions of `%s` — skip standalone pattern discovery.\n\n' "$ref"
     printf 'Full diff: %s/diff.md. Read other project code only where the files above leave a gap.\n' "$scratch"
   } > "$out"
@@ -1075,6 +1262,7 @@ cmd_next() {
     if [ ! -f "$SCRATCH/plan-validated.txt" ]; then
       local pv_rc=0 pv_spec=""
       [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
+      if [ -f "$CONFIG" ]; then pv_spec="$pv_spec --config $CONFIG"; fi
       set +e
       bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
       pv_rc=$?
@@ -1226,13 +1414,28 @@ cmd_next() {
     qs="$(bash "$HOOK_DIR/quality-scope.sh" "$class" --phases "perf security review" --scratch "$SCRATCH" --config "$CONFIG")"
     qrun="$(printf '%s\n' "$qs" | grep '^run=' | sed 's/^run=//')"
     depth="$(printf '%s\n' "$qs" | grep '^depth=' | sed 's/^depth=//')"
+    local scoped="" skipped="" reason=""
     if [ "$(phase_toggle "$CONFIG" test)" != "disabled" ] && [ ! -f "$SCRATCH/generated-tests.md" ]; then
-      layers="$(bash "$HOOK_DIR/test-scope.sh" --config "$CONFIG" | grep '^run=' | sed 's/^run=//')"
+      scoped="$(bash "$HOOK_DIR/test-scope.sh" --config "$CONFIG" | grep '^run=' | sed 's/^run=//')"
     fi
+    local sl
+    for sl in $scoped; do
+      set +e
+      reason="$(next_layer_worth_dispatch "$SCRATCH" "$sl")"
+      set -e
+      if [ -n "$reason" ]; then
+        skipped="$skipped $sl($reason)"
+      else
+        layers="$layers $sl"
+      fi
+    done
+    layers="${layers# }"
+    skipped="${skipped# }"
     {
       printf 'quality=%s\n' "$qrun"
       printf 'depth=%s\n' "$depth"
       printf 'layers=%s\n' "$layers"
+      printf 'layers-skipped=%s\n' "$skipped"
     } > "$SCRATCH/verify-a.txt"
 
     local pending="" l p
@@ -1248,7 +1451,7 @@ cmd_next() {
     if [ -n "${pending# }" ]; then
       next_body_add "Dispatch ALL of the above concurrently in this turn (synchronous, never backgrounded)."
       next_common_after
-      next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}] + quality [$qrun]"
+      next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}]${skipped:+ (skipped: $skipped)} + quality [$qrun]"
     fi
   fi
 
@@ -1297,13 +1500,19 @@ cmd_next() {
   # --- consolidate generated-test manifests ------------------------------------
   local layers_v
   layers_v="$(grep '^layers=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^layers=//')"
-  if [ -n "$layers_v" ] && [ ! -f "$SCRATCH/generated-tests.md" ]; then
+  if [ -f "$SCRATCH/verify-a.txt" ] && [ "$(phase_toggle "$CONFIG" test)" != "disabled" ] \
+    && [ ! -f "$SCRATCH/generated-tests.md" ]; then
     {
       printf '# Generated Tests\n\n'
       local l
       for l in $layers_v; do
         [ -f "$SCRATCH/generated-tests-$l.md" ] && grep '^- ' "$SCRATCH/generated-tests-$l.md" || true
       done
+      # A test file the plan assigned to a develop module is authored by develop,
+      # so no worker manifest ever names it — and this manifest is the only thing
+      # test-exec.sh runs. The contract's own test could therefore sit on disk,
+      # never executed, while the gate reported the suite green.
+      next_develop_authored_tests "$SCRATCH"
     } > "$SCRATCH/generated-tests.md"
     local tr_out="" tr_rc=0
     if [ -f "$SCRATCH/tests-pre.txt" ]; then
