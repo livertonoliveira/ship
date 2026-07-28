@@ -63,7 +63,7 @@ You describe what you want. Ship breaks it into tasks, implements it, tests it, 
 
 That's the complete flow. Each command handles one step; you only intervene when something needs your attention.
 
-Under the hood, phase ordering, quality gates, and fix loops are enforced by a deterministic state machine in pure bash — not by prompt prose. Runs are reproducible, resumable after a crash, and the gates can't be talked out of blocking.
+Under the hood, phase ordering, quality gates, and remediation are enforced by a deterministic state machine in pure bash — not by prompt prose. Runs are reproducible, resumable after a crash, and the gates can't be talked out of blocking.
 
 ### Before vs. After
 
@@ -208,6 +208,8 @@ These commands analyze the **entire project**, not just the current diff. Use th
 | `/ship:audit:security` | Full AppSec audit — OWASP Top 10, CWE mapping, A-F score, PoC for critical and high findings |
 | `/ship:audit:tests` | Test coverage audit — maps acceptance criteria against existing tests and reports gaps by layer |
 | `/ship:audit:run` | Runs all applicable audits in parallel and consolidates results into a single report |
+
+Before fanning out, `/ship:audit:run` indexes the tracked file tree once into `.context/ship-audit/inventory.md`, so each audit's sub-agents start from that index instead of each running its own discovery pass. It is an index, not a scope limit — audits still search beyond it.
 
 > **Important:** audit commands are **never** called automatically by `/ship:run`. They exist to be triggered manually when it makes sense — not on every task.
 

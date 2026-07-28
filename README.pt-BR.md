@@ -63,7 +63,7 @@ Você descreve o que quer. O Ship quebra em tarefas, implementa, testa, revisa s
 
 Isso é o fluxo completo. Cada comando faz uma etapa; você só intervém quando algo merece atenção.
 
-Por baixo do capô, a ordem das fases, os gates de qualidade e os loops de correção são impostos por um state machine determinístico em bash puro — não por prosa de prompt. As execuções são reproduzíveis, retomáveis após uma queda, e os gates não podem ser "convencidos" a deixar passar.
+Por baixo do capô, a ordem das fases, os gates de qualidade e a remediação são impostos por um state machine determinístico em bash puro — não por prosa de prompt. As execuções são reproduzíveis, retomáveis após uma queda, e os gates não podem ser "convencidos" a deixar passar.
 
 ### Antes vs. Depois
 
