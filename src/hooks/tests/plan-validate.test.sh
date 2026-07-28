@@ -119,6 +119,48 @@ assert_exit_and_message() {
   log_pass "$name"
 }
 
+test_spec_test_file_claimed_by_test_contract_passes() {
+  local name="a test file the spec lists is accounted for by its Test Contract slot, not by a module"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak
+- create \`src/a.test.ts\` — suite" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 0 ""
+  rm -rf "$dir"
+}
+
+test_prose_in_divergences_does_not_account_for_a_file() {
+  local name="a file merely mentioned in Map Divergences prose is not treated as diverged"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  # The shape a real planner produced: a "none" divergence section whose prose
+  # names every spec file. Counting those as diverged made the check vacuous.
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" \
+    "## Map Divergences" \
+    "none — spec map (create \`src/b.ts\`) validated against the current tree" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/a.ts\` — tweak
+- create \`src/b.ts\` — new" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 2 "plan-validate: arquivo do spec sem módulo"
+  rm -rf "$dir"
+}
+
 test_empty_module_map_fails() {
   local name="a plan without any module headers fails with module map vazio"
   local dir plan
@@ -412,6 +454,8 @@ test_spec_file_logged_as_divergence_passes
 test_missing_modify_target_fails
 test_create_target_absent_passes
 test_anchor_line_is_not_an_owned_file
+test_spec_test_file_claimed_by_test_contract_passes
+test_prose_in_divergences_does_not_account_for_a_file
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

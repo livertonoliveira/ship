@@ -313,11 +313,17 @@ plan_files() {
 # A spec path the planner deliberately corrected (moved, gone, replaced) is
 # logged under `## Map Divergences` — accounted for even though no module lists
 # it. This is what keeps the divergence log load-bearing instead of decorative.
+#
+# Only `- ` entries count, per the format ship:plan writes. Scanning the whole
+# section for path-shaped tokens made the check self-defeating: a planner that
+# wrote "none — src/a.test.js validated against the tree" had every file it
+# merely MENTIONED counted as diverged, so a plan that genuinely dropped a file
+# passed as long as its prose named it.
 diverged_paths() {
   awk '
     /^## Map Divergences/ { insection = 1; next }
     /^## / { insection = 0 }
-    insection { print }
+    insection && /^[[:space:]]*-[[:space:]]/ { print }
   ' "$1" 2>/dev/null | grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+' | sort -u || true
 }
 
@@ -331,10 +337,21 @@ check_spec_scenarios_claimed() {
   return 0
 }
 
+# Test files the spec lists are owned by the `## Test Contract`, not by a module's
+# `Files:` — pipeline.sh's next_module_files even strips them back out of the
+# module set. Requiring a module to claim them would fail every plan that puts
+# tests where they belong, so they are accounted for by a Test Contract slot.
+contract_files() {
+  grep -E '^### .* -> .* -> ' "$1" 2>/dev/null \
+    | sed -E 's/^### .* -> [^>]* -> //' \
+    | sed -E 's/[[:space:]]*\(derived[^)]*\)[[:space:]]*$//' \
+    | sed 's/`//g' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sort -u || true
+}
+
 check_spec_files_claimed() {
   local f="$1" spec="$2" missing
   missing="$(comm -23 <(spec_files "$spec") \
-    <(cat <(plan_files "$f") <(diverged_paths "$f") | sort -u))"
+    <(cat <(plan_files "$f") <(contract_files "$f") <(diverged_paths "$f") | sort -u))"
   if [ -n "$missing" ]; then
     echo "plan-validate: arquivo do spec sem módulo (e sem registro em ## Map Divergences) — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
     return 1
