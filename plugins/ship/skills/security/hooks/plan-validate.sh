@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
-  echo "usage: plan-validate.sh <plan-file> [--spec <spec-file>]" >&2
+  echo "usage: plan-validate.sh <plan-file> [--spec <spec-file>] [--config <path>]" >&2
   echo "  Without --spec only the plan's internal consistency is checked." >&2
   echo "  With --spec the plan is also confronted with the spec and the" >&2
   echo "  repository: no spec scenario or spec file may be silently dropped," >&2
@@ -124,6 +126,58 @@ check_scenario_layers() {
       esac
     done < <(module_scenarios "$f" "$id")
   done <<< "$ids"
+  return 0
+}
+
+# Every Test Contract slot as "<layer> <path>".
+contract_slots() {
+  grep -E '^### .* -> .* -> ' "$1" 2>/dev/null \
+    | sed -E 's/^### .* -> ([^>]*) -> (.*)$/\1 \2/' \
+    | sed -E 's/[[:space:]]*\(derived[^)]*\)[[:space:]]*$//' \
+    | sed 's/`//g' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep -v '^$' || true
+}
+
+# A slot is only worth anything if its file will actually be run.
+#
+# Two ways a slot silently produces no coverage, both observed together on the
+# same run: the layer is disabled in `## Test Scope`, so no worker is ever
+# scoped to it; or the path's own naming puts it in a different layer than the
+# slot declares, so it lands under a runner config that cannot see it. Either
+# way the scenario ends up with a test file on disk that nothing executes, and
+# the gate reports green.
+check_contract_slots_runnable() {
+  local f="$1" config="$2" line layer path actual disabled=""
+  [ -f "$HOOK_DIR/test-layer.sh" ] || return 0
+
+  # A slot in a disabled layer is only dead coverage if the test phase actually
+  # runs. With `## Pipeline Phases → test: disabled` nothing is generated for any
+  # layer by design, so no slot means anything and there is nothing to report.
+  if [ -n "$config" ] && [ -f "$config" ] && [ -f "$HOOK_DIR/test-scope.sh" ] \
+    && ! grep -qE '^-[[:space:]]*test:[[:space:]]*disabled' "$config"; then
+    disabled=" $(bash "$HOOK_DIR/test-scope.sh" --config "$config" | grep '^skip=' | sed 's/^skip=//') "
+  fi
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    layer="${line%% *}"
+    path="${line#* }"
+    [ -n "$path" ] && [ "$path" != "$layer" ] || continue
+
+    if [ -n "$disabled" ] && [ "$disabled" != "  " ]; then
+      case "$disabled" in
+        *" $layer "*)
+          echo "plan-validate: slot em camada desabilitada no ## Test Scope — $layer -> $path (nenhum worker é escopado para ela; mova o cenário para uma camada habilitada ou habilite-a)" >&2
+          return 1
+          ;;
+      esac
+    fi
+
+    actual="$(bash "$HOOK_DIR/test-layer.sh" classify "$path" | cut -f1)"
+    if [ "$actual" != "unknown" ] && [ "$actual" != "$layer" ]; then
+      echo "plan-validate: caminho contradiz a camada do slot — declarado '$layer', o path '$path' é '$actual' (ele rodaria sob outro runner, ou sob nenhum)" >&2
+      return 1
+    fi
+  done < <(contract_slots "$f")
   return 0
 }
 
@@ -380,7 +434,7 @@ check_modify_targets_exist() {
 }
 
 validate_plan() {
-  local f="$1" spec="${2:-}"
+  local f="$1" spec="${2:-}" config="${3:-}"
 
   if ! check_module_map_present "$f"; then
     echo "plan-validate: module map vazio" >&2
@@ -392,6 +446,10 @@ validate_plan() {
   fi
 
   if ! check_scenario_layers "$f"; then
+    return 2
+  fi
+
+  if ! check_contract_slots_runnable "$f" "$config"; then
     return 2
   fi
 
@@ -421,7 +479,7 @@ validate_plan() {
 }
 
 main() {
-  local positional=() spec=""
+  local positional=() spec="" config=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -429,6 +487,14 @@ main() {
         spec="${2:-}"
         if [ -z "$spec" ]; then
           echo "plan-validate: --spec requires a path" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
+      --config)
+        config="${2:-}"
+        if [ -z "$config" ]; then
+          echo "plan-validate: --config requires a path" >&2
           exit 1
         fi
         shift 2
@@ -462,7 +528,7 @@ main() {
     exit 1
   fi
 
-  if validate_plan "$plan_file" "$spec"; then
+  if validate_plan "$plan_file" "$spec" "$config"; then
     echo "plan-validate: plan válido"
     exit 0
   else
