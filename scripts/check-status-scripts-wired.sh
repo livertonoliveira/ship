@@ -9,7 +9,7 @@ COMPILED_SKILL="${REPO_ROOT}/plugins/ship/skills/run/SKILL.md"
 SRC_HOOKS="${REPO_ROOT}/src/hooks"
 COMPILED_HOOKS="${REPO_ROOT}/plugins/ship/hooks"
 
-SCRIPTS=("status-consolidate.sh" "evidence-gate.sh" "rerun-scope.sh")
+SCRIPTS=("status-consolidate.sh" "evidence-gate.sh" "remediation.sh")
 
 VIOLATIONS=0
 
@@ -72,13 +72,13 @@ if [[ -d "${REPO_ROOT}/plugins/ship/hooks" ]]; then
 fi
 
 if [[ "$VIOLATIONS" -eq 0 ]]; then
-  echo "OK — ship:run status scripts wiring invariant holds (status-consolidate.sh, evidence-gate.sh and rerun-scope.sh are invoked in both SKILL.md files and exist under hooks/)."
+  echo "OK — ship:run status scripts wiring invariant holds (status-consolidate.sh, evidence-gate.sh and remediation.sh are invoked in both SKILL.md files and exist under hooks/)."
   exit 0
 else
   echo "FAILED — ${VIOLATIONS} violation(s) found in ship:run status scripts wiring invariant."
   echo ""
   echo "Both src/skills/run/SKILL.md and plugins/ship/skills/run/SKILL.md must invoke"
-  echo "status-consolidate.sh, evidence-gate.sh and rerun-scope.sh — directly or via"
+  echo "status-consolidate.sh, evidence-gate.sh and remediation.sh — directly or via"
   echo "pipeline.sh — and the three scripts must exist under hooks/. Wire the missing"
   echo "invocation or restore the missing file and rebuild via 'cd plugins/ship && npm run build'."
   exit 1
