@@ -244,7 +244,6 @@ Quando você roda `/ship:init`, o Ship cria um arquivo `ship/config.md` na raiz 
 ## Gate Behavior
 - on_fail: ask           # ask | fix | defer
 - on_warn: ask           # ask | fix | pass
-- on_fail_rerun: surgical   # surgical | full
 
 ## Conventions
 - Artifact language: pt-BR  # Idioma para specs, issues, docs, milestones, relatórios
@@ -280,7 +279,7 @@ Em cada fase, o Ship classifica os achados por severidade e decide o que fazer:
 - Achados `medium` → gate **WARN** → pipeline pausa e pergunta ao usuário
 - Achados `low` ou nenhum → gate **PASS** → pipeline continua
 
-O campo `on_fail` controla o que acontece num FAIL: `ask` (pausa e pergunta), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). O campo `on_warn` faz o mesmo para WARNs: `ask`, `fix` ou `pass` (continua sem ação). O campo `on_fail_rerun` controla o escopo quando a fase roda de novo: `surgical` (só os arquivos com problemas) ou `full` (fase inteira do zero).
+O campo `on_fail` controla o que acontece num FAIL: `ask` (pausa e pergunta), `fix` (agente tenta corrigir automaticamente) ou `defer` (cria uma issue de acompanhamento e continua). O campo `on_warn` faz o mesmo para WARNs: `ask`, `fix` ou `pass` (continua sem ação).
 
 Os loops de correção automática são limitados: um gate reprovado tem no máximo 3 tentativas de correção por fase. Se os mesmos achados persistirem depois disso, o Ship para e pergunta a você em vez de ficar em loop para sempre.
 

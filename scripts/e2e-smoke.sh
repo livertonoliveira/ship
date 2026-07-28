@@ -89,7 +89,6 @@ cat > ship/config.md <<CFG
 # we inspect phase-status.md for the actual gate outcomes instead.
 - on_fail: defer
 - on_warn: pass
-- on_fail_rerun: surgical
 
 ## Pipeline Profile
 - profile: standard

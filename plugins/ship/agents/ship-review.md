@@ -114,6 +114,8 @@ Gate decision rules applied after every quality phase:
 - Any `medium` finding → **WARN**
 - Only `low` or no findings → **PASS**
 
+A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
+
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 
 > See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.`), and (with `--scratch`) overwrites your `phase-status-review.md` row:

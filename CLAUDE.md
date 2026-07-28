@@ -73,7 +73,7 @@ ship/
 
 ### Pipeline State Machine
 
-- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, fix loops (cap of 3 per phase, findings-identity ledger, churn guard) and re-runs. It is a deterministic script, testable in CI with no runtime installed.
+- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, gating and the single remediation round. It is a deterministic script, testable in CI with no runtime installed.
 - `run/SKILL.md` is only the executor of what `pipeline.sh next` prints — never re-add phase choreography, gate arithmetic, or ordering decisions to a SKILL or agent file.
 - Fix-loop counters and the findings ledger NEVER reset on resume — resetting restarts the loop.
 

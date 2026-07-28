@@ -8,112 +8,49 @@ Gate decision rules applied after every quality phase:
 - Any `medium` finding → **WARN**
 - Only `low` or no findings → **PASS**
 
+A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
+
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 
 > See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.
 
-## Snapshot pré-fix
+## One consolidated gate
 
-> **No commits happen during the pipeline.** `ship:develop` and the auto-fix Agent write to the working tree; the first commit is created only in `ship:pr`. So HEAD does not advance, and any `git diff <sha> HEAD` is always empty. Re-run scoping must therefore compare working-tree snapshots, not commits.
+Every detector reports into a single gate: typecheck/lint (`static`), the suite (`test`), coverage regression (`test-generate`) and the quality phases (`perf`, `security`, `review`). None of them halts the pipeline on its own.
 
-Two distinct artifacts:
+This is deliberate. When static red blocked the fan-out and a red suite blocked the gate, the three detectors never held their results at the same instant, so a complete list of the adjustments a round required could not exist — the pipeline had to discover it across three serialized detect→fix→re-detect cycles.
 
-1. **`pre-quality-snapshot.sha`** — the HEAD SHA captured by run-init (step 0.4–0.7), before any quality agent starts. It is a baseline/diagnostic reference for the pre-quality HEAD. (It is **not** used to compute the fix diff — HEAD never moves — and the PR agent builds its diff directly from the working tree via `git diff`/`git status`.)
+## Remediation batch
 
-   - **File:** `.context/ship-run/<task-id>/pre-quality-snapshot.sha`
-   - **Format:** single line containing the SHA from `git rev-parse HEAD`.
+When the gate is red and the configured action is `fix`, `pipeline.sh next` builds `remediation.md` **once** via `remediation.sh`: the deterministic failures plus every finding, each with a stable id (`R1`, `R2`, …), mirrored in `remediation-items.txt` as `R<N>|<kind>|<phase>|<severity>|<file>|<slug>`.
 
-2. **`pre-fix-files.txt`** — a per-file content snapshot (`<hash> <path>` per changed file) captured **immediately before the auto-fix Agent runs**. After the fix, the orchestrator recomputes the same snapshot and diffs the two to determine exactly which files the fix touched (see *Re-run cirúrgico* below). This is what drives the `on_fail_rerun` scoping.
+One fix agent consumes the whole batch in one pass. There is no per-phase fix agent and no per-finding fix agent.
 
-**Flag `on_fail_rerun`** (configured in `ship/config.md → Gate Behavior`):
+## Closed-set confirmation
 
-| Value | Behavior |
-|-------|----------|
-| `surgical` *(default)* | After auto-fix is applied, re-run **only the phases that failed or warned**. Phases that already passed are skipped. |
-| `all` | After auto-fix is applied, re-run **all quality phases** (perf, security, review) regardless of their previous result. |
+After the fix returns, the pipeline does **not** re-dispatch the quality workers. It:
 
-## Re-run cirúrgico
+1. Re-runs the deterministic checks — for typecheck, the suite and coverage, running the check *is* the verdict.
+2. Dispatches one confirmation agent, but only over the batch's finding items, asking a closed question per id: is this specific finding addressed? It writes `remediation-verify.md` as `- <id>: resolved` or `- <id>: unresolved — <reason>`. An item with no answer counts as unresolved: silence is not evidence.
+3. Scores the answers with `remediation-verify.sh`, which rewrites each affected `phase-status-<phase>.md` counting only the findings that survived.
 
-After auto-fix is applied (on_fail: fix or on_warn: fix), `pipeline.sh next` selects which quality phases to re-run based on the `on_fail_rerun` config flag.
+The gate then re-evaluates from those refreshed rows.
 
-### Phase → scope mapping
+This is what makes the loop terminate. The old post-fix pass re-dispatched `perf`/`security`/`review` as fresh open-ended audits of code the fix had just written, and an open-ended audit of new code always finds new nits — so the gate never converged on its own and needed a 3-round cap, a finding-identity ledger and a churn guard to stop it. A closed question set cannot mint a finding that was not already in the batch, so the set shrinks or stalls, never grows. All three guards are gone.
 
-| Phase | Scope | Rationale |
-|-------|-------|-----------|
-| `perf` | Files matching `src/**` or `lib/**`, excluding `*.test.*`, `*.spec.*`, `**/__tests__/**` | Performance issues are in hot paths, not test code |
-| `security` | All files in the diff | Security scope is intentionally broad — any file could introduce a vulnerability |
-| `review` | All files in the original diff | Review covers everything that changed |
+## One automatic round
 
-### Algorithm (surgical mode)
+`remediation-done.txt` marks the round as spent. It survives `--mode resume` (a re-queued `/ship:run` or recovery after an interruption) and is cleared only by `--mode fresh`.
 
-1. Capture the pre-fix snapshot (`pre-fix-files.txt`) before the fix Agent runs
-2. After the fix, recompute the snapshot (`post-fix-files.txt`) and `comm -13` the two to get the files the fix changed (working-tree comparison — **not** `git diff <sha> HEAD`, which is always empty since nothing is committed mid-pipeline).
-3. For each phase that previously ran:
-   - Compute intersection of (modified files) and (phase scope)
-   - If intersection is non-empty → re-run phase
-   - If intersection is empty → skip phase
-4. Log decision (see format below)
-5. Launch selected phases in parallel
+With residue after that round the gate stops deciding and asks:
 
-Steps 2-3 (computing the modified-files intersection against each phase's scope and deciding whether to re-run) are implemented by the hook `src/hooks/rerun-scope.sh`, invoked by `pipeline.sh next`. It takes the fix's changed-files list as input and applies the same scope rules from the *Phase → scope mapping* table above, returning JSON in the shape:
+- **FAIL** → `fix now` (another round, explicitly) | fix manually then `--answer defer` | `defer` (proceed, registering pending findings).
+- **WARN** → `fix now` | `pass` (proceed).
 
-```json
-{"phases":{"perf":{"rerun":true,"reason":"..."},"security":{"rerun":true,"reason":"..."},"review":{"rerun":false,"reason":"..."}},"out_of_scope":false,"empty":false}
-```
+Warnings are remediated like failures — a `medium` finding enters the batch exactly as a `critical` one does. What used to make warnings expensive was the open-ended re-audit that regenerated them, not the act of fixing them.
 
-`pipeline.sh next` invokes this script directly and consumes its JSON output rather than computing the intersection in prose.
+## Edge cases
 
-### Log format
+**Nothing remediable.** The gate is red but no item could be extracted from the phase artifacts (a phase reported `fail` with no findings file). `gate-resolved.txt` = `<decision> no-batch`; the pipeline surfaces `phase-status.md` to the user rather than dispatching a fix agent with an empty list.
 
-```
-Fix tocou: <file1>, <file2> (<N> arquivo(s))
-Re-run cirúrgico: <phase1> (<reason>), <phase2> (<reason>)
-Re-run pulado: <phase3> (não analisava arquivos modificados), <phase4> (não analisava arquivos modificados)
-```
-
-### Behavior with `on_fail_rerun: all`
-
-When `on_fail_rerun: all`, skip the scope mapping entirely and re-run all quality phases that were originally enabled. This is the "safe" fallback — guaranteed to catch any regression introduced by the fix.
-
-## Re-run: edge cases
-
-The following edge cases apply to both `on_fail: fix` and `on_warn: fix` paths. They are enforced by `pipeline.sh next`.
-
-### Edge case 1 — Fix vazio (sem mudanças)
-
-**Trigger:** the pre-fix vs post-fix snapshot comparison (`comm -13`) returns an empty file list after the fix agent runs.
-
-**Behavior:**
-- Skip all re-run phases (nothing changed, nothing to validate).
-- Log: `⚠ Fix não produziu mudanças. Re-run ignorado.`
-- For each phase that failed/warned: write a new row in `phase-status.md` with gate=`warn` and notes=`fix sem mudanças — revisão manual necessária`.
-- Continue to acceptance with the warning visible.
-
-### Edge case 2 — Loop de re-runs (máximo 3 iterações)
-
-**Trigger:** `pipeline.sh iter <scratch-dir> fix --max 3` exits 2 — a persisted counter (`iteration-fix.txt`). It is reset **only on a fresh init**; a `resume` (a re-queued `/ship:run`, or recovery after an interruption) preserves it, so re-queuing continues the same capped loop instead of restarting it from zero. A mid-run context compaction never calls init, so the counter survives that too.
-
-**Behavior (severity-aware exit at the cap):**
-- Residue is only ≤ medium (WARN) → report the findings and advance to homolog (deferred, non-blocking) — `gate-resolved.txt` = `WARN capped-deferred`.
-- Residue includes critical/high (FAIL) → abort without dispatching the fix Agent: "3 fix rounds reached and critical/high findings remain. Manual intervention required." Do NOT proceed to acceptance.
-
-### Edge case 2b — Convergence guards (before every fix round)
-
-Both keyed on per-finding **identity** (`<phase>|<severity>|<file>|<slug>`, `:line` stripped) via `findings-identity.sh`, accumulated in `findings-ledger.txt`. They fire before the cap so most loops stop earlier:
-- **Identity fixpoint** — a re-verify round surfaces no finding not already in the ledger. Re-fixing reproduces the same set (findings a code change cannot move, or that the fix agent already failed to move) → ask the user (defer / fix manually).
-- **Self-inflicted churn** — after ≥1 fix, every *new* finding this round is ≤ medium **and** sits on a file the previous fix itself touched (`fix-changed-files.txt`). These are regenerations of the fix's own churn, not the original diff's problems → report and advance to homolog (`gate-resolved.txt` = `WARN churn-deferred`); the human still sees them at acceptance.
-
-### Edge case 3 — `on_warn: fix` usa lógica cirúrgica
-
-**Trigger:** Gate returns exit code 1 (WARN) and `on_warn` is set to `fix`.
-
-**Behavior:** Same Surgical Re-run Procedure as `on_fail: fix`, but WARN residue never blocks: the convergence guards and the cap defer it to homolog rather than stopping the pipeline (only critical/high stops).
-
-### Edge case 4 — Fix tocou arquivo fora do scope original
-
-**Trigger:** After the fix, the snapshot comparison returns a file that does not match any phase scope rule (not under `src/**`, `lib/**`, or any recognized path from the scope mapping table).
-
-**Behavior:**
-- Re-run ALL originally enabled quality phases (conservative mode — the fix touched unknown territory).
-- Log: `Fix tocou arquivo(s) fora do scope original (<file>). Re-run conservador: todas as fases ativadas.`
-- Do NOT apply surgical scoping — launch all phases in parallel as in Phase 4.
+**Suite timeout.** A suite that hangs past 300s is the one failure the batch cannot absorb — there is no failure list to remediate, only an unknown. The pipeline stops for manual intervention.

@@ -41,8 +41,9 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer — replaces the old `ship:test` orchestrator's inline slicing |
 | `generated-tests-<layer>.md` | `ship-test-<layer>` worker | `pipeline.sh next` | manifest fragment: one `- <path> (<layer>)` line per file the worker actually created (header-free; written even when empty). `next` concatenates fragments into `generated-tests.md` |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
-| `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
-| `iteration-fix.txt` / `iteration-test-fix.txt` | `pipeline.sh iter` | `pipeline.sh iter` | persisted loop counters, see gates.md Edge case 2 |
+| `remediation.md` / `remediation-items.txt` | `remediation.sh` | fix agent, `remediation-verify.sh` | the one batch of adjustments a verification round requires, with stable `R<N>` ids |
+| `remediation-verify.md` | confirmation agent | `remediation-verify.sh` | one `- <id>: resolved\|unresolved — <reason>` line per finding item |
+| `remediation-done.txt` / `remediation-verdict.txt` | `pipeline.sh next` | `pipeline.sh next` | the automatic round is spent (survives resume) and its scored result |
 
 ### Diff resolution (skill wrappers) {#diff-resolution}
 
@@ -130,7 +131,7 @@ To avoid this, each phase agent writes its own row to a **private per-phase scra
 | perf | #1 | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
 | security | #1 | 2026-05-01T10:02:00Z | src/runner.ts, config.ts | pass | 0 | 0 | 0 | 0 | |
 | review | #1 | 2026-05-01T10:02:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | |
-| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
+| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | após remediação |
 ```
 
 ### `phase-status-<phase>.md` format
