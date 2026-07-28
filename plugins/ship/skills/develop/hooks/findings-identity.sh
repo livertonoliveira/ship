@@ -5,11 +5,11 @@
 # Emit one stable identity line per finding across every findings artifact in
 # <scratch-dir>, as:  <phase>|<severity>|<file>|<slug>
 #
-# The identity is the signal the pipeline's convergence guard needs: it must be
-# stable for the SAME finding across re-verify rounds (so line-number churn from
-# an intervening fix does not mint a new identity) yet distinct for genuinely
-# different findings. So file paths are stripped of their :line suffix and the
-# title is slugified.
+# The identity is what gives a finding a stable id inside a remediation batch:
+# `remediation.sh` turns each line into an `R<N>` item the fix agent addresses and
+# the confirmation pass answers by id. It must survive line-number churn from an
+# intervening fix yet stay distinct for genuinely different findings, so file
+# paths are stripped of their :line suffix and the title is slugified.
 #
 # Extraction is grep/sed/awk only (no jq) for parity with findings-gate.sh and
 # rerun-scope.sh. JSON objects that carry no "severity" are ignored — only gate

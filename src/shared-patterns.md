@@ -38,16 +38,11 @@ Navigation index for human reference. **Do not reference this file from command 
 | audit/database.md | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | | | |
 | audit/run.md | ✓ | ✓ | | | ✓ | ✓ | ✓ | | | | |
 
-## Pre-quality Snapshot and on_fail_rerun
+## Pre-quality Snapshot
 
-Before the parallel quality phases (perf / security / review) begin, the orchestrator writes the current HEAD SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`. This snapshot is used by:
+Before the parallel quality phases (perf / security / review) begin, the orchestrator writes the current HEAD SHA to `.context/ship-run/<task-id>/pre-quality-snapshot.sha`. It is a baseline/diagnostic reference used by the **PR agent** (`pr.md`) to build the correct diff for the pull request.
 
-- The **PR agent** (`pr.md`) to build the correct diff for the pull request.
-- The **orchestrator** (`run.md`) after auto-fix to decide which phases to re-run, controlled by the `on_fail_rerun` flag in `ship/config.md → Gate Behavior`.
-
-`on_fail_rerun` accepts two values: `surgical` (default — re-run only failed/warned phases) and `all` (re-run every quality phase after auto-fix).
-
-For full details, format, and lifecycle rules: see `ship/patterns/gates.md → Snapshot pré-fix`.
+Nothing commits mid-pipeline, so HEAD never moves; the post-fix confirmation pass scores a closed item set rather than re-scoping phases from a snapshot diff. See `ship/patterns/gates.md → Closed-set confirmation`.
 
 ---
 

@@ -9,6 +9,8 @@ model: sonnet
 
 Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite via Jaccard similarity; never modifies test/source files. Read `ship/config.md` for storage mode, language, Test Scope (absent = all enabled). Input: $ARGUMENTS.
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ## 1. Launch 2 agents in parallel (one Agent call)
 
 **Agent A — spec discovery:** REQ-XX/AC-XX plus Gherkin `@SC-XX`/`@layer` scenarios from Linear docs/issues, or local `proposal.md`/`tasks.md`; no markers → infer sequentially.
@@ -48,6 +50,8 @@ Gate decision rules applied after every quality phase:
 - Any `critical` or `high` finding → **FAIL**
 - Any `medium` finding → **WARN**
 - Only `low` or no findings → **PASS**
+
+A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
 
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 

@@ -11,6 +11,8 @@ Project-wide AppSec audit of the codebase (not a diff).
 
 **Input:** $ARGUMENTS.
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ## 1. Focus
 
 `ship/config.md`: `Security Focus → categories` (default `all`), `Severity Overrides`. `none` → stop (use `security: disabled` instead); invalid → error. Categories → OWASP: ## Category Mapping {#category-mapping}
@@ -85,6 +87,8 @@ Gate decision rules applied after every quality phase:
 - Any `critical` or `high` finding → **FAIL**
 - Any `medium` finding → **WARN**
 - Only `low` or no findings → **PASS**
+
+A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
 
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 

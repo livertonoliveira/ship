@@ -41,17 +41,17 @@ write_hook_files() {
 }
 
 valid_src_body() {
-  printf 'bash "@@ship/hooks/status-consolidate.sh" 1 phase-status-develop.md\n\nbash "@@ship/hooks/evidence-gate.sh" develop-touched-files.txt\n\nbash "@@ship/hooks/rerun-scope.sh" post-fix-changed-files.txt\n'
+  printf 'bash "@@ship/hooks/status-consolidate.sh" 1 phase-status-develop.md\n\nbash "@@ship/hooks/evidence-gate.sh" develop-touched-files.txt\n\nbash "@@ship/hooks/remediation.sh" scratch-dir\n'
 }
 
 valid_compiled_body() {
-  printf 'bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" 1 phase-status-develop.md\n\nbash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh" develop-touched-files.txt\n\nbash "${CLAUDE_SKILL_DIR}/hooks/rerun-scope.sh" post-fix-changed-files.txt\n'
+  printf 'bash "${CLAUDE_SKILL_DIR}/hooks/status-consolidate.sh" 1 phase-status-develop.md\n\nbash "${CLAUDE_SKILL_DIR}/hooks/evidence-gate.sh" develop-touched-files.txt\n\nbash "${CLAUDE_SKILL_DIR}/hooks/remediation.sh" scratch-dir\n'
 }
 
 body_without_script() {
   local prefix="$1" missing="$2"
   local script
-  for script in status-consolidate.sh evidence-gate.sh rerun-scope.sh; do
+  for script in status-consolidate.sh evidence-gate.sh remediation.sh; do
     if [[ "$script" != "$missing" ]]; then
       printf 'bash "%s/%s" arg\n\n' "$prefix" "$script"
     fi
@@ -63,7 +63,7 @@ test_guard_passes_on_happy_path() {
   setup_fixture "$dir"
   write_src_skill "$dir" "$(valid_src_body)"
   write_compiled_skill "$dir" "$(valid_compiled_body)"
-  write_hook_files "$dir" status-consolidate.sh evidence-gate.sh rerun-scope.sh
+  write_hook_files "$dir" status-consolidate.sh evidence-gate.sh remediation.sh
 
   local out status
   set +e
@@ -85,7 +85,7 @@ test_guard_fails_when_invocation_missing() {
   setup_fixture "$dir"
   write_src_skill "$dir" "$(body_without_script '@@ship/hooks' "$script")"
   write_compiled_skill "$dir" "$(valid_compiled_body)"
-  write_hook_files "$dir" status-consolidate.sh evidence-gate.sh rerun-scope.sh
+  write_hook_files "$dir" status-consolidate.sh evidence-gate.sh remediation.sh
 
   local out status
   set +e
@@ -114,8 +114,8 @@ test_guard_fails_when_hook_file_missing() {
   status=$?
   set -e
 
-  if [[ "$status" -ne 0 ]] && grep -q "rerun-scope.sh" <<<"$out" && grep -qi "not found" <<<"$out"; then
-    ok "guard exits non-zero and names the missing rerun-scope.sh hook file"
+  if [[ "$status" -ne 0 ]] && grep -q "remediation.sh" <<<"$out" && grep -qi "not found" <<<"$out"; then
+    ok "guard exits non-zero and names the missing remediation.sh hook file"
   else
     bad "guard did not fail naming the missing hook file (status=$status)"
     printf '%s\n' "$out" | sed 's/^/    /'
@@ -144,7 +144,7 @@ echo
 test_guard_passes_on_happy_path
 test_guard_fails_when_invocation_missing "status-consolidate.sh"
 test_guard_fails_when_invocation_missing "evidence-gate.sh"
-test_guard_fails_when_invocation_missing "rerun-scope.sh"
+test_guard_fails_when_invocation_missing "remediation.sh"
 test_guard_fails_when_hook_file_missing
 test_guard_wired_in_ci
 

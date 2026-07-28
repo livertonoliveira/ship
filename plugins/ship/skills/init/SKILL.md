@@ -119,7 +119,6 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 ## Gate Behavior
 - on_fail: ask
 - on_warn: ask
-- on_fail_rerun: surgical
 
 ## Rules
 [project-specific rules discovered — extended over time]

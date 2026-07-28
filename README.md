@@ -63,7 +63,7 @@ You describe what you want. Ship breaks it into tasks, implements it, tests it, 
 
 That's the complete flow. Each command handles one step; you only intervene when something needs your attention.
 
-Under the hood, phase ordering, quality gates, and fix loops are enforced by a deterministic state machine in pure bash — not by prompt prose. Runs are reproducible, resumable after a crash, and the gates can't be talked out of blocking.
+Under the hood, phase ordering, quality gates, and remediation are enforced by a deterministic state machine in pure bash — not by prompt prose. Runs are reproducible, resumable after a crash, and the gates can't be talked out of blocking.
 
 ### Before vs. After
 
@@ -209,6 +209,8 @@ These commands analyze the **entire project**, not just the current diff. Use th
 | `/ship:audit:tests` | Test coverage audit — maps acceptance criteria against existing tests and reports gaps by layer |
 | `/ship:audit:run` | Runs all applicable audits in parallel and consolidates results into a single report |
 
+Before fanning out, `/ship:audit:run` indexes the tracked file tree once into `.context/ship-audit/inventory.md`, so each audit's sub-agents start from that index instead of each running its own discovery pass. It is an index, not a scope limit — audits still search beyond it.
+
 > **Important:** audit commands are **never** called automatically by `/ship:run`. They exist to be triggered manually when it makes sense — not on every task.
 
 ---
@@ -244,7 +246,6 @@ When you run `/ship:init`, Ship creates a `ship/config.md` file in your project 
 ## Gate Behavior
 - on_fail: ask           # ask | fix | defer
 - on_warn: ask           # ask | fix | pass
-- on_fail_rerun: surgical   # surgical | full
 
 ## Conventions
 - Artifact language: en  # Language for specs, issues, docs, milestones, reports
@@ -280,9 +281,9 @@ At each phase, Ship classifies findings by severity and decides what to do:
 - `medium` findings → gate **WARN** → pipeline pauses and asks the user
 - `low` or no findings → gate **PASS** → pipeline continues
 
-The `on_fail` field controls what happens on a FAIL gate: `ask` (pause and ask), `fix` (agent attempts to fix automatically), or `defer` (creates a tracking issue and continues). The `on_warn` field does the same for WARNs: `ask`, `fix`, or `pass` (continues without action). The `on_fail_rerun` field controls the scope when a phase reruns: `surgical` (only the files with findings) or `full` (entire phase from scratch).
+The `on_fail` field controls what happens on a FAIL gate: `ask` (pause and ask), `fix` (agent attempts to fix automatically), or `defer` (creates a tracking issue and continues). The `on_warn` field does the same for WARNs: `ask`, `fix`, or `pass` (continues without action).
 
-Automatic fix loops are bounded: a failing gate gets at most 3 fix attempts per phase. If the same findings persist after that, Ship stops and asks you instead of looping forever.
+There is no fix loop. Every detector — typecheck, lint, the suite, perf, security, review — reports into one consolidated gate, so a red gate holds the complete list of adjustments the round requires. Ship writes that list once, hands it to a single fix agent, then confirms it item by item as a closed set: the confirmation never re-audits the code, so it cannot invent new findings to chase. One automatic round, then Ship asks you.
 
 ### Storage: Linear or Local
 

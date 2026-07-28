@@ -33,7 +33,7 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
 | `spec.md` | orchestrator (run) — once, in step 1 | plan, develop | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full, as `<req-id> — <title> — covered by <issue-id>` — the em-dash keeps each entry a list line rather than a section heading) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
 | `design.md` | orchestrator (run) — once, in step 1 | plan, develop | full Design document. Written once; `develop` slices it per module when fanning out workers |
-| `plan.md` | plan skill (`ship:plan`); or `develop` (minimal `## Test Contract` only, when the planner was skipped) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. When the planner is skipped, `develop` still writes the `## Test Contract` so `ship:test` keeps that single source instead of falling back to raw scenarios. Planner skipped in either of two cases: (1) the issue's own description already predicts a single-module shape — a `## Files` section listing ≤3 code files, its Notes declaring `Dependencies: None`, and every scenario sharing one test-layer tag; or (2) a `trivial`/`minor` *baseline* diff (a small change on top of pre-existing work). Greenfield tasks always run the planner unless the single-module prediction check already fired first. |
+| `plan.md` | plan skill (`ship:plan`); or `develop` (minimal `## Test Contract` only, when the planner was skipped) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. When the planner is skipped, `develop` still writes the `## Test Contract` so `ship:test` keeps that single source instead of falling back to raw scenarios. The planner is skipped only for a `trivial`/`minor` *baseline* diff — a small change on top of pre-existing work. Greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
 | `phase-status.md` | orchestrator only (creates header; consolidates rows) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
@@ -41,8 +41,10 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer — replaces the old `ship:test` orchestrator's inline slicing |
 | `generated-tests-<layer>.md` | `ship-test-<layer>` worker | `pipeline.sh next` | manifest fragment: one `- <path> (<layer>)` line per file the worker actually created (header-free; written even when empty). `next` concatenates fragments into `generated-tests.md` |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
-| `pre-fix-files.txt` / `post-fix-files.txt` | orchestrator (run) | orchestrator (re-run) | per-file content snapshots (`<hash> <path>`) taken before/after the auto-fix Agent — diffed to scope the surgical re-run |
-| `iteration-fix.txt` / `iteration-test-fix.txt` | `pipeline.sh iter` | `pipeline.sh iter` | persisted loop counters, see gates.md Edge case 2 |
+| `plan-review.md` / `plan-confronted.txt` | plan-review agent, `pipeline.sh next` | `pipeline.sh next` | closed verdict on the module map (`verdict: ok\|blockers` + one line per blocker) and the marker that the one confrontation per run is spent |
+| `remediation.md` / `remediation-items.txt` | `remediation.sh` | fix agent, `remediation-verify.sh` | the one batch of adjustments a verification round requires, with stable `R<N>` ids |
+| `remediation-verify.md` | confirmation agent | `remediation-verify.sh` | one `- <id>: resolved\|unresolved — <reason>` line per finding item |
+| `remediation-done.txt` / `remediation-verdict.txt` | `pipeline.sh next` | `pipeline.sh next` | the automatic round is spent (survives resume) and its scored result |
 
 ### Diff resolution (skill wrappers) {#diff-resolution}
 
@@ -130,7 +132,7 @@ To avoid this, each phase agent writes its own row to a **private per-phase scra
 | perf | #1 | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
 | security | #1 | 2026-05-01T10:02:00Z | src/runner.ts, config.ts | pass | 0 | 0 | 0 | 0 | |
 | review | #1 | 2026-05-01T10:02:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | |
-| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | re-run cirúrgico |
+| perf | #2 | 2026-05-01T10:05:00Z | src/runner.ts | pass | 0 | 0 | 0 | 0 | após remediação |
 ```
 
 ### `phase-status-<phase>.md` format

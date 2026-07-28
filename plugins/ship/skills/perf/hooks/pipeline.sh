@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh rerun-scope.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -33,7 +33,7 @@ require_hooks() {
   fi
 }
 
-KNOWN_PHASES="plan dev test perf security review homolog"
+KNOWN_PHASES="plan plan-review dev test perf security review remediation-fix remediation-verify homolog"
 
 is_known_phase() {
   local phase="$1"
@@ -118,14 +118,14 @@ cmd_init() {
 
   mkdir -p "$SCRATCH"
 
-  # Reset the fix-loop counters ONLY on a fresh init. A resume continues a live
-  # loop (a re-queued /ship:run, or recovery after an interruption), so its
-  # cap counter and findings ledger MUST survive — clearing them here is what
-  # let the verify→fix→verify loop restart unbounded every re-invocation.
-  # (A mid-run context compaction never calls init at all, so the counters
-  # already survive that case naturally.)
+  # Reset the retry counters and the remediation marker ONLY on a fresh init. A
+  # resume continues a live run (a re-queued /ship:run, or recovery after an
+  # interruption), so remediation-done.txt MUST survive — clearing it would hand
+  # the run a second automatic fix round it already spent.
+  # (A mid-run context compaction never calls init at all, so it survives that
+  # case naturally.)
   if [ "$MODE" = "fresh" ]; then
-    rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/findings-ledger.txt "$SCRATCH"/gate-fix-fingerprint.txt
+    rm -f "$SCRATCH"/iteration-*.txt "$SCRATCH"/remediation-*.txt "$SCRATCH"/remediation.md
 
     if [ ! -f "$CONFIG" ]; then
       echo "pipeline.sh init: config not found: $CONFIG (run /ship:init first)" >&2
@@ -488,13 +488,15 @@ last_rows_by_phase() {
       phase = $2
       gsub(/^[ \t]+|[ \t]+$/, "", phase)
       if (phase == "" || phase == "Phase" || phase ~ /^-+$/) next
-      crit = $7; high = $8; med = $9; low = $10
+      gate = $6; crit = $7; high = $8; med = $9; low = $10
+      gsub(/^[ \t]+|[ \t]+$/, "", gate)
       gsub(/^[ \t]+|[ \t]+$/, "", crit)
       gsub(/^[ \t]+|[ \t]+$/, "", high)
       gsub(/^[ \t]+|[ \t]+$/, "", med)
       gsub(/^[ \t]+|[ \t]+$/, "", low)
       if (!(phase in seen)) order[++n] = phase
       seen[phase] = 1
+      gatev[phase] = gate
       critv[phase] = crit
       highv[phase] = high
       medv[phase] = med
@@ -503,7 +505,7 @@ last_rows_by_phase() {
     END {
       for (i = 1; i <= n; i++) {
         p = order[i]
-        printf "%s\t%s\t%s\t%s\t%s\n", p, critv[p] + 0, highv[p] + 0, medv[p] + 0, lowv[p] + 0
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", p, critv[p] + 0, highv[p] + 0, medv[p] + 0, lowv[p] + 0, gatev[p]
       }
     }
   ' "$phase_status"
@@ -637,12 +639,17 @@ run_gate() {
     done
   done
 
-  local total_crit=0 total_high=0 total_med=0
-  local crit high med low eff_crit eff_high eff_med eff_low i n_over from_val to_val
+  local total_crit=0 total_high=0 total_med=0 hard_fail=0
+  local crit high med low row_gate eff_crit eff_high eff_med eff_low i n_over from_val to_val
 
   n_over="${#override_phase[@]}"
 
-  while IFS=$'\t' read -r p crit high med low; do
+  while IFS=$'\t' read -r p crit high med low row_gate; do
+    # A red typecheck, a red suite or any phase that reported `fail` carries no
+    # severity counts — its row is 0/0/0/0. Without this the gate would score a
+    # broken build as PASS now that those phases no longer block the pipeline
+    # themselves and instead report into this one consolidated gate.
+    [ "$row_gate" = "fail" ] && hard_fail=1
     eff_crit="$crit"
     eff_high="$high"
     eff_med="$med"
@@ -664,7 +671,7 @@ run_gate() {
   done <<< "$rows"
 
   local decision exit_code
-  if [ "$total_crit" -gt 0 ] || [ "$total_high" -gt 0 ]; then
+  if [ "$hard_fail" -eq 1 ] || [ "$total_crit" -gt 0 ] || [ "$total_high" -gt 0 ]; then
     decision="FAIL"
     exit_code=2
   elif [ "$total_med" -gt 0 ]; then
@@ -782,20 +789,6 @@ next_write_row() {
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '| %s | #<RUN> | %s | - | %s | 0 | 0 | %s | 0 | %s |\n' "$phase" "$ts" "$gate" "$medium" "$notes" \
     > "$scratch/phase-status-$phase.md"
-}
-
-# Predict a single-module task from the spec slice: ## Files with ≤3 code file
-# bullets (plugins/** rebuild lines excluded), Dependencies: None, and at most
-# one test-layer tag across its scenarios.
-plan_predict_single_module() {
-  local spec="$1" files layers
-  [ -f "$spec" ] || return 1
-  grep -qE '^## Files' "$spec" || return 1
-  files="$(awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /' "$spec" | grep -cvE '(^- *`?plugins/)' || true)"
-  [ "${files:-0}" -ge 1 ] && [ "${files:-0}" -le 3 ] || return 1
-  grep -qiE 'Dependencies:[[:space:]]*None' "$spec" || return 1
-  layers="$(grep -oE '@(unit|integration|e2e)' "$spec" | sort -u | wc -l | tr -d ' ')"
-  [ "${layers:-0}" -le 1 ]
 }
 
 # Module file list: plan.md `- Files:` lines when a plan exists, spec.md
@@ -941,8 +934,38 @@ next_test_dispatch() {
 }
 
 next_fix_dispatch() {
-  local scratch="$1" task="$2" lang="$3" kind="$4" source_file="$5"
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $source_file and apply the minimal source fixes for the listed $kind findings/failures — no unrelated refactors, no comments, no spec IDs in code. Report what you changed.\""
+  local scratch="$1" task="$2" lang="$3"
+  # Recorded like any other dispatched phase: without this the remediation round
+  # is absent from dispatch-log.md, so it never reaches report-timings or the
+  # execution trace the user reads at homolog.
+  cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the COMPLETE list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for EVERY item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+}
+
+# The static commands the pipeline itself will run, resolved once and handed to
+# the implementer. Develop resolved them on its own from `ship/config.md` only,
+# and never covered lint at all — so a repo whose scripts live in package.json
+# had develop skip silently and the gate fail on what it skipped.
+next_static_cmds() {
+  local scratch="$1" config="$2" out tc lint parts=""
+  out="$(bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" --print-static 2>/dev/null || true)"
+  tc="$(printf '%s\n' "$out" | grep -m1 '^typecheck=' | cut -d= -f2-)"
+  lint="$(printf '%s\n' "$out" | grep -m1 '^lint=' | cut -d= -f2-)"
+  [ -n "$tc" ] && parts="typecheck: $tc"
+  [ -n "$lint" ] && parts="${parts:+$parts; }lint: $lint"
+  printf '%s' "$parts"
+}
+
+next_plan_review_dispatch() {
+  local scratch="$1" task="$2" lang="$3"
+  cmd_dispatch "$scratch" plan-review Agent general-purpose sonnet >/dev/null
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/plan.md and open ONLY the files each module lists under '- Files:'. Do not survey the wider codebase and do not review code quality — this is a closed question set about the module map: (1) is each module implementable in exactly the files it claims, or does it need one it does not list? (2) is any integration or registration point missing (module registration, route table, barrel export, DI container)? (3) does any module boundary split a unit that cannot be split? Write $scratch/plan-review.md: first line 'verdict: ok' when none of the three raised anything, otherwise 'verdict: blockers' followed by one '- <module-id>: <what is wrong and what the plan should say instead>' line per blocker. Nothing else.\""
+}
+
+next_remediation_verify_dispatch() {
+  local scratch="$1" task="$2" lang="$3"
+  cmd_dispatch "$scratch" remediation-verify Agent general-purpose sonnet >/dev/null
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set — do NOT audit the code for new problems and do NOT report anything outside the list. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
 }
 
 cmd_next() {
@@ -1014,16 +1037,13 @@ cmd_next() {
 
   if [ ! -f "$SCRATCH/plan-decision.txt" ]; then
     local decision="run" baseline="$class"
-    # An empty baseline diff means no work exists yet — greenfield always plans
-    # (unless the issue itself predicts a single module). trivial/minor only
-    # skip the planner on top of pre-existing work.
+    # An empty baseline diff means no work exists yet — greenfield always plans.
+    # trivial/minor only skip the planner on top of pre-existing work.
     if ! grep -q '^diff --git ' "$SCRATCH/diff.md" 2>/dev/null; then
       baseline="greenfield"
     fi
     if [ "$(phase_toggle "$CONFIG" dev)" = "disabled" ]; then
       decision="skip:dev-disabled"
-    elif plan_predict_single_module "$SCRATCH/spec.md"; then
-      decision="skip:single-module"
     elif [ "$baseline" = "trivial" ] || [ "$baseline" = "minor" ]; then
       decision="skip:baseline-$baseline"
     fi
@@ -1053,9 +1073,10 @@ cmd_next() {
       next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
     fi
     if [ ! -f "$SCRATCH/plan-validated.txt" ]; then
-      local pv_rc=0
+      local pv_rc=0 pv_spec=""
+      [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
       set +e
-      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" >/dev/null 2>&1
+      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
       pv_rc=$?
       set -e
       if [ "$pv_rc" -eq 0 ]; then
@@ -1065,7 +1086,7 @@ cmd_next() {
           replan)
             rm -f "$SCRATCH/plan.md"
             cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed schema validation — fix module map/test contract per plan-validate.sh\""
+            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
             next_common_after
             next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
             ;;
@@ -1074,11 +1095,65 @@ cmd_next() {
             next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
             ;;
           *)
-            next_body_add "plan.md failed schema validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md — surface its stderr to the user, in the artifact language)."
+            next_body_add "plan.md failed validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md $pv_spec — surface its stderr to the user, in the artifact language)."
             next_body_add "Ask the user: re-plan or abort? Then re-run next with --answer replan | --answer abort."
             next_emit "plan" "ask" "$RUN" "plan failed validation"
             ;;
         esac
+      fi
+    fi
+
+    # --- plan confrontation: is this map implementable in these files? ----------
+    # plan-validate proves the plan is coherent with itself, with the spec and
+    # with the repo's file tree — none of which reads the files. The planner is
+    # forbidden from deep-reading them (that is develop's job), so module
+    # boundaries and integration points are decided by someone who only globbed.
+    # One closed question set over the plan's own files closes that gap here,
+    # before develop, the tests and the gate all inherit the same mistake.
+    if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
+      if [ ! -f "$SCRATCH/plan-review.md" ]; then
+        local prr_rc=0
+        if next_dispatched "$SCRATCH" plan-review; then
+          set +e
+          ( cmd_iter "$SCRATCH" plan-review --max 2 ) >/dev/null
+          prr_rc=$?
+          set -e
+          next_body_add "The plan reviewer returned without writing $SCRATCH/plan-review.md (silent write failure). Re-dispatch it:"
+        fi
+        if [ "$prr_rc" -eq 2 ]; then
+          # Advisory: never block the run on the confrontation's own failure.
+          printf 'skipped\n' > "$SCRATCH/plan-confronted.txt"
+        else
+          next_plan_review_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+          next_common_after
+          next_emit "plan-review" "dispatch" "$RUN" "confronting the plan with the files it claims"
+        fi
+      fi
+      if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
+        if grep -qiE '^[[:space:]]*verdict:[[:space:]]*ok' "$SCRATCH/plan-review.md"; then
+          printf 'ok\n' > "$SCRATCH/plan-confronted.txt"
+        else
+          case "$ANSWER" in
+            replan)
+              # One confrontation per run: the marker is set before re-planning,
+              # so a second plan is validated but not re-confronted.
+              printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
+              rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
+              cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
+              next_common_after
+              next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
+              ;;
+            proceed)
+              printf 'proceed\n' > "$SCRATCH/plan-confronted.txt"
+              ;;
+            *)
+              next_body_add "The plan reviewer read the files each module claims and raised blockers — present $SCRATCH/plan-review.md to the user in the artifact language."
+              next_body_add "Options: re-plan addressing them | proceed anyway. Re-run next with --answer replan | --answer proceed."
+              next_emit "plan-review" "ask" "$RUN" "plan confrontation raised blockers"
+              ;;
+          esac
+        fi
       fi
     fi
   fi
@@ -1092,7 +1167,9 @@ cmd_next() {
   else
     if ! next_dispatched "$SCRATCH" dev; then
       cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
-      next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
+      local dev_static
+      dev_static="$(next_static_cmds "$SCRATCH" "$CONFIG")"
+      next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir${dev_static:+ | Static checks: $dev_static}\""
       next_body_add "Dispatch develop ALONE — no other tool call this turn."
       next_common_after
       next_emit "develop" "dispatch" "$RUN" "${resumed}dispatching the implementer"
@@ -1116,9 +1193,13 @@ cmd_next() {
     fi
   fi
 
-  # --- static gate: typecheck + lint before the subjective fan-out -------------
-  # Runs deterministically after develop and BLOCKS verify-a until green/skip, so
-  # no LLM reviewer spends tokens on code that won't compile or lint.
+  # --- static checks: typecheck + lint (recorded, never blocking) --------------
+  # Red static used to halt the pipeline and run its own fix loop before verify-a,
+  # to spare the LLM reviewers tokens on code that won't compile. That saving cost
+  # a whole serialized detect→fix→re-detect cycle, and it guaranteed the three
+  # detectors (static, test, quality) never held their findings at the same
+  # instant — so a single complete list of required adjustments could not exist.
+  # Now the result is only recorded; it reaches the one consolidated gate below.
   if [ "$(phase_toggle "$CONFIG" dev)" != "disabled" ] && [ ! -f "$SCRATCH/static-exec-done.txt" ]; then
     local se_rc=0
     set +e
@@ -1126,31 +1207,13 @@ cmd_next() {
     se_rc=$?
     set -e
     case "$se_rc" in
-      0)
-        next_write_row "$SCRATCH" static pass ""
-        next_consolidate "$SCRATCH" "$RUN" static
-        touch "$SCRATCH/static-exec-done.txt"
-        ;;
-      2)
-        next_write_row "$SCRATCH" static skip "no static checks"
-        next_consolidate "$SCRATCH" "$RUN" static
-        touch "$SCRATCH/static-exec-done.txt"
-        ;;
-      *)
-        local sf_rc=0
-        set +e
-        ( cmd_iter "$SCRATCH" static-fix --max 2 ) >/dev/null
-        sf_rc=$?
-        set -e
-        if [ "$sf_rc" -eq 2 ]; then
-          next_body_add "Typecheck/lint vermelho após 2 tentativas. Present $SCRATCH/static-failures.md to the user and stop — manual intervention required."
-          next_emit "static-gate" "stop" "$RUN" "typecheck/lint red after fix attempts"
-        fi
-        next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "typecheck/lint failure" "$SCRATCH/static-failures.md"
-        next_common_after
-        next_emit "static-fix" "dispatch" "$RUN" "typecheck/lint red — dispatching fix agent"
-        ;;
+      0) next_write_row "$SCRATCH" static pass "" ;;
+      2) next_write_row "$SCRATCH" static skip "no static checks" ;;
+      # Non-zero: test-exec.sh already wrote phase-status-static.md with gate=fail
+      # plus static-failures.md. Leave both for the gate and the batch.
     esac
+    next_consolidate "$SCRATCH" "$RUN" static
+    touch "$SCRATCH/static-exec-done.txt"
   fi
 
   # --- verification turn A: test-layer workers ∥ quality agents ----------------
@@ -1267,7 +1330,9 @@ cmd_next() {
     git add -A -N >/dev/null 2>&1 || true
   fi
 
-  # --- test execution (deterministic; fix loop on red) -------------------------
+  # --- test execution (recorded, never blocking) --------------------------------
+  # Like the static checks above: a red suite is recorded and carried into the one
+  # consolidated gate instead of running its own detect→fix→re-detect cycle here.
   if [ ! -f "$SCRATCH/test-exec-done.txt" ]; then
     local te_rc=0
     set +e
@@ -1279,92 +1344,79 @@ cmd_next() {
     te_rc=$?
     set -e
     case "$te_rc" in
-      0)
-        next_consolidate "$SCRATCH" "$RUN" test
-        touch "$SCRATCH/test-exec-done.txt"
-        if [ -f "$SCRATCH/test-fix-inflight.txt" ]; then
-          rm -f "$SCRATCH/test-fix-inflight.txt"
-          bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/post-test-fix-files.txt"
-          bash "$HOOK_DIR/snapshot-files.sh" diff "$SCRATCH/pre-test-fix-files.txt" "$SCRATCH/post-test-fix-files.txt" \
-            > "$SCRATCH/test-fix-changed-files.txt" || true
-          if [ -s "$SCRATCH/test-fix-changed-files.txt" ]; then
-            printf 'test-fix\n' > "$SCRATCH/reconcile-source.txt"
-          fi
-        fi
-        ;;
       124)
+        # A hung suite is the one case the batch cannot absorb: there is no
+        # failure list to remediate, only an unknown.
         next_body_add "Test suite timed out after 300s. Report and stop — manual intervention required."
         next_emit "test-exec" "stop" "$RUN" "suite timeout"
         ;;
-      2)
-        next_write_row "$SCRATCH" test skip "runner unresolved"
-        next_consolidate "$SCRATCH" "$RUN" test
-        touch "$SCRATCH/test-exec-done.txt"
-        ;;
-      *)
-        local tf_rc=0
-        set +e
-        ( cmd_iter "$SCRATCH" test-fix --max 2 ) >/dev/null
-        tf_rc=$?
-        set -e
-        if [ "$tf_rc" -eq 2 ]; then
-          next_body_add "Suíte vermelha. Intervenção manual necessária. Present $SCRATCH/test-failures.md to the user and stop."
-          next_emit "test-exec" "stop" "$RUN" "red suite after fix attempts"
-        fi
-        [ -f "$SCRATCH/pre-test-fix-files.txt" ] || bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-test-fix-files.txt"
-        touch "$SCRATCH/test-fix-inflight.txt"
-        next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "test failure" "$SCRATCH/test-failures.md"
-        next_common_after
-        next_emit "test-fix" "dispatch" "$RUN" "red suite — dispatching fix agent"
-        ;;
+      2)  next_write_row "$SCRATCH" test skip "runner unresolved" ;;
     esac
+    next_consolidate "$SCRATCH" "$RUN" test
+    touch "$SCRATCH/test-exec-done.txt"
   fi
 
-  # --- gate-fix completion (snapshot diff → schedule reconciliation) -----------
-  if [ -f "$SCRATCH/gate-fix-inflight.txt" ]; then
-    rm -f "$SCRATCH/gate-fix-inflight.txt"
-    bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/post-fix-files.txt"
-    bash "$HOOK_DIR/snapshot-files.sh" diff "$SCRATCH/pre-fix-files.txt" "$SCRATCH/post-fix-files.txt" \
-      > "$SCRATCH/fix-changed-files.txt" || true
-    if [ -s "$SCRATCH/fix-changed-files.txt" ]; then
-      printf 'gate-fix\n' > "$SCRATCH/reconcile-source.txt"
+  # --- remediation fix returned → hand over to the confirmation pass -----------
+  if [ -f "$SCRATCH/remediation-fix-inflight.txt" ]; then
+    rm -f "$SCRATCH/remediation-fix-inflight.txt"
+    touch "$SCRATCH/remediation-verify-inflight.txt"
+    if grep -q '|finding|' "$SCRATCH/remediation-items.txt" 2>/dev/null; then
+      next_remediation_verify_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+      next_common_after
+      next_emit "remediation-verify" "dispatch" "$RUN" "confirming the remediation batch item by item"
+    fi
+    # Batch was purely deterministic — the checks below are the whole verdict.
+  fi
+
+  # --- remediation confirmation (closed set) -----------------------------------
+  # The fix agent has returned. Re-run the deterministic checks (their verdict is
+  # the checks themselves) and score the agent's per-item answers, then let the
+  # gate below re-evaluate. Nothing here re-audits the code, so no finding can be
+  # minted that did not exist when the batch was built: the set shrinks or stalls,
+  # never grows.
+  if [ -f "$SCRATCH/remediation-verify-inflight.txt" ]; then
+    rm -f "$SCRATCH/remediation-verify-inflight.txt"
+    RUN=$((RUN + 1))
+    printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
+
+    rm -f "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
+    local rse_rc=0
+    set +e
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
+    rse_rc=$?
+    set -e
+    case "$rse_rc" in
+      0) next_write_row "$SCRATCH" static pass "" ;;
+      2) next_write_row "$SCRATCH" static skip "no static checks" ;;
+    esac
+    local rte_rc=0
+    set +e
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
     else
-      # gates.md Edge case 1: the fix agent changed nothing — mark and proceed.
-      printf 'warn-empty-fix\n' > "$SCRATCH/gate-resolved.txt"
+      bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
     fi
-  fi
+    rte_rc=$?
+    set -e
+    [ "$rte_rc" -eq 2 ] && next_write_row "$SCRATCH" test skip "runner unresolved"
+    if [ -f "$SCRATCH/tests-pre.txt" ]; then
+      bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
+      local rtr_rc=0
+      set +e
+      bash "$HOOK_DIR/test-regression.sh" check "$SCRATCH/tests-pre.txt" "$SCRATCH/tests-post.txt" >/dev/null 2>&1
+      rtr_rc=$?
+      set -e
+      if [ "$rtr_rc" -eq 0 ]; then
+        rm -f "$SCRATCH/test-regression.md"
+        next_write_row "$SCRATCH" test-generate pass ""
+      fi
+    fi
+    touch "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
 
-  # --- reconciliation (fix touched source → surgical re-run) -------------------
-  if [ -s "$SCRATCH/reconcile-source.txt" ]; then
-    local changed="$SCRATCH/test-fix-changed-files.txt" rs rerun_p="" depth_v2
-    [ "$(head -1 "$SCRATCH/reconcile-source.txt")" = "gate-fix" ] && changed="$SCRATCH/fix-changed-files.txt"
-    rs="$(bash "$HOOK_DIR/rerun-scope.sh" "$changed" --config "$CONFIG" 2>/dev/null || true)"
-    rm -f "$SCRATCH/reconcile-source.txt"
-    depth_v2="$(grep '^depth=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^depth=//')"
-    # Only phases that actually ran this pipeline can re-run — rerun-scope has
-    # no notion of profile/config enablement, so intersect with verify-a's set.
-    local p2 ran_quality
-    ran_quality="$(grep '^quality=' "$SCRATCH/verify-a.txt" 2>/dev/null | sed 's/^quality=//')"
-    for p2 in perf security review; do
-      printf '%s' "$ran_quality" | grep -qw "$p2" || continue
-      if printf '%s' "$rs" | grep -qE "\"$p2\":\{\"rerun\":true"; then
-        rerun_p="$rerun_p $p2"
-      fi
-    done
-    if [ -n "${rerun_p# }" ]; then
-      RUN=$((RUN + 1))
-      printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
-      for p2 in ${rerun_p# }; do
-        rm -f "$SCRATCH/phase-status-$p2.md"
-        next_quality_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "$STORE" "$p2" "${depth_v2:-flat}"
-        printf 'quality:%s\n' "$p2" >> "$SCRATCH/pending.txt"
-      done
-      if [ -n "$NEXT_BODY" ]; then
-        next_body_add "The fix changed source files — surgical re-run of the phases above (notes: re-run cirúrgico)."
-        next_common_after
-        next_emit "verify-rerun" "dispatch" "$RUN" "surgical re-run after fix"
-      fi
-    fi
+    local rv_out
+    rv_out="$(bash "$HOOK_DIR/remediation-verify.sh" "$SCRATCH" --config "$CONFIG" 2>/dev/null || true)"
+    printf '%s\n' "$rv_out" > "$SCRATCH/remediation-verdict.txt"
+    next_consolidate "$SCRATCH" "$RUN" static test test-generate perf security review
   fi
 
   # --- gate --------------------------------------------------------------------
@@ -1388,76 +1440,39 @@ cmd_next() {
       [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
       case "$choice" in
         fix)
-          # Convergence guards keyed on per-finding IDENTITY (file + title),
-          # not severity counts — counts churn while the same nits regenerate,
-          # so they never detect a loop. The ledger accumulates every finding
-          # identity seen across rounds; a round is only worth a fix if it
-          # surfaces one not seen before.
-          local ledger="$SCRATCH/findings-ledger.txt" cur_ids new_ids
-          cur_ids="$(bash "$HOOK_DIR/findings-identity.sh" "$SCRATCH" 2>/dev/null || true)"
-          touch "$ledger"
-          new_ids="$(comm -23 <(printf '%s\n' "$cur_ids" | sed '/^$/d' | sort -u) <(sort -u "$ledger"))"
-
-          # Item 3 — fixpoint: nothing new since the last fix. Re-fixing just
-          # reproduces the same set (findings a code change cannot move, or the
-          # fix agent already failed to move them) — surface to the user.
-          if [ -n "$cur_ids" ] && [ -z "$new_ids" ]; then
-            next_body_add "Gate decision: $g_decision — no new finding since the last fix (identity fixpoint). An automated fix reproduces the same set; present the findings in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
+          # One automatic remediation round per pipeline. remediation.md is the
+          # complete list of adjustments this verification round requires, built
+          # once from every detector at the same instant; the confirmation pass
+          # then scores it as a closed set. Because nothing re-audits the code,
+          # the set cannot grow — so there is no loop to cap, no identity ledger
+          # to keep and no churn to guard against. Residue after that round is a
+          # human decision, not another automatic attempt.
+          if [ -f "$SCRATCH/remediation-done.txt" ] && [ "$ANSWER" != "fix" ]; then
+            local residue
+            residue="$(grep '^unresolved_ids=' "$SCRATCH/remediation-verdict.txt" 2>/dev/null | cut -d= -f2)"
+            next_body_add "Gate decision: $g_decision after the remediation round. Items still open: ${residue:-see phase-status.md}. Present them in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
             if [ "$g_decision" = "FAIL" ]; then
-              next_body_add "Options: fix manually then --answer defer | defer (proceed registering pending findings)."
+              next_body_add "Options: fix now (another remediation round) | fix manually then --answer defer | defer (proceed registering pending findings). Re-run next with --answer fix | --answer defer."
             else
-              next_body_add "Options: fix manually then --answer pass | pass (proceed)."
+              next_body_add "Options: fix now (another remediation round) | pass (proceed). Re-run next with --answer fix | --answer pass."
             fi
-            next_emit "gate" "ask" "$RUN" "gate $g_decision — fix converged (no new finding), user decision required"
+            next_emit "gate" "ask" "$RUN" "gate $g_decision — remediation round done, user decision required"
           fi
 
-          # Item 4 — churn treadmill: once at least one fix has run, if every
-          # NEW finding this round is ≤ medium AND sits on a file the previous
-          # fix itself touched, they are self-inflicted regenerations, not the
-          # original diff's problems. Stop chasing them — report and advance to
-          # homolog (the human still sees them there and can reject).
-          local churn_only=0
-          if [ "$g_decision" = "WARN" ] && [ "$RUN" -gt 1 ] && [ -n "$new_ids" ] && [ -s "$SCRATCH/fix-changed-files.txt" ]; then
-            churn_only=1
-            local id_sev id_file
-            while IFS='|' read -r _ id_sev id_file _; do
-              [ -z "$id_sev" ] && continue
-              case "$id_sev" in critical|high) churn_only=0; break ;; esac
-              if [ -z "$id_file" ] || ! grep -qxF "$id_file" "$SCRATCH/fix-changed-files.txt"; then
-                churn_only=0; break
-              fi
-            done <<< "$new_ids"
-          fi
-
-          printf '%s\n' "$cur_ids" | sed '/^$/d' >> "$ledger"
-          sort -u -o "$ledger" "$ledger"
-
-          if [ "$churn_only" -eq 1 ]; then
-            printf 'WARN churn-deferred\n' > "$SCRATCH/gate-resolved.txt"
-            next_body_add "Gate decision: WARN — the only new findings this round are ≤ medium and all on files the previous fix itself touched (self-inflicted churn, not the original diff). Reporting them and advancing to homolog instead of another fix round; present them in the artifact language and register tracking per storage mode."
+          local rem_out rem_items
+          rem_out="$(bash "$HOOK_DIR/remediation.sh" "$SCRATCH" 2>/dev/null || true)"
+          rem_items="$(printf '%s\n' "$rem_out" | grep '^items=' | cut -d= -f2)"
+          if [ "${rem_items:-0}" -eq 0 ]; then
+            # The gate is red but nothing addressable was extracted (e.g. a phase
+            # reported fail with no findings artifact) — a human has to look.
+            printf '%s no-batch\n' "$g_decision" > "$SCRATCH/gate-resolved.txt"
+            next_body_add "Gate decision: $g_decision, but no remediable item could be extracted from the phase artifacts. Present phase-status.md to the user in the artifact language."
           else
-            local fx_rc=0
-            set +e
-            ( cmd_iter "$SCRATCH" fix --max 3 ) >/dev/null
-            fx_rc=$?
-            set -e
-            if [ "$fx_rc" -eq 2 ]; then
-              # Cap reached. Severity-aware exit: WARN residue is deferred to
-              # homolog (non-blocking); FAIL residue needs a human.
-              if [ "$g_decision" = "WARN" ]; then
-                printf 'WARN capped-deferred\n' > "$SCRATCH/gate-resolved.txt"
-                next_body_add "Gate decision: WARN — 3 fix rounds reached and only ≤ medium findings remain. Advancing to homolog (deferred, non-blocking); present them in the artifact language and register tracking per storage mode."
-              else
-                next_body_add "3 fix rounds reached and critical/high findings remain. Manual intervention required before proceeding."
-                next_emit "gate" "stop" "$RUN" "fix cap reached with blocking findings"
-              fi
-            else
-              bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-fix-files.txt"
-              touch "$SCRATCH/gate-fix-inflight.txt"
-              next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_" "gate ($g_decision)" "$SCRATCH/phase-status.md + the per-phase findings files in $SCRATCH"
-              next_common_after
-              next_emit "gate-fix" "dispatch" "$RUN" "gate $g_decision — dispatching fix agent"
-            fi
+            rm -f "$SCRATCH/remediation-verify.md"
+            touch "$SCRATCH/remediation-done.txt" "$SCRATCH/remediation-fix-inflight.txt"
+            next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+            next_common_after
+            next_emit "remediation-fix" "dispatch" "$RUN" "gate $g_decision — dispatching one fix agent for all $rem_items item(s)"
           fi
           ;;
         defer|pass)
@@ -1496,13 +1511,15 @@ cmd_next() {
   # --- done ---------------------------------------------------------------------
   local timings gate_reason
   timings="$(cmd_report_timings "$SCRATCH" 2>/dev/null || true)"
-  # Telemetry: why the gate fix-loop stopped (durable, shown at completion).
+  # Telemetry: how the gate resolved (durable, shown at completion).
   gate_reason="$(head -1 "$SCRATCH/gate-resolved.txt" 2>/dev/null || true)"
   case "$gate_reason" in
-    "WARN churn-deferred")  next_body_add "Gate loop stopped: self-inflicted churn deferred to homolog (convergence guard)." ;;
-    "WARN capped-deferred") next_body_add "Gate loop stopped: 3-round fix cap reached — ≤ medium residue deferred to homolog." ;;
-    "warn-empty-fix")       next_body_add "Gate loop stopped: fix produced no changes — findings surfaced as WARN." ;;
+    *no-batch) next_body_add "Gate resolved: red gate with no remediable item extracted — surfaced as-is." ;;
+    *deferred) next_body_add "Gate resolved: residue deferred to homolog by user decision." ;;
   esac
+  if [ -f "$SCRATCH/remediation-verdict.txt" ]; then
+    next_body_add "Remediation: $(tr '\n' ' ' < "$SCRATCH/remediation-verdict.txt")"
+  fi
   if [ "$STORE" = "linear" ]; then
     next_body_add "Verify the Linear lifecycle: resolve the completed state per $HOOK_DIR/../patterns/linear-status.md (never hardcode), confirm state.type == \"completed\" and that the quality-report comment exists."
   else

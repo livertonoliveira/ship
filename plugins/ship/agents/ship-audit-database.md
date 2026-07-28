@@ -11,6 +11,8 @@ Project-wide database-layer audit; routes by engine per `ship/config.md`.
 
 **Input:** $ARGUMENTS (artifact language, storage mode, database type, project context from caller).
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ---
 
 ## 1. Load context + route

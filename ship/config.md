@@ -12,7 +12,6 @@
 ## Gate Behavior
 - on_fail: fix
 - on_warn: fix
-- on_fail_rerun: surgical   # surgical (default) | all
 
 ## Severity Overrides
 # Optional section. Remove entirely if not needed.

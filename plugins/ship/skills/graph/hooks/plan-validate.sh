@@ -3,7 +3,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: plan-validate.sh <plan-file>" >&2
+  echo "usage: plan-validate.sh <plan-file> [--spec <spec-file>]" >&2
+  echo "  Without --spec only the plan's internal consistency is checked." >&2
+  echo "  With --spec the plan is also confronted with the spec and the" >&2
+  echo "  repository: no spec scenario or spec file may be silently dropped," >&2
+  echo "  and a path the spec marks 'modify' must exist on disk." >&2
 }
 
 module_ids() {
@@ -254,8 +258,129 @@ check_cycle() {
   return 0
 }
 
+# --- confrontation with the spec and the repository --------------------------
+# The checks above prove the plan is coherent with itself; a plan can pass all
+# of them while quietly dropping a scenario the spec asked for or pointing at a
+# file that does not exist. Those defects do not surface until develop and test
+# have both consumed the plan, which makes them gate findings — the most
+# expensive place to discover them. These three close that gap deterministically.
+
+spec_scenarios() {
+  grep -oE '@SC-[0-9]+' "$1" 2>/dev/null | sort -u || true
+}
+
+plan_scenarios() {
+  local f="$1" id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    module_scenarios "$f" "$id"
+  done < <(module_ids "$f") | grep -oE '@SC-[0-9]+' | sort -u || true
+}
+
+# `## Files` entries: "create|modify `<path>` — <intent>", with or without a
+# leading "- ". Both shapes occur in practice — the local-mode fixture writes the
+# dash, a real Linear-mode spec does not — and requiring it made this check
+# extract nothing and pass vacuously on half the specs it exists for.
+# `Âncora:` lines are pattern references, not owned files, so they never reach
+# the plan.
+spec_files() {
+  local spec="$1" kind="${2:-}"
+  awk -v kind="$kind" '
+    /^## Files/ { insection = 1; next }
+    /^## / { insection = 0 }
+    insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      gsub(/`/, "", line)
+      if (line ~ /^(Âncora|Ancora|Anchor)[[:space:]]*:/) next
+      if (!match(line, /^(create|modify)[[:space:]]+/)) next
+      verb = substr(line, 1, RLENGTH - 1)
+      sub(/[[:space:]]+$/, "", verb)
+      sub(/^(create|modify)[[:space:]]+/, "", line)
+      sub(/[[:space:]]*(—|–|--).*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (kind != "" && verb != kind) next
+      print line
+    }
+  ' "$spec" 2>/dev/null | sort -u || true
+}
+
+plan_files() {
+  local f="$1" id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    module_files "$f" "$id"
+  done < <(module_ids "$f") | sed 's/`//g' | sort -u || true
+}
+
+# A spec path the planner deliberately corrected (moved, gone, replaced) is
+# logged under `## Map Divergences` — accounted for even though no module lists
+# it. This is what keeps the divergence log load-bearing instead of decorative.
+#
+# Only `- ` entries count, per the format ship:plan writes. Scanning the whole
+# section for path-shaped tokens made the check self-defeating: a planner that
+# wrote "none — src/a.test.js validated against the tree" had every file it
+# merely MENTIONED counted as diverged, so a plan that genuinely dropped a file
+# passed as long as its prose named it.
+diverged_paths() {
+  awk '
+    /^## Map Divergences/ { insection = 1; next }
+    /^## / { insection = 0 }
+    insection && /^[[:space:]]*-[[:space:]]/ { print }
+  ' "$1" 2>/dev/null | grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+' | sort -u || true
+}
+
+check_spec_scenarios_claimed() {
+  local f="$1" spec="$2" missing
+  missing="$(comm -23 <(spec_scenarios "$spec") <(plan_scenarios "$f"))"
+  if [ -n "$missing" ]; then
+    echo "plan-validate: cenário do spec sem módulo — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Test files the spec lists are owned by the `## Test Contract`, not by a module's
+# `Files:` — pipeline.sh's next_module_files even strips them back out of the
+# module set. Requiring a module to claim them would fail every plan that puts
+# tests where they belong, so they are accounted for by a Test Contract slot.
+contract_files() {
+  grep -E '^### .* -> .* -> ' "$1" 2>/dev/null \
+    | sed -E 's/^### .* -> [^>]* -> //' \
+    | sed -E 's/[[:space:]]*\(derived[^)]*\)[[:space:]]*$//' \
+    | sed 's/`//g' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sort -u || true
+}
+
+check_spec_files_claimed() {
+  local f="$1" spec="$2" missing
+  missing="$(comm -23 <(spec_files "$spec") \
+    <(cat <(plan_files "$f") <(contract_files "$f") <(diverged_paths "$f") | sort -u))"
+  if [ -n "$missing" ]; then
+    echo "plan-validate: arquivo do spec sem módulo (e sem registro em ## Map Divergences) — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
+}
+
+check_modify_targets_exist() {
+  local f="$1" spec="$2" path planned missing=""
+  planned="$(plan_files "$f")"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    printf '%s\n' "$planned" | grep -qxF "$path" || continue
+    [ -e "$path" ] && continue
+    missing="$missing $path"
+  done < <(spec_files "$spec" modify)
+  if [ -n "$missing" ]; then
+    echo "plan-validate: alvo 'modify' inexistente no repositório —$missing" >&2
+    return 1
+  fi
+  return 0
+}
+
 validate_plan() {
-  local f="$1"
+  local f="$1" spec="${2:-}"
 
   if ! check_module_map_present "$f"; then
     echo "plan-validate: module map vazio" >&2
@@ -278,14 +403,36 @@ validate_plan() {
     return 2
   fi
 
+  [ -n "$spec" ] && [ -f "$spec" ] || return 0
+
+  if ! check_spec_scenarios_claimed "$f" "$spec"; then
+    return 2
+  fi
+
+  if ! check_spec_files_claimed "$f" "$spec"; then
+    return 2
+  fi
+
+  if ! check_modify_targets_exist "$f" "$spec"; then
+    return 2
+  fi
+
   return 0
 }
 
 main() {
-  local positional=()
+  local positional=() spec=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
+      --spec)
+        spec="${2:-}"
+        if [ -z "$spec" ]; then
+          echo "plan-validate: --spec requires a path" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
       --*)
         echo "plan-validate: unknown flag: $1" >&2
         usage
@@ -310,7 +457,12 @@ main() {
     exit 1
   fi
 
-  if validate_plan "$plan_file"; then
+  if [ -n "$spec" ] && [ ! -f "$spec" ]; then
+    echo "plan-validate: spec file not found: $spec" >&2
+    exit 1
+  fi
+
+  if validate_plan "$plan_file" "$spec"; then
     echo "plan-validate: plan válido"
     exit 0
   else

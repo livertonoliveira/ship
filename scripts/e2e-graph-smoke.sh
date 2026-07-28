@@ -102,7 +102,6 @@ cat > ship/config.md <<'CFG'
 # defer/pass so a non-deterministic gate never blocks the headless run.
 - on_fail: defer
 - on_warn: pass
-- on_fail_rerun: surgical
 
 ## Pipeline Profile
 - profile: standard

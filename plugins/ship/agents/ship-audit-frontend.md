@@ -12,6 +12,8 @@ model: sonnet
 
 Next.js if config `Frontend:Next.js`/`next.config.*`, else generic. 3 agents, parallel.
 
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+
 ## Next.js — 5 heuristics (A:A1-A2 B:B1-B2 C:C1)
 
 - **A1** (Medium, BOUNDARY): `"use client"` w/o interactive hooks.
@@ -55,6 +57,8 @@ Gate decision rules applied after every quality phase:
 - Any `critical` or `high` finding → **FAIL**
 - Any `medium` finding → **WARN**
 - Only `low` or no findings → **PASS**
+
+A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
 
 Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
 

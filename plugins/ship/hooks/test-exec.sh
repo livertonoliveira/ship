@@ -3,7 +3,8 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only]" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only|--print-static]" >&2
+  echo "  --print-static  resolve typecheck/lint and print them without running" >&2
 }
 
 field_from() {
@@ -135,18 +136,27 @@ write_reports() {
 
   {
     printf '# Test Failures\n'
+    # The output files are absent when the exits were carried forward from the
+    # earlier static run rather than produced here; static-failures.md already
+    # holds that output, so only the consequence is reported.
     if [ "$TYPECHECK_EXIT" -gt 0 ]; then
-      printf '\n## Typecheck failed (`%s`)\n\n```\n' "$TYPECHECK_CMD"
-      tail -60 "$TYPECHECK_OUT"
-      printf '```\n'
+      printf '\n## Typecheck failed (`%s`)\n' "$TYPECHECK_CMD"
+      if [ -n "$TYPECHECK_OUT" ] && [ -f "$TYPECHECK_OUT" ]; then
+        printf '\n```\n'; tail -60 "$TYPECHECK_OUT"; printf '```\n'
+      else
+        printf '\nSee static-failures.md for the errors.\n'
+      fi
       if [ "$SUITE_SKIPPED" -eq 1 ]; then
         printf '\nTest suite not run: fix the typecheck errors first.\n'
       fi
     fi
     if [ "$LINT_EXIT" -gt 0 ]; then
-      printf '\n## Lint failed (`%s`)\n\n```\n' "$LINT_CMD"
-      tail -60 "$LINT_OUT"
-      printf '```\n'
+      printf '\n## Lint failed (`%s`)\n' "$LINT_CMD"
+      if [ -n "$LINT_OUT" ] && [ -f "$LINT_OUT" ]; then
+        printf '\n```\n'; tail -60 "$LINT_OUT"; printf '```\n'
+      else
+        printf '\nSee static-failures.md for the errors.\n'
+      fi
     fi
     if [ -n "$failed_files" ]; then
       printf '\n'
@@ -227,12 +237,13 @@ write_static_report() {
 }
 
 main() {
-  local scratch="" config="ship/config.md" static_only=0
+  local scratch="" config="ship/config.md" static_only=0 print_static=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --config) config="$2"; shift 2 ;;
       --static-only) static_only=1; shift ;;
+      --print-static) print_static=1; shift ;;
       -h|--help) usage; exit 0 ;;
       -*) usage; exit 1 ;;
       *)
@@ -256,6 +267,23 @@ main() {
   RUN_OUTPUT_FILE=""
   RUN_EXIT_CODE=0
 
+  # --print-static: resolve the two commands and print them, running nothing. The
+  # implementer is handed these in its dispatch args so it checks exactly what the
+  # pipeline checks — it used to read only `ship/config.md → Typecheck` and skip
+  # when that field was absent, while this resolution also probes stack.md and
+  # package.json, so develop silently skipped checks the gate then failed on.
+  if [ "$print_static" -eq 1 ]; then
+    PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
+    is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
+    resolve_static_checks "$scratch" "$config"
+    is_resolved "$TYPECHECK_CMD" && printf 'typecheck=%s\n' "$TYPECHECK_CMD"
+    is_resolved "$LINT_CMD" && printf 'lint=%s\n' "$LINT_CMD"
+    if ! is_resolved "$TYPECHECK_CMD" && ! is_resolved "$LINT_CMD"; then
+      exit 2
+    fi
+    exit 0
+  fi
+
   # --static-only: the pre-verify static gate. Runs typecheck+lint only, needs no
   # test runner. Exit 2 when neither check resolves (repos without them).
   if [ "$static_only" -eq 1 ]; then
@@ -268,6 +296,7 @@ main() {
     run_static_checks
     local st_overall=0
     { [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && st_overall=1
+    printf 'typecheck=%s\nlint=%s\n' "$TYPECHECK_EXIT" "$LINT_EXIT" > "$scratch/static-exits.txt"
     write_static_report "$scratch" "$st_overall"
     [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
     [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
@@ -284,10 +313,17 @@ main() {
 
   resolve_static_checks "$scratch" "$config"
 
-  # The static gate already ran typecheck+lint before the fan-out — don't repeat
-  # them here. A resolved static gate means typecheck is green (it blocks the
-  # pipeline otherwise), so the suite's typecheck precondition is satisfied.
-  if [ -f "$scratch/static-exec-done.txt" ]; then
+  # The static checks already ran before the fan-out — don't repeat them, but do
+  # carry their real result forward. They no longer block the pipeline, so their
+  # having run says nothing about whether they passed; assuming green here would
+  # run the suite against code that does not compile and bury the real cause
+  # under a cascade of unrelated test errors.
+  if [ -f "$scratch/static-exits.txt" ]; then
+    TYPECHECK_EXIT="$(grep -m1 '^typecheck=' "$scratch/static-exits.txt" | cut -d= -f2)"
+    LINT_EXIT="$(grep -m1 '^lint=' "$scratch/static-exits.txt" | cut -d= -f2)"
+    TYPECHECK_EXIT="${TYPECHECK_EXIT:-0}"
+    LINT_EXIT="${LINT_EXIT:-0}"
+  elif [ -f "$scratch/static-exec-done.txt" ]; then
     TYPECHECK_EXIT=0
     LINT_EXIT=0
   else

@@ -9,7 +9,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:init` | Initialize Ship in a project (run once) |
 | `/ship:spec` | Deep specification: requirements, design, granular tasks (<400 lines), Linear project/milestones/issues |
 | `/ship:run` | Development pipeline for a task: develop → verify (test ∥ quality, one consolidated gate) → homolog — a thin loop over `pipeline.sh next` |
-| `/ship:plan` | Test-aware planning: decompose the task into modules and map scenarios to a test contract (single source of truth for develop + test) |
+| `/ship:plan` | Test-aware planning: decompose the task into modules and map scenarios to a test contract (single source of truth for develop + test), validated against the spec and the repo, then confronted with the files each module claims |
 | `/ship:develop` | Direct implementer: reads the plan and implements all modules sequentially in one context |
 | `/ship:test` | Standalone test fan-out (unit, integration, e2e) — inside the pipeline, `pipeline.sh next` dispatches the test workers directly |
 | `/ship:perf` | Performance analysis of the diff |
@@ -73,7 +73,7 @@ ship/
 
 ### Pipeline State Machine
 
-- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, fix loops (cap of 3 per phase, findings-identity ledger, churn guard) and re-runs. It is a deterministic script, testable in CI with no runtime installed.
+- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, the plan confrontation pass and the single remediation round. It is a deterministic script, testable in CI with no runtime installed.
 - `run/SKILL.md` is only the executor of what `pipeline.sh next` prints — never re-add phase choreography, gate arithmetic, or ordering decisions to a SKILL or agent file.
 - Fix-loop counters and the findings ledger NEVER reset on resume — resetting restarts the loop.
 

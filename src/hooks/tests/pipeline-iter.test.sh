@@ -208,23 +208,25 @@ test_resume_init_preserves_counters() {
   log_pass "$name"
 }
 
-test_resume_init_preserves_ledger() {
-  local name="pipeline.sh init --mode resume preserves the findings ledger; fresh clears it"
+test_resume_init_preserves_remediation_marker() {
+  local name="pipeline.sh init --mode resume preserves the remediation marker; fresh clears it"
   local dir task rc=0
   dir="$(mktemp -d)"
-  task="iterledgertask"
+  task="iterremediationtask"
   setup_repo "$dir"
 
   (
     cd "$dir"
     bash "$PIPELINE_SCRIPT" init "$task" --mode fresh >/dev/null
-    printf 'review|medium|src/a.ts|dup\n' > ".context/ship-run/$task/findings-ledger.txt"
+    printf 'spent\n' > ".context/ship-run/$task/remediation-done.txt"
 
+    # A resume continues a live run: clearing this would hand it a second
+    # automatic remediation round it has already spent.
     bash "$PIPELINE_SCRIPT" init "$task" --mode resume >/dev/null
-    [ -f ".context/ship-run/$task/findings-ledger.txt" ] || exit 1
+    [ -f ".context/ship-run/$task/remediation-done.txt" ] || exit 1
 
     bash "$PIPELINE_SCRIPT" init "$task" --mode fresh >/dev/null
-    [ ! -f ".context/ship-run/$task/findings-ledger.txt" ] || exit 1
+    [ ! -f ".context/ship-run/$task/remediation-done.txt" ] || exit 1
   ) || rc=$?
   rm -rf "$dir"
 
@@ -243,7 +245,7 @@ test_at_max_still_exits_0
 test_invalid_counter_name_rejected
 test_fresh_init_resets_counters
 test_resume_init_preserves_counters
-test_resume_init_preserves_ledger
+test_resume_init_preserves_remediation_marker
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
