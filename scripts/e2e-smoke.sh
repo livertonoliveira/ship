@@ -9,7 +9,13 @@
 # produces the right artifacts and passing tests — not exact code.
 #
 # Usage:
-#   scripts/e2e-smoke.sh [--fixture calculator|tictactoe] [--scope full|lite] [--keep]
+#   scripts/e2e-smoke.sh [--fixture calculator|tictactoe] [--scope full|lite]
+#                        [--gate defer|fix] [--seed-defect] [--keep]
+#
+# --gate fix + --seed-defect is the only combination that reaches the remediation
+# path with real agents: the fixture is clean enough that every gate passes, so
+# on_fail: fix alone never fires. The defect is a real one (eval of external
+# input) found by the real security worker, not a stubbed finding.
 #
 # Requires: the `claude` CLI on PATH, Node.js (for the zero-dep `node --test` runner).
 # Costs tokens and takes several minutes. Run before releases / after big changes.
@@ -21,15 +27,24 @@ PLUGIN="$REPO_ROOT/plugins/ship"
 
 FIXTURE=calculator
 SCOPE=full
+GATE=defer
+SEED_DEFECT=0
 KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --fixture) FIXTURE="$2"; shift 2;;
-    --scope)   SCOPE="$2"; shift 2;;
-    --keep)    KEEP=1; shift;;
+    --fixture)     FIXTURE="$2"; shift 2;;
+    --scope)       SCOPE="$2"; shift 2;;
+    --gate)        GATE="$2"; shift 2;;
+    --seed-defect) SEED_DEFECT=1; shift;;
+    --keep)        KEEP=1; shift;;
     *) echo "unknown arg: $1"; exit 2;;
   esac
 done
+case "$GATE" in
+  defer) ON_FAIL=defer; ON_WARN=pass;;
+  fix)   ON_FAIL=fix;   ON_WARN=fix;;
+  *) echo "unknown --gate: $GATE (defer|fix)"; exit 2;;
+esac
 
 command -v claude >/dev/null || { echo "✗ claude CLI not found on PATH"; exit 1; }
 command -v node   >/dev/null || { echo "✗ node not found on PATH"; exit 1; }
@@ -66,6 +81,20 @@ else
   PHASES=$'- dev: enabled\n- test: enabled\n- perf: enabled\n- security: enabled\n- review: enabled\n- homolog: enabled\n- pr: disabled'
 fi
 
+# A real, dependency-free lint rule the generated code satisfies: no debug
+# logging and no `var` in source. Green on correct output, so it exercises the
+# static-command injection into develop without making the gate flaky.
+cat > lint.sh <<'LINT'
+#!/usr/bin/env bash
+hits="$(grep -rnE '(^|[^.[:alnum:]_])var[[:space:]]|console\.log' src 2>/dev/null || true)"
+if [ -n "$hits" ]; then
+  printf 'lint: banned construct (var / console.log)\n%s\n' "$hits"
+  exit 1
+fi
+exit 0
+LINT
+chmod +x lint.sh
+
 mkdir -p ship
 cat > ship/config.md <<CFG
 # Ship Config
@@ -83,12 +112,14 @@ cat > ship/config.md <<CFG
 - Framework: none
 - Test Framework: node --test
 - Package Manager: npm
+- Lint: $TMP/lint.sh
 
 ## Gate Behavior
-# defer/pass so a non-deterministic gate never blocks the headless run;
-# we inspect phase-status.md for the actual gate outcomes instead.
-- on_fail: defer
-- on_warn: pass
+# Default defer/pass so a non-deterministic gate never blocks the headless run;
+# we inspect phase-status.md for the actual gate outcomes instead. --gate fix
+# swaps in the remediation path on purpose.
+- on_fail: $ON_FAIL
+- on_warn: $ON_WARN
 
 ## Pipeline Profile
 - profile: standard
@@ -139,6 +170,18 @@ FEATURE="$(ls ship/changes 2>/dev/null | head -1 || true)"
 [ -n "$FEATURE" ] || { echo "✗ spec produced no ship/changes/<feature> workspace"; exit 1; }
 echo "  feature: $FEATURE"
 
+if [ "$SEED_DEFECT" -eq 1 ]; then
+  echo "▶ seeding a real defect into the diff ..."
+  mkdir -p src
+  cat > src/evaluate.js <<'DEF'
+export function evaluate(expression) {
+  return eval(expression)
+}
+DEF
+  git add -A && git commit -qm "feat: expression evaluation helper"
+  echo "  seeded: src/evaluate.js (eval of external input)"
+fi
+
 echo "▶ /ship:run --project $FEATURE ..."
 run_claude "/ship:run --project $FEATURE" || echo "  (run returned non-zero — checking artifacts anyway)"
 
@@ -186,6 +229,36 @@ if [ -n "${SCR:-}" ] && [ -f "$SCR/phase-status.md" ]; then
     grep -qiE "^\| *$ph " "$SCR/phase-status.md" && ok "phase ran: $ph" || bad "phase missing from trace: $ph"
   done
   echo "  --- phase-status.md ---"; sed 's/^/    /' "$SCR/phase-status.md"
+fi
+
+# Static checks were configured, so the phase must report a real result — `skip`
+# means the command never reached develop or the gate.
+if [ -n "${SCR:-}" ] && [ -f "$SCR/phase-status.md" ]; then
+  st="$(awk -F'|' '$2 ~ /^ *static *$/ { gsub(/^ +| +$/, "", $6); r = $6 } END { print r }' "$SCR/phase-status.md")"
+  [ "$st" = "pass" ] && ok "static checks ran and passed" || bad "static gate reported '${st:-missing}' (expected pass — lint was configured)"
+fi
+
+if [ "$SEED_DEFECT" -eq 1 ]; then
+  if [ -s "$SCR/remediation.md" ]; then
+    ok "remediation batch built: $(grep -c '^### R' "$SCR/remediation.md") item(s)"
+    grep -q '^### R' "$SCR/remediation.md" && ok "batch carries at least one item" || bad "remediation.md has no R<N> items"
+    if [ -s "$SCR/remediation-verify.md" ]; then
+      ok "confirmation pass wrote verdicts"
+      # The whole point: a real agent must answer in the parseable form.
+      grep -qE '^[[:space:]]*[-*]?[[:space:]]*R[0-9]+[[:space:]]*:[[:space:]]*(resolved|unresolved)' "$SCR/remediation-verify.md" \
+        && ok "verdicts are in the parseable '- R<N>: resolved|unresolved' form" \
+        || { bad "verdicts unparseable — remediation-verify.sh would score every item unresolved"; sed 's/^/    /' "$SCR/remediation-verify.md"; }
+      echo "  --- remediation-verify.md ---"; sed 's/^/    /' "$SCR/remediation-verify.md"
+    else
+      bad "no remediation-verify.md — the confirmation pass never ran"
+    fi
+    # One automatic round, not a loop.
+    rounds="$(grep -c 'remediation-fix' "$SCR/dispatch-log.md" 2>/dev/null)" || rounds=0
+    [ "${rounds:-0}" -le 1 ] && ok "at most one automatic remediation round (dispatches: $rounds)" \
+      || bad "remediation ran $rounds times — the one-round guard did not hold"
+  else
+    bad "--seed-defect was set but no remediation.md was built (gate never went red)"
+  fi
 fi
 
 echo

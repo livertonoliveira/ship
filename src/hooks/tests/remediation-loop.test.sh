@@ -167,6 +167,23 @@ count_state() { printf '%s' "$STATES" | tr ' ' '\n' | grep -cx "$1" || true; }
 
 # --- tests -------------------------------------------------------------------
 
+test_remediation_rounds_are_recorded_in_the_dispatch_log() {
+  local name="the remediation round appears in dispatch-log.md so it reaches the timings and the user's trace"
+  local dir; dir="$(mktemp -d)"; setup_repo "$dir"
+  local scratch="$dir/.context/ship-run/T7"
+  SEED_FINDING=1 FIX_MODE=full CONFIRM_VERDICT=resolved
+  drive "$dir" T7 || true
+  local fixn confn
+  fixn="$(grep -c '| remediation-fix |' "$scratch/dispatch-log.md" 2>/dev/null)" || fixn=0
+  confn="$(grep -c '| remediation-verify |' "$scratch/dispatch-log.md" 2>/dev/null)" || confn=0
+  if [ "$fixn" = "1" ] && [ "$confn" = "1" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (fix rows=$fixn confirm rows=$confn)"
+  fi
+  rm -rf "$dir"
+}
+
 test_one_batch_one_fix_one_confirmation() {
   local name="a red typecheck and a finding resolve in exactly one fix and one confirmation"
   local dir; dir="$(mktemp -d)"; setup_repo "$dir"
@@ -270,6 +287,7 @@ test_confirmation_rewrites_rows_and_the_gate_re_decides
 test_residue_asks_instead_of_looping
 test_deterministic_only_batch_skips_the_confirmation_agent
 test_a_fix_that_changes_nothing_still_terminates
+test_remediation_rounds_are_recorded_in_the_dispatch_log
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

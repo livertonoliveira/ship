@@ -33,7 +33,7 @@ require_hooks() {
   fi
 }
 
-KNOWN_PHASES="plan plan-review dev test perf security review homolog"
+KNOWN_PHASES="plan plan-review dev test perf security review remediation-fix remediation-verify homolog"
 
 is_known_phase() {
   local phase="$1"
@@ -949,6 +949,10 @@ next_test_dispatch() {
 
 next_fix_dispatch() {
   local scratch="$1" task="$2" lang="$3"
+  # Recorded like any other dispatched phase: without this the remediation round
+  # is absent from dispatch-log.md, so it never reaches report-timings or the
+  # execution trace the user reads at homolog.
+  cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
   next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the COMPLETE list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for EVERY item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
@@ -974,6 +978,7 @@ next_plan_review_dispatch() {
 
 next_remediation_verify_dispatch() {
   local scratch="$1" task="$2" lang="$3"
+  cmd_dispatch "$scratch" remediation-verify Agent general-purpose sonnet >/dev/null
   next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set — do NOT audit the code for new problems and do NOT report anything outside the list. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
 }
 
