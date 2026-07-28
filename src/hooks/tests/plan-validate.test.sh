@@ -161,6 +161,27 @@ test_prose_in_divergences_does_not_account_for_a_file() {
   rm -rf "$dir"
 }
 
+test_files_without_a_leading_dash_are_parsed() {
+  local name="a ## Files entry with no leading dash is still an owned file"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts"
+  # The shape a real Linear-mode spec writes. Requiring "- " made the check
+  # extract nothing and pass vacuously on every spec of this shape.
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "modify \`src/a.ts\` — tweak
+create \`src/b.ts\` — new" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 2 "sem módulo (e sem registro em ## Map Divergences) — src/b.ts"
+  rm -rf "$dir"
+}
+
 test_empty_module_map_fails() {
   local name="a plan without any module headers fails with module map vazio"
   local dir plan
@@ -456,6 +477,7 @@ test_create_target_absent_passes
 test_anchor_line_is_not_an_owned_file
 test_spec_test_file_claimed_by_test_contract_passes
 test_prose_in_divergences_does_not_account_for_a_file
+test_files_without_a_leading_dash_are_parsed
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

@@ -277,14 +277,18 @@ plan_scenarios() {
   done < <(module_ids "$f") | grep -oE '@SC-[0-9]+' | sort -u || true
 }
 
-# `## Files` bullets: "- create|modify `<path>` — <intent>". `Âncora:` lines are
-# pattern references, not owned files, so they never reach the plan.
+# `## Files` entries: "create|modify `<path>` — <intent>", with or without a
+# leading "- ". Both shapes occur in practice — the local-mode fixture writes the
+# dash, a real Linear-mode spec does not — and requiring it made this check
+# extract nothing and pass vacuously on half the specs it exists for.
+# `Âncora:` lines are pattern references, not owned files, so they never reach
+# the plan.
 spec_files() {
   local spec="$1" kind="${2:-}"
   awk -v kind="$kind" '
     /^## Files/ { insection = 1; next }
     /^## / { insection = 0 }
-    insection && /^[[:space:]]*-[[:space:]]/ {
+    insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
       gsub(/`/, "", line)
