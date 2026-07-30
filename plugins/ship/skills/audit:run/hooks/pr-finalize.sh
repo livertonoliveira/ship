@@ -41,6 +41,11 @@ main() {
   if [ -d "$scratch" ]; then
     if [ -n "$keep" ]; then
       context="preserved"
+      # The PR is done when this closing call runs, so the marker belongs here
+      # and nowhere earlier. pipeline.sh reads it to know the node PR step is
+      # behind it — without it the pipeline would re-open the same PR on every
+      # subsequent `next`.
+      printf '%s\n' "created" > "$scratch/pr-created.txt"
     else
       rm -rf "$scratch"
       context="cleaned"
