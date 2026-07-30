@@ -1124,6 +1124,18 @@ cmd_next() {
   integ="$(meta_get "$dir" integration_status)"
   log_path="$dir/graph-log.md"
 
+  # An unreadable slot count must not look like a deadlock. Empty is 0 in bash
+  # arithmetic, so a meta.tsv missing this key silently yields zero free slots
+  # and `next` reports "every remaining node is blocked" over a graph whose
+  # nodes are all free — sending the operator hunting for a dependency cycle
+  # that does not exist.
+  case "$max_in_flight" in
+    ''|*[!0-9]*) log_line "$dir" "max_in_flight unreadable ('$max_in_flight') — falling back to 1"; max_in_flight=1 ;;
+    *) [ "$max_in_flight" -ge 1 ] || max_in_flight=1 ;;
+  esac
+
+  [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "next: meta names driver '$driver' but $HOOK_DIR/driver-$driver.sh does not exist — fix it with: graph.sh set --driver <name>"
+
   local DRIVER_SH="$HOOK_DIR/driver-$driver.sh"
 
   local inflight merging landed failed total done_n
