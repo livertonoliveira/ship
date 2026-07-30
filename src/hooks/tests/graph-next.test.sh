@@ -677,6 +677,101 @@ test_failed_node_freezes_admission() {
   fi
 }
 
+test_reset_returns_a_failed_node_to_the_frontier() {
+  local name="reset puts a failed node back to pending and unfreezes admission"
+  local dir out reset_out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    bash "$GRAPH" fail TASK-001 --reason "stopped by the operator" >/dev/null
+  )
+  reset_out="$(cd "$dir" && bash "$GRAPH" reset TASK-001)"
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if printf '%s' "$reset_out" | grep -q '^reset=TASK-001$' \
+    && [ "$(field "$reset_out" remaining_failed)" = "0" ] \
+    && [ "$(field "$out" action)" = "dispatch" ] \
+    && printf '%s' "$(field "$out" frontier)" | grep -q 'TASK-001'; then
+    log_pass "$name"
+  else
+    log_fail "$name (reset='$reset_out' action='$(field "$out" action)' frontier='$(field "$out" frontier)')"
+  fi
+}
+
+test_reset_all_clears_every_failed_node_and_keeps_attempts() {
+  local name="reset --all resets every failed node, keeps the attempt count, drops the stale workspace"
+  local dir out attempts wt
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" abort --reason "operator stopped the run" >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" reset --all)"
+  attempts="$(awk -F'\t' '$1 == "TASK-001" { print $9 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  wt="$(awk -F'\t' '$1 == "TASK-001" { print $7 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  local stall_kept=0
+  [ -f "$dir/.context/ship-graph/f/progress-TASK-001.txt" ] && stall_kept=1
+  rm -rf "$dir"
+
+  if [ "$(field "$out" count)" = "1" ] && [ "$attempts" = "1" ] && [ -z "$wt" ] && [ "$stall_kept" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (count='$(field "$out" count)' attempts='$attempts' worktree='$wt' stall_kept=$stall_kept)"
+  fi
+}
+
+test_reset_refuses_a_node_that_is_not_failed() {
+  local name="reset refuses a live node — stopping one is abort's job, not reset's"
+  local dir rc=0 out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" reset TASK-001 2>&1)" || rc=$?
+  local status
+  status="$(awk -F'\t' '$1 == "TASK-001" { print $6 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  rm -rf "$dir"
+
+  if [ "$rc" -ne 0 ] && [ "$status" = "in_flight" ] && printf '%s' "$out" | grep -q 'abort'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc status='$status' out='$out')"
+  fi
+}
+
+test_reset_is_all_or_nothing() {
+  local name="a typo in one id resets nothing — the graph never lands half a reset"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    bash "$GRAPH" fail TASK-001 --reason stopped >/dev/null
+  )
+  (cd "$dir" && bash "$GRAPH" reset TASK-001 TASK-999 >/dev/null 2>&1) || rc=$?
+  local status
+  status="$(awk -F'\t' '$1 == "TASK-001" { print $6 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  rm -rf "$dir"
+
+  if [ "$rc" -ne 0 ] && [ "$status" = "failed" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc TASK-001 status='$status')"
+  fi
+}
+
 test_unknown_dep_is_rejected_at_init() {
   local name="init rejects a dependency on a node that does not exist"
   local dir rc=0
@@ -1019,6 +1114,10 @@ test_next_is_idempotent
 test_all_done_emits_done
 test_dependency_cycle_is_a_deadlock_ask
 test_failed_node_freezes_admission
+test_reset_returns_a_failed_node_to_the_frontier
+test_reset_all_clears_every_failed_node_and_keeps_attempts
+test_reset_refuses_a_node_that_is_not_failed
+test_reset_is_all_or_nothing
 test_unknown_dep_is_rejected_at_init
 test_reinit_reports_resume_instead_of_inviting_fresh
 test_fresh_still_discards_when_asked
