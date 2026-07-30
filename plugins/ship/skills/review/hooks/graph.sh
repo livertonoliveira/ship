@@ -372,8 +372,41 @@ seal_spec() {
   log_line "$dir" "spec sealed onto $(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo HEAD) so node workspaces inherit it"
 }
 
+# --- driver selection --------------------------------------------------------
+
+# With no --driver given, ask every driver whether it can run here and how
+# strongly it wants the job, then take the keenest. The scheduler stays
+# runtime-agnostic: it globs driver files, reads two numbers and picks — it never
+# learns what any of them is. A new driver becomes selectable by existing.
+#
+# This replaces a fixed default of the ONE driver that spawns nothing, so the
+# common case used to be a graph whose every workspace had to be made by hand.
+# Selecting in a script rather than describing the choice in a skill is the point:
+# a rule written as prose is a rule that sometimes does not run.
+autoselect_driver() {
+  local f name out ready prio best="" best_prio=""
+  for f in "$HOOK_DIR"/driver-*.sh; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .sh)"
+    name="${name#driver-}"
+    out="$(bash "$f" probe 2>/dev/null || true)"
+    ready="$(printf '%s' "$out" | sed -n 's/^ready=//p' | head -1)"
+    [ "$ready" = "1" ] || continue
+    prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
+    # A driver that claims readiness without a usable priority still gets to
+    # run; it just sorts last. Refusing it would make a malformed probe look
+    # like an absent driver.
+    case "$prio" in ''|*[!0-9]*) prio=99 ;; esac
+    if [ -z "$best_prio" ] || [ "$prio" -lt "$best_prio" ]; then
+      best="$name"
+      best_prio="$prio"
+    fi
+  done
+  printf '%s' "$best"
+}
+
 cmd_init() {
-  local feature="" from="" driver="manual" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo=""
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit"
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -399,6 +432,11 @@ cmd_init() {
   esac
   [ "$max_in_flight" -ge 1 ] || die "init: --max-in-flight must be >= 1"
   case "$mode" in linear|local) ;; *) die "init: --mode must be linear or local: $mode" ;; esac
+  if [ -z "$driver" ]; then
+    driver="$(autoselect_driver)"
+    [ -n "$driver" ] || die "init: no driver reported itself ready here — pass --driver <name> explicitly"
+    chosen_by="probe"
+  fi
   valid_id "$driver" || die "init: invalid driver name: $driver"
   [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "init: no driver at $HOOK_DIR/driver-$driver.sh"
 
@@ -504,7 +542,7 @@ cmd_init() {
   printf '%s\n' "$feature" > "$ACTIVE_POINTER"
 
   render_json "$dir"
-  log_line "$dir" "init feature=$feature driver=$driver mode=$mode max_in_flight=$max_in_flight base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
+  log_line "$dir" "init feature=$feature driver=$driver ($chosen_by) mode=$mode max_in_flight=$max_in_flight base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
   [ "$mode" = "local" ] && seal_spec "$dir" "$feature"
 
   printf 'INIT %s\n' "$feature"
@@ -512,6 +550,7 @@ cmd_init() {
   printf 'graph=%s\n' "$dir/graph.json"
   printf 'nodes=%s\n' "$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
   printf 'driver=%s\n' "$driver"
+  printf 'driver_chosen_by=%s\n' "$chosen_by"
 }
 
 # --- set ---------------------------------------------------------------------

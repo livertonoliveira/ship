@@ -21,7 +21,7 @@ Each node is a full `/ship:run` in its own workspace. Nothing inside a task chan
 
 ## Prerequisites
 
-`ship/config.md` must exist (else `/ship:init` + STOP); storage mode ${CLAUDE_SKILL_DIR}/patterns/storage-mode.md. Driver defaults to `manual`; `orca` needs that CLI on PATH, `local` needs nothing.
+`ship/config.md` must exist (else `/ship:init` + STOP); storage mode ${CLAUDE_SKILL_DIR}/patterns/storage-mode.md. Omit `--driver` unless the user named one: `init` probes each driver and takes the keenest that reports ready, echoing `driver=` and `driver_chosen_by=`. Never pick one yourself.
 
 ## 1. Resolve the project
 

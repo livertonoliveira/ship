@@ -304,6 +304,105 @@ test_missing_driver_file_is_named() {
   rm -rf "$root"
 }
 
+# --- driver selection --------------------------------------------------------
+
+test_every_driver_answers_probe() {
+  local d name out ok=1
+  for d in "$SCRIPT_DIR"/../driver-*.sh; do
+    [ -f "$d" ] || continue
+    name="$(basename "$d")"
+    out="$(bash "$d" probe 2>/dev/null || true)"
+    printf '%s' "$out" | grep -qE '^ready=[01]$' || { ok=0; echo "  $name: no ready= line"; }
+    # A driver claiming readiness must say how keen it is, or selection has
+    # nothing to order it by.
+    if printf '%s' "$out" | grep -q '^ready=1$'; then
+      printf '%s' "$out" | grep -qE '^priority=[0-9]+$' || { ok=0; echo "  $name: ready but no priority="; }
+    fi
+  done
+  [ "$ok" -eq 1 ] && log_pass "every driver answers probe with ready= and, when ready, priority=" \
+                  || log_fail "every driver answers probe with ready= and, when ready, priority="
+}
+
+# Computed from the probes themselves rather than hardcoded, so the expectation
+# holds on a machine where a given runtime is absent.
+keenest_ready_driver() {
+  local d name out best="" best_prio=""
+  for d in "$SCRIPT_DIR"/../driver-*.sh; do
+    [ -f "$d" ] || continue
+    name="$(basename "$d" .sh)"; name="${name#driver-}"
+    out="$(bash "$d" probe 2>/dev/null || true)"
+    printf '%s' "$out" | grep -q '^ready=1$' || continue
+    local prio
+    prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
+    case "$prio" in ''|*[!0-9]*) prio=99 ;; esac
+    if [ -z "$best_prio" ] || [ "$prio" -lt "$best_prio" ]; then best="$name"; best_prio="$prio"; fi
+  done
+  printf '%s' "$best"
+}
+
+test_init_without_driver_picks_the_keenest() {
+  local root repo out want got
+  root="$(mktemp -d)"; repo="$root/repo"; mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q .; git config user.email t@t.com; git config user.name t
+    printf 'x\n' > f.txt; git add f.txt; git commit -qm init; git branch -M main
+    printf '[ { "id": "N1", "title": "One", "deps": [], "files": ["a.ts"] } ]\n' > nodes.json
+  )
+  want="$(keenest_ready_driver)"
+  out="$(cd "$repo" && bash "$GRAPH" init --feature f --from nodes.json --mode local)"
+  got="$(printf '%s' "$out" | sed -n 's/^driver=//p' | head -1)"
+  # The old fixed default was the one driver that spawns nothing, so the common
+  # case was a graph whose every workspace had to be created by hand.
+  if [ -n "$want" ] && [ "$got" = "$want" ] && printf '%s' "$out" | grep -q '^driver_chosen_by=probe$'; then
+    log_pass "init with no --driver selects the keenest ready driver ($want)"
+  else
+    log_fail "init with no --driver selects the keenest ready driver (wanted $want, got $got)"
+  fi
+  rm -rf "$root"
+}
+
+test_explicit_driver_beats_the_probe() {
+  local root repo out
+  root="$(mktemp -d)"; repo="$root/repo"; mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q .; git config user.email t@t.com; git config user.name t
+    printf 'x\n' > f.txt; git add f.txt; git commit -qm init; git branch -M main
+    printf '[ { "id": "N1", "title": "One", "deps": [], "files": ["a.ts"] } ]\n' > nodes.json
+  )
+  out="$(cd "$repo" && bash "$GRAPH" init --feature f --from nodes.json --mode local --driver manual)"
+  if printf '%s' "$out" | grep -q '^driver=manual$' \
+     && printf '%s' "$out" | grep -q '^driver_chosen_by=explicit$'; then
+    log_pass "an explicit --driver is never overridden by the probe"
+  else
+    log_fail "an explicit --driver is never overridden by the probe"
+  fi
+  rm -rf "$root"
+}
+
+test_unready_driver_is_skipped() {
+  local root repo out got
+  root="$(mktemp -d)"; repo="$root/repo"; mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q .; git config user.email t@t.com; git config user.name t
+    printf 'x\n' > f.txt; git add f.txt; git commit -qm init; git branch -M main
+    printf '[ { "id": "N1", "title": "One", "deps": [], "files": ["a.ts"] } ]\n' > nodes.json
+  )
+  # A stripped PATH hides any external runtime, so every driver that needs one
+  # must report ready=0 and drop out of the running.
+  out="$(cd "$repo" && env PATH="/usr/bin:/bin" bash "$GRAPH" init --feature f --from nodes.json --mode local 2>/dev/null)"
+  got="$(printf '%s' "$out" | sed -n 's/^driver=//p' | head -1)"
+  # Never the hand-driven one: git is still there, so something can still spawn.
+  if [ -n "$got" ] && [ "$got" != "manual" ]; then
+    log_pass "a driver whose runtime is unreachable drops out of selection (fell back to $got)"
+  else
+    log_fail "a driver whose runtime is unreachable drops out of selection (got '$got')"
+  fi
+  rm -rf "$root"
+}
+
 test_next_orders_the_driver_start_instruction
 test_dispatch_says_nothing_is_running_yet
 test_never_started_node_is_named_as_such
@@ -317,6 +416,10 @@ test_set_refuses_to_orphan_an_inflight_worker
 test_resume_points_at_set_not_fresh
 test_unreadable_slot_count_is_not_a_deadlock
 test_missing_driver_file_is_named
+test_every_driver_answers_probe
+test_init_without_driver_picks_the_keenest
+test_explicit_driver_beats_the_probe
+test_unready_driver_is_skipped
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
