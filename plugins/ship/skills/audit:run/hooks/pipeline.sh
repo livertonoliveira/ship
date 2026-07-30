@@ -1700,6 +1700,24 @@ cmd_next() {
     fi
   fi
 
+  # --- node PR (work graph) -------------------------------------------------------
+  # Reached only on a green gate: a red one emits `ask` above and never gets
+  # here, which is the whole contract — nothing opens a PR the user has not been
+  # asked about, and a clean run needs no permission to proceed.
+  #
+  # Placed BEFORE homolog because homolog-approved.txt is what the graph polls
+  # to land a node, and landing seals the workspace into one blob commit. Running
+  # /ship:pr first means the tree is already committed atomically and the seal
+  # finds nothing to do.
+  if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
+    local pr_base
+    pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
+    next_body_add "Invoke ship:pr via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
+    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (PR base, pull/push target — never main) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
+    next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
+    next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
+  fi
+
   # --- homolog ------------------------------------------------------------------
   if [ "$(phase_toggle "$CONFIG" homolog)" != "disabled" ] && [ ! -f "$SCRATCH/homolog-approved.txt" ]; then
     if [ "$ANSWER" = "approved" ]; then

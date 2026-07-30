@@ -19,8 +19,8 @@ set -euo pipefail
 usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
-  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--fresh]" >&2
-  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N]" >&2
+  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
+  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -118,6 +118,14 @@ meta_set() {
     END { if (!done) print k, v }
   ' "$dir/meta.tsv" > "$tmp"
   mv "$tmp" "$dir/meta.tsv"
+}
+
+# One issue, one workspace, one PR — the graph's node granularity IS the PR
+# granularity, so this is on unless a run opts out. Graphs created before the
+# flag existed have no meta row; absent reads as on for them too, which is the
+# behaviour their next claim should get.
+node_pr_on() {
+  [ "$(meta_get "$1" node_pr)" != "off" ]
 }
 
 # --- nodes -------------------------------------------------------------------
@@ -406,7 +414,7 @@ autoselect_driver() {
 }
 
 cmd_init() {
-  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit"
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on"
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -417,6 +425,7 @@ cmd_init() {
       --base-branch) base_branch="$2"; shift 2 ;;
       --mode) mode="$2"; shift 2 ;;
       --repo) default_repo="$2"; shift 2 ;;
+      --node-pr) node_pr="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) usage; exit 1 ;;
@@ -432,6 +441,7 @@ cmd_init() {
   esac
   [ "$max_in_flight" -ge 1 ] || die "init: --max-in-flight must be >= 1"
   case "$mode" in linear|local) ;; *) die "init: --mode must be linear or local: $mode" ;; esac
+  case "$node_pr" in on|off) ;; *) die "init: --node-pr must be on or off: $node_pr" ;; esac
   if [ -z "$driver" ]; then
     driver="$(autoselect_driver)"
     [ -n "$driver" ] || die "init: no driver reported itself ready here — pass --driver <name> explicitly"
@@ -488,7 +498,8 @@ cmd_init() {
   if [ "$fresh" -eq 1 ]; then
     rm -rf "$dir/merge"
     rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt \
-          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/merge-*.log "$dir/nodes.tsv" "$dir/meta.tsv"
+          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/merge-*.log "$dir"/publish-*.log \
+          "$dir/nodes.tsv" "$dir/meta.tsv"
   fi
 
   local parsed
@@ -535,6 +546,7 @@ cmd_init() {
   meta_set "$dir" base_branch "$base_branch"
   meta_set "$dir" max_in_flight "$max_in_flight"
   meta_set "$dir" repo "$default_repo"
+  meta_set "$dir" node_pr "$node_pr"
   meta_set "$dir" integration_status green
   meta_set "$dir" integration_last_merged ""
 
@@ -556,7 +568,7 @@ cmd_init() {
 # --- set ---------------------------------------------------------------------
 
 set_usage() {
-  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N]" >&2
+  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
   echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
 }
 
@@ -571,21 +583,33 @@ set_usage() {
 # every workspace is already branched from it, so changing it mid-run would make
 # the conflict edges and the merge node read against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
       --driver) driver="$2"; shift 2 ;;
       --max-in-flight) max_in_flight="$2"; shift 2 ;;
+      --node-pr) node_pr="$2"; shift 2 ;;
       -h|--help) set_usage; exit 0 ;;
       *) set_usage; exit 1 ;;
     esac
   done
-  [ -n "$driver" ] || [ -n "$max_in_flight" ] || die "set: give --driver and/or --max-in-flight"
+  [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || die "set: give --driver, --max-in-flight and/or --node-pr"
 
   local dir
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
+
+  # Read at claim time, so flipping it mid-run only reaches nodes not yet
+  # claimed — the ones already carrying a pr-mode marker keep the contract they
+  # were dispatched under.
+  if [ -n "$node_pr" ]; then
+    case "$node_pr" in on|off) ;; *) die "set: --node-pr must be on or off: $node_pr" ;; esac
+    meta_set "$dir" node_pr "$node_pr"
+    log_line "$dir" "node_pr → $node_pr"
+    printf 'node_pr=%s\n' "$node_pr"
+    changed=1
+  fi
 
   if [ -n "$max_in_flight" ]; then
     case "$max_in_flight" in ''|*[!0-9]*) die "set: --max-in-flight must be a positive integer: $max_in_flight" ;; esac
@@ -755,6 +779,23 @@ cmd_claim() {
   mkdir -p "$scratch"
   printf 'defer\n' > "$scratch/homolog-mode.txt"
 
+  # One issue, one PR: the node's own pipeline opens it, from the workspace that
+  # holds the diff, so the commits are the atomic ones /ship:pr writes instead of
+  # the single blob seal_workspace falls back to. The base is the graph's base
+  # branch and never main — a node is only dispatched once its deps are done,
+  # i.e. already merged into that base, so its PR diff is its own work alone and
+  # no stacking is needed.
+  local node_pr_state="off"
+  if node_pr_on "$dir"; then
+    node_pr_state="on"
+    {
+      printf 'mode=graph\n'
+      printf 'base=%s\n' "$(meta_get "$dir" base_branch)"
+    } > "$scratch/pr-mode.txt"
+  else
+    rm -f "$scratch/pr-mode.txt"
+  fi
+
   # Baseline the progress counter here, not on the first poll. Without it the
   # first poll always reads as progress (no previous value to compare against)
   # and the stall cap silently needs one extra round.
@@ -768,6 +809,7 @@ cmd_claim() {
   printf 'worktree=%s\n' "$wt"
   printf 'branch=%s\n' "$branch"
   printf 'homolog_mode=defer\n'
+  printf 'node_pr=%s\n' "$node_pr_state"
 }
 
 # /ship:run leaves its work UNCOMMITTED — develop writes to the tree and only
@@ -1038,6 +1080,43 @@ cmd_iter() {
 
 # --- merge node --------------------------------------------------------------
 
+# "origin" is a convention, not a guarantee — this very repo's only remote is
+# named something else, and a hardcoded origin turns every publish into a silent
+# skipped-no-remote there. The base branch's own tracking config is the honest
+# answer; origin and "the only remote there is" are the fallbacks.
+base_remote() {
+  local base="$1" r
+  r="$(git config --get "branch.$base.remote" 2>/dev/null || true)"
+  if [ -z "$r" ] && git remote get-url origin >/dev/null 2>&1; then r="origin"; fi
+  if [ -z "$r" ] && [ "$(git remote | awk 'END { print NR + 0 }')" = "1" ]; then r="$(git remote)"; fi
+  printf '%s' "$r"
+}
+
+# What closes a node's PR. The integration suite has just run green over the
+# merge, so the local base is the verified state; pushing it makes the node's
+# head an ancestor of the remote base and the forge marks that PR merged. The
+# merge node stays the single decision point — nothing merges on the forge that
+# was not verified here first.
+#
+# Never fatal: a red push (no remote, no credentials, base moved underneath) is
+# a publication problem, not an integration one, and failing the merge over it
+# would roll a green node back into the fix loop.
+publish_base() {
+  local dir="$1" id="$2" base remote
+  node_pr_on "$dir" || { printf 'skipped-node-pr-off'; return 0; }
+  base="$(meta_get "$dir" base_branch)"
+  [ -n "$base" ] || { printf 'skipped-no-base'; return 0; }
+  remote="$(base_remote "$base")"
+  [ -n "$remote" ] || { printf 'skipped-no-remote'; return 0; }
+  if git push -q "$remote" "HEAD:refs/heads/$base" >"$dir/publish-$id.log" 2>&1; then
+    log_line "$dir" "$id merged and $base published — its PR closes as merged"
+    printf 'yes'
+  else
+    log_line "$dir" "$id merged locally but pushing $base failed — see $dir/publish-$id.log"
+    printf 'failed'
+  fi
+}
+
 # The verifier that does not exist inside a single task's pipeline: two nodes
 # green in isolation can be red together. Merges one landed branch into the base
 # checkout, then re-runs the FULL suite — a synthetic scratch with no
@@ -1118,6 +1197,7 @@ cmd_merge() {
       render_json "$dir"
       printf 'result=green\n'
       printf 'completed=%s\n' "$id"
+      printf 'published=%s\n' "$(publish_base "$dir" "$id")"
       if [ "$rc" -eq 2 ]; then
         printf 'note=no test runner resolved — merge accepted on the static gate alone\n'
       fi
@@ -1393,7 +1473,11 @@ cmd_next() {
   if [ "$done_n" -eq "$total" ]; then
     next_body_add "Every node is integrated into $(meta_get "$dir" base_branch)."
     next_body_add "Present the batch homolog: for each node, its workspace's .context/ship-run/<task>/homolog-report.md (written by the deferred homolog), in the artifact language."
-    next_body_add "Then inform: run /ship:pr when ready. NEVER auto-invoke /ship:pr."
+    if node_pr_on "$dir"; then
+      next_body_add "Then inform: every node PR is already open and merged into $(meta_get "$dir" base_branch); what remains is the integration PR from that branch to the default branch — run /ship:pr when ready. NEVER auto-invoke /ship:pr."
+    else
+      next_body_add "Then inform: run /ship:pr when ready. NEVER auto-invoke /ship:pr."
+    fi
     next_emit "done" "done" "0" "" "graph complete — $done_n/$total nodes"
   fi
 

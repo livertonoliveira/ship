@@ -74,5 +74,5 @@ To abandon a run, `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" abort`: it stops ea
 - `claim` writes `homolog-mode=defer` into the task's workspace, so no node stops for its own acceptance prompt. Every report is presented in one batch at `done`.
 - Completion is observed, never reported: `poll` lands a node when its pipeline leaves `homolog-approved.txt` on disk, and seals the workspace into a commit (`/ship:run` writes files but never commits, so the merge would otherwise be empty). A node whose phases stop advancing surfaces as `ask` instead of being waited on forever.
 - A red merge node is the graph's own gate: it gets at most 2 fix rounds, then asks. Never merge past it by hand.
-- Never auto-create the PR — the user runs `/ship:pr`.
+- One issue, one PR: each node opens its own, against the graph's base branch, from inside its workspace — `pipeline.sh next` emits that step itself on a green gate, and a red gate stops the node before it. The merge node then merges it by publishing the verified base. Never open or merge one by hand; `--node-pr off` turns the whole behaviour off. The final base→default-branch PR is still the user's `/ship:pr`.
 - Language: user-facing output in the config's `Artifact language`; code, commits, branch names stay English (${CLAUDE_SKILL_DIR}/patterns/language.md).

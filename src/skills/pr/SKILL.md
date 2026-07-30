@@ -23,7 +23,7 @@ Run the deterministic preflight once and act on its output — never re-derive t
 bash "@@ship/hooks/pr-preflight.sh" --task <task-id> --feature <feature-name>
 ```
 
-It prints `storage=` (linear|local — @@ship/patterns/storage-mode.md is the definition), `branch=`/`on_default_branch=`, `pending_changes=`, `profile=`, `approval=` (local marker check; `unknown` in Linear — check cached comments), and one `gate_row:` per phase when the scratch dir exists.
+It prints `storage=` (linear|local — @@ship/patterns/storage-mode.md is the definition), `branch=`/`on_default_branch=`, `remote=`/`pr_base=` (pull, push and `--base` target these — never a hardcoded `origin`/`main`), `keep_context=` (`yes` = work-graph node: the graph polls this scratch dir and merges the PR itself), `pending_changes=`, `profile=`, `approval=` (local marker check; `unknown` in Linear — check cached comments), and one `gate_row:` per phase when the scratch dir exists.
 
 Feature: **Linear** — `$ARGUMENTS` as issue ID/project name (ask if empty). **Local** — `$ARGUMENTS` as feature name in `ship/changes/`, else most recent feature with approved acceptance in `report.md`, else most recent feature folder (fast path below handles it).
 
@@ -82,9 +82,11 @@ Run typecheck, tests, and lint per `ship/config.md`. On failure: fix, re-commit,
 ### 5. Push
 
 ```bash
-git pull --rebase origin main
-git push -u origin <branch-name>
+git pull --rebase <remote> <pr_base>
+git push -u <remote> <branch-name>
 ```
+
+`<remote>` and `<pr_base>` are the preflight's — never the literal `origin`/`main`, which are conventions this repo may not follow.
 
 Resolve rebase conflicts, asking the user if ambiguous.
 
@@ -106,7 +108,7 @@ Apply the lazy-load algorithm at @@ship/patterns/lazy-load-findings.md per phase
 Build the body from the loaded artifacts following the PR Body Template section of @@ship/report-templates.md, then create via HEREDOC:
 
 ```bash
-gh pr create --title "<conventional commit style title>" --body "$(cat <<'EOF'
+gh pr create --base <pr_base> --title "<conventional commit style title>" --body "$(cat <<'EOF'
 <body content>
 EOF
 )"
@@ -124,11 +126,11 @@ EOF
 bash "@@ship/hooks/pr-finalize.sh" <task-id> [--keep-context] [--feature <feature-name>]
 ```
 
-Pass `--keep-context` only if the user asked for it (log the printed `context=` result); pass `--feature` in Local mode only (Linear has nothing to archive). It removes the task's scratch dir — never the shared parent — and archives `ship/changes/<feature>` under `archive/<date>-<feature>`.
+Pass `--keep-context` when the preflight printed `keep_context=yes` or the user asked for it (log the printed `context=` result); pass `--feature` in Local mode only, and never alongside `keep_context=yes` (the graph's other nodes still need that feature folder). It removes the task's scratch dir — never the shared parent — and archives `ship/changes/<feature>` under `archive/<date>-<feature>`.
 
 ### 10. Finalize
 
-Inform the user of the PR URL, commit count, and branch name. Remind: "Do NOT merge — review the PR and merge manually."
+Inform the user of the PR URL, commit count, and branch name. Remind: "Do NOT merge — review the PR and merge manually." With `keep_context=yes`, say instead that the graph's merge node merges it once the integration suite is green.
 
 ---
 
