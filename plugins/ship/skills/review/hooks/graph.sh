@@ -20,6 +20,7 @@ usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
   echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--fresh]" >&2
+  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -425,6 +426,13 @@ cmd_init() {
     printf 'inflight=%s\n' "$(count_status "$dir" in_flight)"
     printf 'landed=%s\n' "$(count_status "$dir" landed)"
     printf 'done=%s\n' "$(count_status "$dir" done)"
+    # A re-init almost always means "the driver I picked does not work here" or
+    # "give me more slots" — not "throw the run away". Naming the non-destructive
+    # command here is what keeps the next reflex off --fresh.
+    if [ "$driver" != "$(meta_get "$dir" driver)" ] || [ "$max_in_flight" != "$(meta_get "$dir" max_in_flight)" ]; then
+      printf 'reconfigure=graph.sh set --feature %s --driver %s --max-in-flight %s\n' \
+        "$feature" "$driver" "$max_in_flight"
+    fi
     exit 3
   fi
 
@@ -504,6 +512,76 @@ cmd_init() {
   printf 'graph=%s\n' "$dir/graph.json"
   printf 'nodes=%s\n' "$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
   printf 'driver=%s\n' "$driver"
+}
+
+# --- set ---------------------------------------------------------------------
+
+set_usage() {
+  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N]" >&2
+  echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
+}
+
+# The escape hatch that has to exist. Before this, the only way to change the
+# driver on a live graph was re-init, which the RESUME guard refuses — leaving
+# --fresh as the sole way through, and --fresh discards the in-flight claims and
+# fix-loop counters the guard exists to protect. A driver that turns out not to
+# work in this environment (no CLI, no permission to dispatch) is discovered
+# AFTER init by construction, so "start over" was the wrong and only answer.
+#
+# Only the two knobs that carry no node state are settable. base_branch is not:
+# every workspace is already branched from it, so changing it mid-run would make
+# the conflict edges and the merge node read against a base the nodes never saw.
+cmd_set() {
+  local feature="" driver="" max_in_flight="" changed=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --driver) driver="$2"; shift 2 ;;
+      --max-in-flight) max_in_flight="$2"; shift 2 ;;
+      -h|--help) set_usage; exit 0 ;;
+      *) set_usage; exit 1 ;;
+    esac
+  done
+  [ -n "$driver" ] || [ -n "$max_in_flight" ] || die "set: give --driver and/or --max-in-flight"
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  if [ -n "$max_in_flight" ]; then
+    case "$max_in_flight" in ''|*[!0-9]*) die "set: --max-in-flight must be a positive integer: $max_in_flight" ;; esac
+    [ "$max_in_flight" -ge 1 ] || die "set: --max-in-flight must be >= 1"
+    meta_set "$dir" max_in_flight "$max_in_flight"
+    log_line "$dir" "max_in_flight → $max_in_flight"
+    printf 'max_in_flight=%s\n' "$max_in_flight"
+    changed=1
+  fi
+
+  if [ -n "$driver" ]; then
+    valid_id "$driver" || die "set: invalid driver name: $driver"
+    [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "set: no driver at $HOOK_DIR/driver-$driver.sh"
+    # An in-flight node was dispatched THROUGH the old driver and can only be
+    # collected, waited on and stopped through it. Swapping underneath it orphans
+    # a worker that keeps running and billing with nothing able to reach it.
+    local busy
+    busy="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; } | tr '\n' ' ' )"
+    busy="$(printf '%s' "$busy" | sed 's/ *$//')"
+    if [ -n "$busy" ]; then
+      die "set: cannot change the driver while node(s) are still held by the current one: $busy
+    Let them finish, or release them first: graph.sh abort (stops the workers, keeps the workspaces)."
+    fi
+    local prev
+    prev="$(meta_get "$dir" driver)"
+    meta_set "$dir" driver "$driver"
+    log_line "$dir" "driver $prev → $driver"
+    printf 'driver=%s\n' "$driver"
+    printf 'previous_driver=%s\n' "$prev"
+    changed=1
+  fi
+
+  render_json "$dir"
+  printf 'feature=%s\n' "$(meta_get "$dir" feature)"
+  printf 'changed=%s\n' "$changed"
 }
 
 # --- nodes --from-tasks ------------------------------------------------------
@@ -1298,6 +1376,7 @@ shift
 
 case "$SUBCOMMAND" in
   init)      cmd_init "$@" ;;
+  set)       cmd_set "$@" ;;
   next)      cmd_next "$@" ;;
   claim)     cmd_claim "$@" ;;
   land)      cmd_land "$@" ;;
