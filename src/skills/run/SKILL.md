@@ -42,7 +42,7 @@ Linear ID or local `TASK-001` → single task (default). `--project`/`--mileston
 
 - Never invoke a phase tool the instruction didn't list; never skip one it did; never reorder or re-evaluate — the state machine already did.
 - FAIL gates are non-negotiable; only `pipeline.sh next` resolves gate outcomes.
-- Never auto-create the PR — the user runs `/ship:pr`.
+- Never auto-create the PR — the user runs `/ship:pr`. The one exception is a `node-pr` state: inside a work graph the state machine emits that step itself, on a green gate, and it is executed like any other instruction.
 - Multi-task here is sequential by design; for independent tasks in parallel workspaces, the user runs `/ship:graph <feature>` instead.
 - Language: user-facing output in the config's `Artifact language`; code, commits, branch names stay English (@@ship/patterns/language.md).
 - Bundled references the instructions point at: @@ship/patterns/run-context.md, @@ship/patterns/linear-status.md, @@ship/patterns/load-artifacts.md, @@ship/patterns/lazy-load-findings.md, @@ship/patterns/diff-classifier.md, @@ship/patterns/gates.md.
