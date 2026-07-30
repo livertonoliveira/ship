@@ -229,6 +229,52 @@ resetado.
 
 ---
 
+## Terceira rodada — a API contra a qual o driver foi escrito foi aposentada (2026-07-30)
+
+Numa run real (`camada-de-marca-v1-agendx`, 23 nós) o `driver-orca` morreu na
+**primeira** chamada:
+
+```
+orca orchestration task-create --spec ... --task-title ...
+→ ok:false  code: legacy_read_only
+  "This retained legacy coordinator could not prove its original process identity."
+```
+
+Nenhuma workspace chegou a existir, então nem havia o que inspecionar. A hipótese
+inicial — "o Bash tool do agente não é um terminal gerenciado, logo não tem
+identidade" — **está errada** e foi refutada por medição: falha igualmente de um
+pane nativo do Orca, e `ORCA_TERMINAL_HANDLE` está presente no ambiente. Passar
+`--from "$ORCA_TERMINAL_HANDLE"` também não muda nada.
+
+A causa é outra: `orchestration coordinator-start` aparece hoje como
+**`Retired: load the current orchestration skill`**. O driver foi escrito contra
+esse esquema. Sem um **Run**, `task-create` cai no lookup do coordenador retido
+daquele esquema, não consegue provar a identidade de processo original, e recusa.
+
+O caminho atual, **os quatro verificados de um subprocesso comum**:
+
+| Chamada | Resultado |
+|---|---|
+| `orchestration run-create --objective <o>` | `run_…`, `legacy: 0`, liga este terminal como `coordinator_handle` |
+| `orchestration task-create … --run <run>` | `task_…` — **o `--run` é a diferença inteira** |
+| `orchestration worker-start --task <t> --run <r> --agent claude --repo … --name … --worktree new-top-level` | cria a worktree Orca-managed, lança o agente, registra o dispatch e entrega o preâmbulo + `=== TASK ===` como `stage: input_accepted` |
+| `worktree show` / `worker-stop --dispatch` | inalterados |
+
+Duas consequências para o driver:
+
+- **`deliver_prompt` foi removido.** Ele existia só para simular o que o
+  `worker-start` já faz: a §A da segunda rodada (colar, conferir no buffer,
+  mandar Enter em chamada separada) deixa de ser necessária, e com ela some a
+  janela em que um send perdido deixava o worker ocioso com o brief não enviado.
+- **A worktree passa a aparecer na UI do Orca**, porque é criada *através* do
+  Orca. Um `git worktree` ao lado do repo (o que o `driver-local` faz) nunca
+  aparece — é a resposta para "as worktrees não estão aparecendo direito".
+
+`worker_done` continua sendo só atalho: quem decide conclusão é o
+`graph.sh poll` lendo `homolog-approved.txt` (§B).
+
+---
+
 ## O que muda no plano
 
 Só o `driver-orca.sh` (Fase 3). `graph.sh`, `pipeline.sh`, o schema do grafo e as
