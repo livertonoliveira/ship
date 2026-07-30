@@ -434,7 +434,16 @@ cmd_init() {
   fi
 
   mkdir -p "$dir"
-  [ "$fresh" -eq 1 ] && rm -f "$dir"/iteration-*.txt "$dir/nodes.tsv" "$dir/meta.tsv"
+  # --fresh has to clear EVERY per-run file, not just the two that describe the
+  # graph. Leaving the driver's own state behind means the next run's first
+  # `wait` reports done= for nodes it never dispatched — a fabricated completion
+  # signal surviving a reset, which is exactly what the observe-the-artifact
+  # rule exists to prevent. Stall and progress counters are just as poisonous.
+  if [ "$fresh" -eq 1 ]; then
+    rm -rf "$dir/merge"
+    rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt \
+          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/merge-*.log "$dir/nodes.tsv" "$dir/meta.tsv"
+  fi
 
   local parsed
   parsed="$(parse_nodes_json < "$from")"
