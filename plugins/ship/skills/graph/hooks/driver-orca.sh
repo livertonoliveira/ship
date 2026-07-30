@@ -5,16 +5,34 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # driver-orca.sh — Orca as the workspace runtime.
 #
-# Shaped by what Phase 0 actually measured (docs/graph-mode-orca-findings.md),
-# not by the CLI's help text. Two things there differ from the original design:
+# Shaped by what was measured against the live CLI, not by its help text.
 #
-#   1. `dispatch` is four calls, not one. `worktree create --prompt` starts a
-#      worker but creates no orchestration provenance, and `dispatch --inject`
-#      pastes the brief without submitting it. So: create the task, create the
-#      workspace, register the dispatch, then deliver the preamble and Enter in a
-#      single `terminal send`.
-#   2. `--wait` writes JSON keepalives to stderr every 15s, so stderr must be
+# The original driver was written against the orchestration API that Orca has
+# since RETIRED (`coordinator-start`), and died on its very first call: without a
+# Run to hang off, `task-create` falls back to looking up a retained legacy
+# coordinator, cannot prove that coordinator's original process identity, and
+# answers `legacy_read_only`. No workspace was ever created, so the graph could
+# not even fall back to inspecting one. Measured 2026-07-30: this fails from an
+# Orca-native pane too, so it was never about who was calling.
+#
+# The modern shape, all four verified from a plain subprocess:
+#   1. `orchestration run-create --objective <o>` binds this terminal as the
+#      Run's coordinator (legacy: 0). EVERY later call carries `--run`; that is
+#      the whole difference between working and legacy_read_only.
+#   2. `orchestration worker-start --task <t> --run <r> --agent claude` creates
+#      the Orca-managed worktree, launches the agent, registers the dispatch and
+#      delivers the lifecycle preamble + TASK block as accepted input — one call
+#      replacing the four this driver used to make, and removing the paste-then-
+#      press-Enter dance that used to leave workers idle with an unsent brief.
+#   3. Because the worktree is created THROUGH Orca, it is registered with the
+#      app and shows up in its UI. A plain `git worktree` beside the repo (what
+#      driver-local makes) never does.
+#   4. `--wait` writes JSON keepalives to stderr every 15s, so stderr must be
 #      discarded or it contaminates the caller's parse.
+#
+# Completion still does not depend on any of this: graph.sh poll observes
+# homolog-approved.txt (docs/graph-mode-orca-findings.md §B). worker_done only
+# ends the wait window early.
 #
 # Verbs: dispatch | collect | wait | ask | stop  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
@@ -56,6 +74,14 @@ require_cli() {
   }
 }
 
+# Orca reports a branch as a full ref (refs/heads/x); driver-local reports the
+# short name. graph.sh feeds whichever it gets straight into `git merge`, so both
+# work — but only one of them reads correctly in a status table, and a driver
+# swap must not change the shape of the graph's own state.
+short_branch() {
+  printf '%s' "${1#refs/heads/}"
+}
+
 # The responses are machine-generated and pretty-printed one key per line, so a
 # line-oriented match is enough here; graph.sh's real parser stays in graph.sh.
 json_val() {
@@ -74,61 +100,28 @@ kv_get() {
   sed -n "s/^$key=//p" "$file" | head -1
 }
 
-# Delivering a brief to an agent TUI takes two writes, not one, and the second
-# must be observed rather than timed.
+# --- the Run ----------------------------------------------------------------
 #
-# Measured against live worktrees, three times:
-#   * `dispatch --inject` pastes the brief and never submits it.
-#   * `terminal send --text "<multi-line>" --enter` also never submits: the
-#     trailing newline is consumed as part of the paste, not as a keystroke.
-#   * `terminal send --text "" --enter` as a SEPARATE call does submit.
-#
-# So: paste, wait until the text is actually visible in the buffer, then send a
-# bare Enter. Waiting on the buffer rather than on a sleep is the whole point —
-# an earlier "fix" sent the Enter immediately, it landed mid-paste and was
-# swallowed, and it only ever looked correct in probes where minutes happened to
-# have passed.
-deliver_prompt() {
-  local handle="$1" text="$2" marker attempt=0 tries
+# A Run is the namespace every modern orchestration call hangs off. Without one,
+# `task-create` falls back to looking up a retained coordinator from the retired
+# `coordinator-start` scheme and answers legacy_read_only — which is what made
+# this driver die before it had created anything at all. `run-create` binds the
+# calling terminal as coordinator (legacy: 0) and every later call carries
+# `--run`, so nothing depends on that retired lookup.
+ensure_run() {
+  local f="$STATE/driver-orca-run.txt" run
 
-  # The brief's last line is the task prompt itself — short and distinctive.
-  marker="$(printf '%s' "$text" | sed -e '/^[[:space:]]*$/d' | tail -1 | cut -c1-30)"
+  run="$(cat "$f" 2>/dev/null || true)"
+  if [ -n "$run" ]; then
+    printf '%s' "$run"
+    return 0
+  fi
 
-  # 1. Wait for the agent TUI to be accepting input. `terminal wait --for
-  #    tui-idle` answers satisfied=true immediately and gates nothing, so read
-  #    the pane instead: the footer only renders once the TUI is up. Sending
-  #    before that drops the whole brief into a terminal that is still booting.
-  tries=0
-  while [ "$tries" -lt 45 ]; do
-    orca terminal read --terminal "$handle" 2>/dev/null | grep -qE 'bypass permissions|Claude Code|❯' && break
-    tries=$((tries + 1))
-    sleep 2
-  done
-
-  # 2. Send, then confirm it actually landed, then submit — and re-send if it
-  #    did not. An earlier version sent once, waited, and proceeded regardless;
-  #    when the send was lost it pressed Enter on an empty prompt and reported
-  #    success, leaving the node idle for half an hour.
-  while [ "$attempt" -lt 4 ]; do
-    attempt=$((attempt + 1))
-    orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || true
-
-    tries=0
-    while [ "$tries" -lt 15 ]; do
-      if [ -z "$marker" ] || orca terminal read --terminal "$handle" 2>/dev/null | grep -qF "$marker"; then
-        # A multi-line paste never submits itself: the trailing newline of
-        # `--enter` is consumed as part of the paste. The submit has to be its
-        # own keystroke, after the paste is visible.
-        orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
-        return 0
-      fi
-      tries=$((tries + 1))
-      sleep 2
-    done
-  done
-
-  echo "driver-orca.sh: brief never landed in $handle after $attempt attempts" >&2
-  return 1
+  run="$(orca orchestration run-create --objective "Ship graph: $(basename "$STATE")" --json 2>/dev/null \
+    | json_id run_)"
+  [ -n "$run" ] || return 1
+  printf '%s\n' "$run" > "$f"
+  printf '%s' "$run"
 }
 
 verb_dispatch() {
@@ -138,61 +131,71 @@ verb_dispatch() {
   require_cli
   prompt="${prompt:-/ship:run $task}"
 
-  local created rtask coordinator
-  created="$(orca orchestration task-create --spec "$prompt" --task-title "$task" --json 2>/dev/null)"
+  local run
+  run="$(ensure_run)" || {
+    echo "driver-orca.sh dispatch: could not create an orchestration Run — the runtime is reachable but refused to bind this terminal as coordinator." >&2
+    echo "  Switch runtimes without losing the graph: graph.sh abort, then graph.sh set --driver local" >&2
+    exit 1
+  }
+
+  local created rtask
+  created="$(orca orchestration task-create --spec "$prompt" --task-title "$task" --run "$run" --json 2>/dev/null)"
   rtask="$(printf '%s' "$created" | json_id task_)"
-  [ -n "$rtask" ] || { echo "driver-orca.sh dispatch: task-create returned no task id" >&2; exit 1; }
-  coordinator="$(printf '%s' "$created" | json_val created_by_terminal_handle)"
-  [ -n "$coordinator" ] && printf '%s\n' "$coordinator" > "$STATE/driver-orca-coordinator.txt"
+  [ -n "$rtask" ] || { echo "driver-orca.sh dispatch: task-create returned no task id (run $run)" >&2; exit 1; }
+  printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
+    > "$STATE/driver-orca-coordinator.txt"
 
-  local create_args=(worktree create --name "$task" --no-parent --setup run --json)
-  [ -n "$REPO" ] && create_args+=(--repo "id:$REPO")
-  [ -n "$BASE" ] && create_args+=(--base-branch "$BASE")
-  # `worktree create --agent` launches the runtime's default agent command and
-  # accepts no extra argv, so a worker always resolves whatever Ship is INSTALLED
-  # globally — never the tree under test. SHIP_WORKER_COMMAND takes the two-step
-  # path instead (create the workspace, then the terminal with an explicit
-  # command), which is also how a non-default model or effort gets in.
-  [ -z "${SHIP_WORKER_COMMAND:-}" ] && create_args+=(--agent claude)
+  # One call replaces four. `worker-start` creates the Orca-managed worktree,
+  # launches the agent in it, registers the dispatch AND delivers the lifecycle
+  # preamble + TASK block as accepted input — the last of which is what the old
+  # deliver_prompt existed to fake by pasting into the TUI and pressing Enter.
+  # Because the worktree is created THROUGH Orca it is registered with the app,
+  # so it appears in the UI; a plain `git worktree` beside the repo never does.
+  local start_args=(orchestration worker-start --task "$rtask" --run "$run"
+                    --name "$task" --display-name "$task" --worktree new-top-level --setup run --json)
+  [ -n "$REPO" ] && start_args+=(--repo "id:$REPO")
+  [ -n "$BASE" ] && start_args+=(--base-branch "$BASE")
 
-  local wt handle wt_id branch path
-  wt="$(orca "${create_args[@]}" 2>/dev/null)"
-  wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
-  path="$(printf '%s' "$wt" | json_val path)"
-  branch="$(printf '%s' "$wt" | json_val branch)"
-
+  # `--agent` launches the runtime's default agent command and accepts no extra
+  # argv, so a worker resolves whatever Ship is INSTALLED globally rather than
+  # the tree under test. SHIP_WORKER_COMMAND builds the terminal itself and hands
+  # worker-start the handle, which is also how a non-default model or effort gets
+  # in — and how the e2e smoke test measures the build it just compiled.
+  local wt_id term handle
   if [ -n "${SHIP_WORKER_COMMAND:-}" ]; then
+    local wt_args=(worktree create --name "$task" --no-parent --setup run --json)
+    [ -n "$REPO" ] && wt_args+=(--repo "id:$REPO")
+    [ -n "$BASE" ] && wt_args+=(--base-branch "$BASE")
+    local wt
+    wt="$(orca "${wt_args[@]}" 2>/dev/null)"
+    wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
     [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: no worktree id in the create response" >&2; exit 1; }
-    local term
     term="$(orca terminal create --worktree "id:$wt_id" --title "$task" --command "$SHIP_WORKER_COMMAND" --json 2>/dev/null)"
     handle="$(printf '%s' "$term" | json_id term_)"
+    [ -n "$handle" ] || { echo "driver-orca.sh dispatch: terminal create returned no handle" >&2; exit 1; }
     orca terminal wait --terminal "$handle" --for tui-idle --timeout-ms 120000 >/dev/null 2>&1 || true
+    start_args+=(--terminal "$handle" --worktree "id:$wt_id")
   else
-    # Newer runtimes surface result.agentTerminalHandle; the one Phase 0 ran
-    # against returned only result.startupTerminal.handle.
-    handle="$(printf '%s' "$wt" | json_val agentTerminalHandle)"
-    [ -n "$handle" ] || handle="$(printf '%s' "$wt" | json_id term_)"
+    start_args+=(--agent claude)
   fi
-  [ -n "$handle" ] || { echo "driver-orca.sh dispatch: no agent terminal handle in the create response" >&2; exit 1; }
 
-  # Deliberately NOT --inject. Measured twice against live worktrees: --inject
-  # pastes the preamble + TASK block into the agent's prompt without submitting
-  # it, and the worker then sits idle forever with its whole brief unsent. A
-  # follow-up Enter only appears to fix it — inject delivers asynchronously, so
-  # an immediate Enter lands mid-paste and is swallowed. It worked in manual
-  # probes purely because minutes had passed.
-  #
-  # Instead: register the dispatch for tracking, read the same preamble back as
-  # plain text, and deliver text + Enter in ONE terminal send. Atomic, so there
-  # is no window to race.
-  local dispatched dispatch_id preamble
-  dispatched="$(orca orchestration dispatch --task "$rtask" --to "$handle" --json 2>/dev/null)"
-  dispatch_id="$(printf '%s' "$dispatched" | json_id ctx_)"
+  local started dispatch_id
+  started="$(orca "${start_args[@]}" 2>/dev/null)"
+  dispatch_id="$(printf '%s' "$started" | json_id ctx_)"
+  [ -n "$dispatch_id" ] || { echo "driver-orca.sh dispatch: worker-start returned no dispatch id" >&2; exit 1; }
 
-  preamble="$(orca orchestration dispatch-show --task "$rtask" --preamble 2>/dev/null)"
-  deliver_prompt "$handle" "${preamble:-$prompt}"
+  # worker-start reports what it created under result.effects; the worktree id is
+  # the only <repo-id>::<path> value in the response.
+  [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
+  [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_)"
+
+  local shown path branch
+  shown="$(orca worktree show --worktree "id:$wt_id" --json 2>/dev/null)"
+  path="$(printf '%s' "$shown" | json_val path)"
+  branch="$(short_branch "$(printf '%s' "$shown" | json_val branch)")"
 
   {
+    printf 'run=%s\n' "$run"
     printf 'runtime_task=%s\n' "$rtask"
     printf 'dispatch=%s\n' "$dispatch_id"
     printf 'handle=%s\n' "$handle"
@@ -206,6 +209,8 @@ verb_dispatch() {
   printf 'worktree=%s\n' "$path"
   printf 'branch=%s\n' "$branch"
   printf 'runtime_task=%s\n' "$rtask"
+  printf 'dispatch=%s\n' "$dispatch_id"
+  printf 'note=Worker started and its brief accepted by the runtime; the workspace is Orca-managed and visible in the app.\n'
 }
 
 verb_collect() {
@@ -221,31 +226,40 @@ verb_collect() {
 
   shown="$(orca worktree show --worktree "id:$wt_id" --json 2>/dev/null)"
   printf 'worktree=%s\n' "$(printf '%s' "$shown" | json_val path)"
-  printf 'branch=%s\n' "$(printf '%s' "$shown" | json_val branch)"
+  printf 'branch=%s\n' "$(short_branch "$(printf '%s' "$shown" | json_val branch)")"
   printf 'base=%s\n' "$(printf '%s' "$shown" | json_val baseRef)"
 }
 
+# `done=` is deliberately NOT emitted. A worker_done message is a hint that a
+# worker thinks it finished; graph.sh poll decides it, by reading the
+# workspace's own homolog-approved.txt. The message is still worth waiting on
+# because it ends the wait window early — it just does not get to land a node.
 verb_wait() {
   require_state
   require_cli
 
-  local coordinator args=() out payload rtask f task
+  local run coordinator args=() out
+  run="$(cat "$STATE/driver-orca-run.txt" 2>/dev/null || true)"
   coordinator="$(cat "$STATE/driver-orca-coordinator.txt" 2>/dev/null || true)"
+
   args=(orchestration check --wait --types worker_done,escalation --timeout-ms "$TIMEOUT_MS" --json)
-  [ -n "$coordinator" ] && args=(orchestration check --terminal "$coordinator" --wait --types worker_done,escalation --timeout-ms "$TIMEOUT_MS" --json)
+  [ -n "$run" ] && args+=(--run "$run")
+  [ -n "$coordinator" ] && args+=(--terminal "$coordinator")
 
   # stderr carries the 15s keepalives, never results.
   out="$(orca "${args[@]}" 2>/dev/null || true)"
 
+  local payload
   payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | head -1 || true)"
   if [ -n "$payload" ]; then
+    local f rtask task
     for f in "$STATE"/driver-orca-*.txt; do
       [ -f "$f" ] || continue
       rtask="$(kv_get "$f" runtime_task)"
       [ "$rtask" = "$payload" ] || continue
       task="$(basename "$f" .txt)"
       task="${task#driver-orca-}"
-      printf 'done=%s\n' "$task"
+      printf 'reported=%s\n' "$task"
     done
   fi
 
@@ -297,10 +311,18 @@ verb_stop() {
   require_state
   require_cli
 
-  local f="$STATE/driver-orca-$task.txt" handle wt_id
+  local f="$STATE/driver-orca-$task.txt" handle wt_id dispatch
   handle="$(kv_get "$f" handle)"
   wt_id="$(kv_get "$f" worktree_id)"
+  dispatch="$(kv_get "$f" dispatch)"
 
+  # Fencing the dispatch is what actually stops a SUPERVISED worker: it tells the
+  # runtime the worker is done being listened to, so a late message cannot revive
+  # it. Closing the pane alone leaves the dispatch live.
+  if [ -n "$dispatch" ]; then
+    orca orchestration worker-stop --dispatch "$dispatch" --json >/dev/null 2>&1 \
+      || orca orchestration worker-abandon --dispatch "$dispatch" --json >/dev/null 2>&1 || true
+  fi
   if [ -n "$handle" ]; then
     orca terminal close --terminal "$handle" >/dev/null 2>&1 || true
   fi
