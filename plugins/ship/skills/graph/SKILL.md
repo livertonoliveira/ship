@@ -65,7 +65,7 @@ Default `--max-in-flight 2`: each node is a whole pipeline (sequential develop p
 
 `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" status` renders the graph at any point; `--json` gives the raw state. `graph-log.md` in the graph dir carries the running timeline — every claim, poll, seal and merge — and is the only progress signal visible from outside this turn.
 
-To abandon a run, `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Killing the orchestrator does NOT do this — workers survive it and keep billing.
+To stop a run, `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Killing the orchestrator does NOT do this — workers survive it and keep billing. Stopping is not abandoning: `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" reset <task>... | --all` returns failed nodes to pending so the run continues, each retry in a fresh workspace.
 
 ## Rules
 

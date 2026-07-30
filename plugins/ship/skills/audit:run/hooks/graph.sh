@@ -28,6 +28,7 @@ usage() {
   echo "  merge     <task> [--feature <f>] [--config <path>]" >&2
   echo "  complete  <task> [--feature <f>]" >&2
   echo "  fail      <task> --reason <r> [--feature <f>]" >&2
+  echo "  reset     <task>... | --all [--feature <f>]" >&2
   echo "  abort     [--feature <f>] [--reason <r>]" >&2
   echo "  conflicts [--feature <f>]" >&2
   echo "  status    [--feature <f>] [--json]" >&2
@@ -42,7 +43,8 @@ ACTIVE_POINTER="$GRAPH_ROOT/active.txt"
 # Column order of nodes.tsv — the awk field numbers below refer to it:
 #   1 id  2 repo  3 title  4 deps  5 files
 #   6 status  7 worktree  8 branch  9 attempts  10 blocked_by_conflict
-# status: pending → ready → in_flight → landed → merging → done · terminal: failed
+# status: pending → ready → in_flight → landed → merging → done
+#         failed halts admission; `reset` returns it to pending
 
 die() { echo "graph.sh: $*" >&2; exit 1; }
 
@@ -989,6 +991,77 @@ cmd_fail() {
   printf 'reason=%s\n' "$reason"
 }
 
+reset_usage() {
+  echo "usage: graph.sh reset <task>... | --all [--feature <f>]" >&2
+  echo "  returns failed node(s) to pending so they can be dispatched again" >&2
+}
+
+# `failed` used to be terminal, and a run frozen by it had exactly two ways out:
+# abandon it, or hand-edit nodes.tsv — which the graph forbids because it is the
+# only writer of its own state. That is the wrong shape for the common case: a
+# node is failed most often because the operator STOPPED it (abort marks every
+# in-flight node failed), and stopping work is not the same as abandoning it.
+# reset is the missing inverse — it puts the node back on the frontier, which
+# also unfreezes admission for everything else.
+#
+# The retry is a FRESH dispatch, not a resume: the worker behind a failed node is
+# gone, and the driver contract only ever creates a new workspace. The old one is
+# kept on disk and its path recorded in the log before the columns are cleared,
+# so whatever partial work it holds is still reachable by hand.
+cmd_reset() {
+  local feature="" all=0 ids=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --all) all=1; shift ;;
+      -h|--help) reset_usage; exit 0 ;;
+      -*) reset_usage; exit 1 ;;
+      *) ids="$ids $1"; shift ;;
+    esac
+  done
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  if [ "$all" -eq 1 ]; then
+    [ -z "${ids# }" ] || die "reset: --all takes no task ids"
+    ids="$(nodes_with_status "$dir" failed | tr '\n' ' ')"
+    [ -n "${ids# }" ] || die "reset: no failed node to reset"
+  fi
+  [ -n "${ids# }" ] || { reset_usage; exit 1; }
+
+  # Validate every id before touching anything: a typo in the third of three ids
+  # must not leave the graph half-reset.
+  local id cur
+  for id in $ids; do
+    node_exists "$dir" "$id" || die "reset: unknown node: $id"
+    cur="$(node_field "$dir" "$id" 6)"
+    [ "$cur" = "failed" ] || die "reset: $id is '$cur', not 'failed' — only a failed node can be reset (stop a live one with: graph.sh abort)"
+  done
+
+  local n=0 wt
+  for id in $ids; do
+    wt="$(node_field "$dir" "$id" 7)"
+    [ -n "$wt" ] && log_line "$dir" "$id previous workspace kept at $wt"
+    node_set "$dir" "$id" 6 pending
+    node_set "$dir" "$id" 7 ""
+    node_set "$dir" "$id" 8 ""
+    node_set "$dir" "$id" 10 ""
+    # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
+    # the stall cap on its first poll of the new run.
+    rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt"
+    log_line "$dir" "$id failed → pending (reset; attempt $(node_field "$dir" "$id" 9) kept)"
+    printf 'reset=%s\n' "$id"
+    n=$((n + 1))
+  done
+
+  render_json "$dir"
+  printf 'count=%s\n' "$n"
+  printf 'remaining_failed=%s\n' "$(count_status "$dir" failed)"
+  printf 'note=run graph.sh next to dispatch them again — the retry gets a fresh workspace\n'
+}
+
 # --- conflicts ---------------------------------------------------------------
 
 cmd_conflicts() {
@@ -1220,6 +1293,7 @@ cmd_merge() {
 abort_usage() {
   echo "usage: graph.sh abort [--feature <f>] [--reason <r>]" >&2
   echo "  stops every in-flight node's worker and marks it failed; workspaces are kept" >&2
+  echo "  (a stopped node is not lost: graph.sh reset puts it back on the frontier)" >&2
 }
 
 # Killing the orchestrator does NOT stop the workers it dispatched: traps do not
@@ -1379,7 +1453,7 @@ cmd_next() {
   # --- a failed node freezes admission ---------------------------------------
   if [ "$failed" -gt 0 ] && [ "$inflight" -eq 0 ]; then
     next_body_add "Failed node(s): $(nodes_with_status "$dir" failed | tr '\n' ' ')."
-    next_body_add "Report to the user with \`bash \"$HOOK_DIR/graph.sh\" status\` and ask whether to abandon the run or fix by hand and re-run \`bash \"$HOOK_DIR/graph.sh\" next\`."
+    next_body_add "Report to the user with \`bash \"$HOOK_DIR/graph.sh\" status\` and ask which one: retry them — bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all), which puts them back on the frontier with a fresh workspace and unfreezes admission — fix by hand and re-run \`bash \"$HOOK_DIR/graph.sh\" next\`, or abandon the run."
     next_emit "ask" "ask" "$inflight" "" "run frozen by failed node(s)"
   fi
 
@@ -1507,6 +1581,7 @@ case "$SUBCOMMAND" in
   merge)     cmd_merge "$@" ;;
   complete)  cmd_complete "$@" ;;
   fail)      cmd_fail "$@" ;;
+  reset)     cmd_reset "$@" ;;
   abort)     cmd_abort "$@" ;;
   conflicts) cmd_conflicts "$@" ;;
   status)    cmd_status "$@" ;;
