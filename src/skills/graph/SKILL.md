@@ -47,6 +47,8 @@ Pass `--repo` when the caller gave one, or when the driver needs a repo the coor
 
 Exit 3 with a `RESUME` report means a graph for this feature is already live — go straight to the loop; the run continues where it stopped. `--fresh` is the opposite: it discards that graph along with its in-flight claims and merge-fix counters, so pass it only when the user explicitly asks to start over.
 
+Changing the driver or the slot count on a live graph is `bash "@@ship/hooks/graph.sh" set [--driver <d>] [--max-in-flight N]` — never a re-init, and never `--fresh`. A driver that turns out not to work here is found only after init, and starting over is the wrong answer to it. Nodes still held by the old driver must be released first (`abort`).
+
 Default `--max-in-flight 2`: each node is a whole pipeline (sequential develop plus a verify fan-out), so three in flight is already around a dozen concurrent agents. Raise it only when the machine has proven it can take it.
 
 ## 4. The loop
