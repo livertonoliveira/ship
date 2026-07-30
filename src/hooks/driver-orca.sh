@@ -94,6 +94,36 @@ json_id() {
   grep -oE "\"$1[0-9a-zA-Z_-]+\"" | head -1 | tr -d '"'
 }
 
+# A graph only carries an explicit repo when it spans several. For the single-repo
+# case `--repo` arrives empty, and worker-start then infers the repo from the
+# CALLING terminal — which is the coordinator's checkout, not necessarily the one
+# the graph is running over. Resolving it from the working tree instead keeps a
+# graph driven from anywhere creating its node workspaces in the right repo.
+#
+# The git COMMON dir, not the toplevel: inside a worktree the toplevel is the
+# worktree's own path and would match no registered repo.
+resolve_repo() {
+  [ -z "$REPO" ] || return 0
+  local common root
+  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  [ -n "$common" ] || return 0
+  root="$(dirname "$common")"
+  REPO="$(orca repo list --json 2>/dev/null | awk -v want="$root" '
+    # Always the LAST id seen before the path, never the first: every response
+    # opens with a per-call request-envelope "id", and holding onto that one
+    # returns a fresh random uuid for whichever repo happens to be listed first.
+    /"id"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"id"[[:space:]]*:[[:space:]]*"/, "", line); sub(/".*/, "", line); id = line
+    }
+    /"path"[[:space:]]*:/ {
+      line = $0
+      sub(/.*"path"[[:space:]]*:[[:space:]]*"/, "", line); sub(/".*/, "", line)
+      if (line == want && id != "") { print id; exit }
+    }
+  ')"
+}
+
 kv_get() {
   local file="$1" key="$2"
   [ -f "$file" ] || return 0
@@ -129,6 +159,7 @@ verb_dispatch() {
   [ -n "$task" ] || { echo "driver-orca.sh dispatch: <task> is required" >&2; exit 1; }
   require_state
   require_cli
+  resolve_repo
   prompt="${prompt:-/ship:run $task}"
 
   local run
