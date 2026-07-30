@@ -54,6 +54,58 @@ workspace_root() {
   printf '%s/../.ship-graph/%s' "$top" "$(basename "$STATE")"
 }
 
+# `git worktree add` has three failure shapes that all mean "resume", and the
+# original `[ ! -d "$path" ] && git worktree add -b` handled none of them:
+#
+#   * the directory survives but is no longer a worktree (a --fresh, a `worktree
+#     remove` that left the dir, a half-finished create) — the old guard saw a
+#     directory, skipped creation and reported ok=1 for a path that is not a repo
+#     at all, sending the worker to a broken cwd;
+#   * the branch outlives its workspace — `add -b` dies with "a branch named ...
+#     already exists", exit 255, and the graph loop stops on the non-zero exit;
+#   * the branch is checked out in a worktree somewhere else — reuse that one
+#     rather than failing.
+#
+# Every one of these is the normal shape of retrying a node, so none may be fatal.
+worktree_for_branch() {
+  git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$1" '
+    /^worktree /  { p = substr($0, 10) }
+    $0 == "branch " b { print p; exit }'
+}
+
+ensure_worktree() {
+  local path="$1" branch="$2" existing
+
+  # Registrations pointing at deleted directories otherwise make both the
+  # "is it a worktree" and the "add" paths lie.
+  git worktree prune >/dev/null 2>&1 || true
+
+  existing="$(worktree_for_branch "$branch")"
+  if [ -n "$existing" ] && [ -d "$existing" ]; then
+    printf '%s' "$existing"
+    return 0
+  fi
+
+  if [ -d "$path" ]; then
+    if git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      printf '%s' "$path"
+      return 0
+    fi
+    if [ -n "$(ls -A "$path" 2>/dev/null)" ]; then
+      echo "driver-local.sh dispatch: $path exists and is not a git worktree — remove it before retrying this node" >&2
+      return 1
+    fi
+    rmdir "$path" 2>/dev/null || true
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git worktree add -q "$path" "$branch" || return 1
+  else
+    git worktree add -q "$path" -b "$branch" "${BASE:-HEAD}" || return 1
+  fi
+  printf '%s' "$path"
+}
+
 verb_dispatch() {
   local task="${REST[0]:-}" prompt="${REST[1]:-}"
   [ -n "$task" ] || { echo "driver-local.sh dispatch: <task> is required" >&2; exit 1; }
@@ -65,9 +117,7 @@ verb_dispatch() {
   path="$root/$task"
   branch="ship/$task"
 
-  if [ ! -d "$path" ]; then
-    git worktree add -q "$path" -b "$branch" "${BASE:-HEAD}"
-  fi
+  path="$(ensure_worktree "$path" "$branch")" || exit 1
   path="$(cd "$path" && pwd)"
 
   {
