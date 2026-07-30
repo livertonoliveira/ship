@@ -16,11 +16,11 @@ set -euo pipefail
 # the merge node runs the full test suite over — the runner would collect their
 # test files too.
 #
-# Verbs: dispatch | collect | wait | ask | stop  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | stop | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-local.sh <dispatch|collect|wait|ask|stop> [args...]" >&2
+  echo "usage: driver-local.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -182,6 +182,20 @@ verb_ask() {
 # Agents run inside the orchestrator's own turn, so by the time anything could
 # call stop they have already returned — there is no process to signal. The
 # workspace is left in place deliberately: it holds the node's work.
+# Beats manual anywhere git works, and loses to any runtime that can give the
+# worker its own process and a place in the app's UI — these workers run inside
+# the orchestrator's turn and their workspaces are invisible to everything but git.
+verb_probe() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf 'ready=1\n'
+    printf 'priority=50\n'
+    printf 'reason=git worktree plus in-context Agents; no external runtime\n'
+  else
+    printf 'ready=0\n'
+    printf 'reason=not inside a git work tree\n'
+  fi
+}
+
 verb_stop() {
   local task="${REST[0]:-}"
   [ -n "$task" ] || { echo "driver-local.sh stop: <task> is required" >&2; exit 1; }
@@ -204,5 +218,6 @@ case "$VERB" in
   wait)     verb_wait ;;
   ask)      verb_ask ;;
   stop)     verb_stop ;;
+  probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac

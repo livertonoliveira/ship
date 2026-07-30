@@ -34,11 +34,11 @@ set -euo pipefail
 # homolog-approved.txt (docs/graph-mode-orca-findings.md §B). worker_done only
 # ends the wait window early.
 #
-# Verbs: dispatch | collect | wait | ask | stop  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | stop | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|stop> [args...]" >&2
+  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -305,6 +305,28 @@ verb_ask() {
 #
 # The workspace is deliberately NOT removed: a stopped node's work is what you
 # inspect to decide whether to retry or drop it.
+# Outranks the others when the runtime is actually up, because it is the only one
+# whose workers get their own process and whose workspaces the app can show.
+#
+# The CLI being on PATH is not enough: it answers fine with the app closed, and a
+# graph that picked this driver on that basis would fail at the first dispatch.
+# So the probe asks the runtime whether it is reachable, and reads only that.
+verb_probe() {
+  if ! command -v orca >/dev/null 2>&1; then
+    printf 'ready=0\n'
+    printf 'reason=orca not on PATH\n'
+    return 0
+  fi
+  if orca status --json 2>/dev/null | grep -q '"reachable"[[:space:]]*:[[:space:]]*true'; then
+    printf 'ready=1\n'
+    printf 'priority=10\n'
+    printf 'reason=orca runtime reachable; workers get their own terminal and the workspaces show in the app\n'
+  else
+    printf 'ready=0\n'
+    printf 'reason=orca on PATH but its runtime is not reachable\n'
+  fi
+}
+
 verb_stop() {
   local task="${REST[0]:-}"
   [ -n "$task" ] || { echo "driver-orca.sh stop: <task> is required" >&2; exit 1; }
@@ -352,5 +374,6 @@ case "$VERB" in
   wait)     verb_wait ;;
   ask)      verb_ask ;;
   stop)     verb_stop ;;
+  probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac

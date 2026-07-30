@@ -26,7 +26,7 @@ HOOKS_DIR="${REPO_ROOT}/src/hooks"
 # Workspace runtimes a driver may talk to. Deliberately not a list of every
 # binary on earth — these are the ones a graph would plausibly reach for.
 RUNTIME_PATTERN='\b(orca|orca-ide|codex|conductor|tmux|docker|kubectl|devcontainer)\b'
-VERBS=(dispatch collect wait ask stop)
+VERBS=(dispatch collect wait ask stop probe)
 
 VIOLATIONS=0
 

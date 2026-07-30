@@ -16,11 +16,12 @@ set -euo pipefail
 #   wait     [--state <dir>] [--timeout-ms <n>]
 #   ask      <question> [--task <t>] [--state <dir>]
 #   stop     <task> [--state <dir>]
+#   probe    — can this driver run here, and how strongly does it want the job?
 # Output is key=value lines on stdout; graph.sh and the orchestrator read those.
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|stop> [args...]" >&2
+  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -94,6 +95,14 @@ verb_ask() {
   printf 'manual=1\n'
 }
 
+# Always available and always last: it needs nothing, and it costs a human a
+# workspace per node. Anything that can actually spawn one should outrank it.
+verb_probe() {
+  printf 'ready=1\n'
+  printf 'priority=90\n'
+  printf 'reason=no runtime needed; every workspace is created by hand\n'
+}
+
 verb_stop() {
   local task="${REST[0]:-}"
   [ -n "$task" ] || { echo "driver-manual.sh stop: <task> is required" >&2; exit 1; }
@@ -117,5 +126,6 @@ case "$VERB" in
   wait)     verb_wait ;;
   ask)      verb_ask ;;
   stop)     verb_stop ;;
+  probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac
