@@ -97,18 +97,28 @@ verb_collect() {
   printf 'base=%s\n' "$BASE"
 }
 
+# `returned=`, never `done=`. The Agent handing control back says only that the
+# turn ended — not that the pipeline reached its end, and certainly not that the
+# node may be landed. graph.sh poll decides that, by reading the workspace's own
+# homolog-approved.txt. Emitting `done=` here read as a completion signal the
+# driver has no standing to give, and it survived a --fresh: the leftover
+# dispatch list made the first wait of a brand-new graph report tasks it had
+# never dispatched.
 verb_wait() {
   require_state
   local list="$STATE/driver-local-dispatched.txt" t
   if [ -s "$list" ]; then
     while IFS= read -r t; do
       [ -n "$t" ] || continue
-      printf 'done=%s\n' "$t"
+      # Only tasks this driver still holds state for. Anything else is debris
+      # from a previous run and must not be reported as activity.
+      [ -f "$STATE/driver-local-$t.txt" ] || continue
+      printf 'returned=%s\n' "$t"
     done < <(sort -u "$list")
     : > "$list"
   fi
   printf 'signal=synchronous\n'
-  printf 'note=Agents return inside the dispatching turn; every task above has already finished.\n'
+  printf 'note=Agents run inside the dispatching turn, so there is nothing to block on here. Whether a node FINISHED is graph.sh poll'"'"'s call, not this one'"'"'s.\n'
 }
 
 verb_ask() {
