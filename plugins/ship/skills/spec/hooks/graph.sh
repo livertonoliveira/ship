@@ -1183,7 +1183,14 @@ cmd_next() {
       [ -n "$repo" ] || repo="$default_repo"
       prompt="/ship:run $t"
       next_body_add "- bash \"$DRIVER_SH\" dispatch $t \"$prompt\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\"${repo:+ --repo \"$repo\"}"
-      next_body_add "- bash \"$DRIVER_SH\" collect $t --state \"$dir\"   → read worktree= and branch= from its output"
+      # Not every driver can start the worker by itself. Some prepare the
+      # workspace and hand back an `instruction=` line describing the one step
+      # only the caller can take. Leaving that step implicit is how a node gets
+      # claimed in_flight with nothing running behind it: the workspace exists,
+      # the branch exists, and the graph then waits on a worker that was never
+      # started. Making it an ordered, numbered step is the fix.
+      next_body_add "- if that dispatch printed an \`instruction=\` line, CARRY IT OUT NOW, before the next call — for this driver that line is what actually starts the worker, and the node is not running until you have"
+      next_body_add "- bash \"$DRIVER_SH\" collect $t --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\"   → read worktree= and branch= from its output"
       next_body_add "- bash \"$HOOK_DIR/graph.sh\" claim $t --worktree <worktree> --branch <branch>"
     done
     next_body_add "Dispatch ALL of the above in this turn. Do not start a node the instruction did not list."

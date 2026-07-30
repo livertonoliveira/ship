@@ -79,7 +79,11 @@ verb_dispatch() {
   printf 'ok=1\n'
   printf 'worktree=%s\n' "$path"
   printf 'branch=%s\n' "$branch"
-  printf 'instruction=Launch one Agent (subagent_type=general-purpose, model sonnet) whose prompt is: "cd %s and run %s to completion. Report its final state= line."\n' \
+  # This driver prepares the workspace; it cannot start the worker, because the
+  # worker is an Agent only the caller can launch. Saying so explicitly matters:
+  # a caller that runs dispatch/collect/claim and skips this line leaves a node
+  # claimed in_flight with an empty workspace and nothing running in it.
+  printf 'instruction=REQUIRED — the workspace is ready but NOTHING is running in it yet. Launch one Agent (subagent_type=general-purpose, model sonnet) with the prompt: "cd %s and run %s to completion. Report its final state= line." Launch it now and let it finish in this turn; this driver has no background worker and nothing else will start one.\n' \
     "$path" "${prompt:-/ship:run $task}"
 }
 

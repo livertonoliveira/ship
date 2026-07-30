@@ -54,7 +54,7 @@ Default `--max-in-flight 2`: each node is a whole pipeline (sequential develop p
 1. Run with a generous timeout (a merge node runs the whole suite inside it):
    `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" next`
 2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
-   - `dispatch` → make EVERY listed call now, in this same turn. The three lines per task are ordered: `dispatch` starts the workspace, `collect` resolves its path and branch, `claim` hands both back to the graph. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
+   - `dispatch` → make EVERY listed call now, in this same turn, in the order printed. `dispatch` prepares the workspace, `collect` resolves its path and branch, `claim` hands both back. A driver that cannot start the worker itself returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in, and the graph waits on a worker that never existed. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
    - `work` → run the listed command yourself, in this context.
    - `wait` → run the listed calls in order. `graph.sh poll` is what decides completion — it reads each workspace's own artifacts. Never land or fail a node from what a worker said.
    - `ask` → relay the question to the user in the artifact language, STOP; act on their answer, then go to step 1.
