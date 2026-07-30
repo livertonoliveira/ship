@@ -634,7 +634,7 @@ cmd_claim() {
   # and the stall cap silently needs one extra round.
   printf '%s\n' "$(awk 'END { print NR + 0 }' "$scratch/dispatch-log.md" 2>/dev/null || echo 0)" \
     > "$dir/progress-$id.txt"
-  rm -f "$dir/stall-$id.txt"
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt"
 
   render_json "$dir"
 
@@ -702,10 +702,21 @@ cmd_poll() {
     if [ -f "$wt/.context/ship-run/$id/homolog-approved.txt" ]; then
       seal_workspace "$dir" "$id"
       transition "$dir" "$id" "in_flight" landed
-      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt"
+      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt"
       printf 'landed=%s\n' "$id"
       landed=$((landed + 1))
       continue
+    fi
+
+    # No dispatch-log.md at all means the pipeline never ran a single phase in
+    # this workspace — the worker was never started, not "started and slow".
+    # The two are indistinguishable by row count alone (both read 0), and
+    # conflating them is what turns a worker that was never launched into a
+    # silent half-hour wait. Recorded so `next` can name the real cause.
+    if [ ! -f "$wt/.context/ship-run/$id/dispatch-log.md" ]; then
+      printf 'never-started\n' > "$dir/why-$id.txt"
+    else
+      rm -f "$dir/why-$id.txt"
     fi
 
     rows="$(awk 'END { print NR + 0 }' "$wt/.context/ship-run/$id/dispatch-log.md" 2>/dev/null || echo 0)"
@@ -725,8 +736,14 @@ cmd_poll() {
     stalls=$(( $(cat "$dir/stall-$id.txt" 2>/dev/null || echo 0) + 1 ))
     printf '%s\n' "$stalls" > "$dir/stall-$id.txt"
     if [ "$stalls" -ge "$stall_max" ]; then
-      log_line "$dir" "$id STALLED — no phase progress across $stalls polls"
-      printf 'stalled=%s\n' "$id"
+      if [ -f "$dir/why-$id.txt" ]; then
+        log_line "$dir" "$id STALLED — no pipeline ever ran in its workspace across $stalls polls (worker never started)"
+        printf 'stalled=%s\n' "$id"
+        printf 'never_started=%s\n' "$id"
+      else
+        log_line "$dir" "$id STALLED — no phase progress across $stalls polls"
+        printf 'stalled=%s\n' "$id"
+      fi
       stalled=$((stalled + 1))
     else
       log_line "$dir" "$id quiet ($stalls/$stall_max polls with no phase progress)"
@@ -1208,7 +1225,21 @@ cmd_next() {
       [ "$(cat "$dir/stall-$sid.txt")" -ge 3 ] && stalled="$stalled $sid"
     done < <(nodes_with_status "$dir" in_flight)
     if [ -n "${stalled# }" ]; then
-      next_body_add "Node(s)${stalled} have shown no phase progress across 3 consecutive polls — their pipeline is stuck, finished without leaving its completion marker, or the workspace never received its prompt."
+      local never=""
+      for sid in $stalled; do
+        [ -f "$dir/why-$sid.txt" ] && never="$never $sid"
+      done
+      if [ -n "${never# }" ]; then
+        # Distinguished on purpose: "never started" has a different cause and a
+        # different fix from "started and got stuck", and telling the operator to
+        # go read a dispatch-log.md that does not exist wastes the one round the
+        # stall cap bought.
+        next_body_add "Node(s)${never} have NO .context/ship-run/<task>/dispatch-log.md at all — their pipeline never ran a single phase, so the worker was never started. The workspace and branch exist; nothing is running in them."
+        next_body_add "The usual cause is the driver's \`instruction=\` line from dispatch not being carried out. Re-issue it: bash \"$DRIVER_SH\" dispatch <task> \"/ship:run <task>\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\" and then DO what its instruction= line says."
+        next_body_add "If the driver cannot start workers in this environment at all, switch runtimes without losing the run: bash \"$HOOK_DIR/graph.sh\" abort, then bash \"$HOOK_DIR/graph.sh\" set --driver <name>."
+        next_emit "ask" "ask" "$inflight" "" "worker never started:${never}"
+      fi
+      next_body_add "Node(s)${stalled} have shown no phase progress across 3 consecutive polls — their pipeline is stuck or finished without leaving its completion marker."
       next_body_add "Open each one's workspace, read .context/ship-run/<task>/dispatch-log.md to see the last phase it reached, and present that to the user."
       next_body_add "Then either re-drive it (\`bash \"$HOOK_DIR/pipeline.sh\" next <task>\` inside its workspace) or drop it: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>"
       next_emit "ask" "ask" "$inflight" "" "stalled node(s):${stalled}"
