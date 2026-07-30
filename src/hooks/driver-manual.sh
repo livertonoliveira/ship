@@ -100,6 +100,7 @@ verb_ask() {
 verb_probe() {
   printf 'ready=1\n'
   printf 'priority=90\n'
+  printf 'workspaces=none — you open every one by hand\n'
   printf 'reason=no runtime needed; every workspace is created by hand\n'
 }
 

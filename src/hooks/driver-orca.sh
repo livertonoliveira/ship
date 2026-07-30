@@ -320,6 +320,7 @@ verb_probe() {
   if orca status --json 2>/dev/null | grep -q '"reachable"[[:space:]]*:[[:space:]]*true'; then
     printf 'ready=1\n'
     printf 'priority=10\n'
+    printf 'workspaces=one runtime-managed workspace per node, visible in the app\n'
     printf 'reason=orca runtime reachable; workers get their own terminal and the workspaces show in the app\n'
   else
     printf 'ready=0\n'
