@@ -33,7 +33,7 @@ require_hooks() {
   fi
 }
 
-KNOWN_PHASES="plan plan-review dev test perf security review remediation-fix remediation-verify homolog"
+KNOWN_PHASES="plan dev test perf security review remediation-fix remediation-verify homolog"
 
 is_known_phase() {
   local phase="$1"
@@ -1180,12 +1180,6 @@ next_static_cmds() {
   printf '%s' "$parts"
 }
 
-next_plan_review_dispatch() {
-  local scratch="$1" task="$2" lang="$3"
-  cmd_dispatch "$scratch" plan-review Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/plan.md and open ONLY the files each module lists under '- Files:'. Do not survey the wider codebase and do not review code quality — this is a closed question set about the module map: (1) is each module implementable in exactly the files it claims, or does it need one it does not list? (2) is any integration or registration point missing (module registration, route table, barrel export, DI container)? (3) does any module boundary split a unit that cannot be split? Write $scratch/plan-review.md: first line 'verdict: ok' when none of the three raised anything, otherwise 'verdict: blockers' followed by one '- <module-id>: <what is wrong and what the plan should say instead>' line per blocker. Nothing else.\""
-}
-
 next_remediation_verify_dispatch() {
   local scratch="$1" task="$2" lang="$3"
   cmd_dispatch "$scratch" remediation-verify Agent general-purpose sonnet >/dev/null
@@ -1346,60 +1340,6 @@ cmd_next() {
         next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — read $SCRATCH/plan-validate-error.txt and fix exactly what it reports\""
         next_common_after
         next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
-      fi
-    fi
-
-    # --- plan confrontation: is this map implementable in these files? ----------
-    # plan-validate proves the plan is coherent with itself, with the spec and
-    # with the repo's file tree — none of which reads the files. The planner is
-    # forbidden from deep-reading them (that is develop's job), so module
-    # boundaries and integration points are decided by someone who only globbed.
-    # One closed question set over the plan's own files closes that gap here,
-    # before develop, the tests and the gate all inherit the same mistake.
-    if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
-      if [ ! -f "$SCRATCH/plan-review.md" ]; then
-        local prr_rc=0
-        if next_dispatched "$SCRATCH" plan-review; then
-          set +e
-          ( cmd_iter "$SCRATCH" plan-review --max 2 ) >/dev/null
-          prr_rc=$?
-          set -e
-          next_body_add "The plan reviewer returned without writing $SCRATCH/plan-review.md (silent write failure). Re-dispatch it:"
-        fi
-        if [ "$prr_rc" -eq 2 ]; then
-          # Advisory: never block the run on the confrontation's own failure.
-          printf 'skipped\n' > "$SCRATCH/plan-confronted.txt"
-        else
-          next_plan_review_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
-          next_common_after
-          next_emit "plan-review" "dispatch" "$RUN" "confronting the plan with the files it claims"
-        fi
-      fi
-      if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
-        if grep -qiE '^[[:space:]]*verdict:[[:space:]]*ok' "$SCRATCH/plan-review.md"; then
-          printf 'ok\n' > "$SCRATCH/plan-confronted.txt"
-        else
-          case "$ANSWER" in
-            replan)
-              # One confrontation per run: the marker is set before re-planning,
-              # so a second plan is validated but not re-confronted.
-              printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
-              rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
-              cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
-              next_common_after
-              next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
-              ;;
-            proceed)
-              printf 'proceed\n' > "$SCRATCH/plan-confronted.txt"
-              ;;
-            *)
-              next_body_add "The plan reviewer read the files each module claims and raised blockers — present $SCRATCH/plan-review.md to the user in the artifact language."
-              next_body_add "Options: re-plan addressing them | proceed anyway. Re-run next with --answer replan | --answer proceed."
-              next_emit "plan-review" "ask" "$RUN" "plan confrontation raised blockers"
-              ;;
-          esac
-        fi
       fi
     fi
   fi

@@ -41,7 +41,6 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer — replaces the old `ship:test` orchestrator's inline slicing |
 | `generated-tests-<layer>.md` | `ship-test-<layer>` worker | `pipeline.sh next` | manifest fragment: one `- <path> (<layer>)` line per file the worker actually created (header-free; written even when empty). `next` concatenates fragments into `generated-tests.md` |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
-| `plan-review.md` / `plan-confronted.txt` | plan-review agent, `pipeline.sh next` | `pipeline.sh next` | closed verdict on the module map (`verdict: ok\|blockers` + one line per blocker) and the marker that the one confrontation per run is spent |
 | `remediation.md` / `remediation-items.txt` | `remediation.sh` | fix agent, `remediation-verify.sh` | the one batch of adjustments a verification round requires, with stable `R<N>` ids |
 | `remediation-verify.md` | confirmation agent | `remediation-verify.sh` | one `- <id>: resolved\|unresolved — <reason>` line per finding item |
 | `remediation-done.txt` / `remediation-verdict.txt` | `pipeline.sh next` | `pipeline.sh next` | the automatic round is spent (survives resume) and its scored result |
