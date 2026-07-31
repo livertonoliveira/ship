@@ -286,3 +286,48 @@ Fases 1 e 2 seguem exatamente como planejados.
 | `wait [--timeout-ms N]` | `check --terminal <coord> --wait --types worker_done,escalation`; stderr descartado; timeout sai 0 |
 | `ask <pergunta> [<task>]` | `gate-create` quando há task âncora; senão imprime a pergunta |
 | `collect <task>` | `worktree show --worktree id:<id>`; imprime `worktree=`, `branch=`, `base=` |
+
+---
+
+## Quarta rodada — o driver estava certo; a eleição é que nunca era revista (2026-07-30)
+
+A terceira rodada consertou `driver-orca.sh` e mediu que o caminho novo funciona.
+Mesmo assim a run real continuou sem abrir uma única workspace do Orca. O log do
+grafo (`camada-de-marca-v1-agendx`) explica por quê:
+
+```
+15:27Z init driver=orca     ← falhou no dispatch (API antiga)
+15:28Z init driver=orca     ← falhou de novo
+15:29Z init driver=local    ← fallback
+21:14Z … 23:30Z             ← todas as levas seguintes, ainda em local
+```
+
+O `driver` é escrito no `meta.tsv` **uma vez**, no `init`. Nada nunca revisita
+essa escolha. Então o fallback forçado por um runtime quebrado às 15:29 ficou em
+vigor por mais oito horas, atravessando sessões, muito depois de o driver estar
+consertado e o runtime respondendo — e **nenhuma saída do grafo dizia qual driver
+estava em uso**, então a degradação só apareceu quando o usuário reparou que o
+app estava vazio.
+
+Duas medições que fecham o diagnóstico (2026-07-30, CLI vivo):
+
+| Chamada | Resultado |
+|---|---|
+| `run-create` → `task-create --run` → `worker-start --worktree new-top-level --agent claude` | `state: ready`, `stage: input_accepted`, worktree criada e **registrada no app** |
+| grafo de 2 nós via `graph.sh` com driver auto-eleito | duas workspaces dedicadas (`E2E-A`, `E2E-B`), uma por nó, cada uma com seu terminal e agente |
+
+O que muda:
+
+- **`graph.sh next` re-elege o driver** sempre que a escolha veio de probe e
+  nenhum nó está preso ao driver atual (mesma guarda do `set --driver`). Um
+  fallback deixa de ser permanente; a recuperação vira automática em vez de
+  lembrada. Grafos escritos antes do campo `driver_chosen_by` contam como probe,
+  então a run acima se cura sozinha no próximo `next`.
+- **Um driver nomeado à mão é pinado** (`driver_chosen_by=explicit`) e nunca
+  re-eleito — `--driver local` precisa significar local.
+- **Todo driver declara o que produz** (`workspaces=` no `probe`), e `next` e
+  `status` imprimem isso. "Rodando no driver que não abre nada" passa a ser
+  visível na primeira vez, não horas depois.
+- **`driver-orca` resolve o repo pela árvore de trabalho** quando o grafo não
+  passa `--repo`, em vez de deixar o `worker-start` inferir o checkout do
+  terminal coordenador — que não é necessariamente o repo do grafo.
