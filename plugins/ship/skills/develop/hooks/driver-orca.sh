@@ -192,7 +192,11 @@ verb_dispatch() {
   # the tree under test. SHIP_WORKER_COMMAND builds the terminal itself and hands
   # worker-start the handle, which is also how a non-default model or effort gets
   # in — and how the e2e smoke test measures the build it just compiled.
-  local wt_id term handle
+  # Initialised, not merely declared: since bash 4.4 a bare `local x` leaves x
+  # UNSET, and the `[ -n "$wt_id" ]` fallbacks below then abort under `set -u`.
+  # macOS ships bash 3.2, where a bare `local` yields an empty string, so this
+  # branch worked on the machine it was written on and died everywhere else.
+  local wt_id="" term="" handle=""
   if [ -n "${SHIP_WORKER_COMMAND:-}" ]; then
     local wt_args=(worktree create --name "$task" --no-parent --setup run --json)
     [ -n "$REPO" ] && wt_args+=(--repo "id:$REPO")
