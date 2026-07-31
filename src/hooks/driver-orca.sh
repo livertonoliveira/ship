@@ -286,8 +286,21 @@ verb_dispatch() {
     exit 1
   }
 
+  # The worker's own completion call needs the Run, and its preamble does not
+  # carry one. Measured 2026-07-30 from a live worker handle:
+  #   send --type worker_done            → legacy_read_only, "this retained legacy
+  #                                        coordinator could not prove its original
+  #                                        process identity. No effects applied."
+  #   send --type worker_done --run <r>  → accepted.
+  # Workers were burning turns retrying a call that could never succeed. The Run
+  # id only exists here, so this is the only place that can hand it over.
+  local spec
+  spec="$prompt
+
+When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only."
+
   local created rtask
-  created="$(orca orchestration task-create --spec "$prompt" --task-title "$task" --run "$run" --json 2>/dev/null)"
+  created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null)"
   rtask="$(printf '%s' "$created" | json_id task_)"
   [ -n "$rtask" ] || { echo "driver-orca.sh dispatch: task-create returned no task id (run $run)" >&2; exit 1; }
   printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
