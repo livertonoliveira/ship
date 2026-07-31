@@ -1154,7 +1154,7 @@ next_test_dispatch() {
   local scratch="$1" task="$2" lang="$3" layer="$4"
   next_test_brief "$scratch" "$layer"
   cmd_dispatch "$scratch" test Agent "ship-test-$layer" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create, as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when empty). Generate only — never run a test command.\""
+  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Generate only — never run a test command.\""
 }
 
 next_fix_dispatch() {
