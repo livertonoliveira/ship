@@ -18,6 +18,13 @@ set -euo pipefail
 #   stop     <task> [--state <dir>]
 #   probe    — can this driver run here, and how strongly does it want the job?
 # Output is key=value lines on stdout; graph.sh and the orchestrator read those.
+#
+# One rule binds every driver, and it was learned the expensive way: `dispatch`
+# may print ok=1 ONLY after observing the worker actually working. A runtime
+# that documents its delivery as atomic is not evidence — driver-orca believed
+# exactly that and produced five nodes claimed in_flight with their briefs
+# pasted, unsent, at an idle prompt. A driver that cannot observe its worker
+# prints an `instruction=` line and leaves ok=1 unsaid.
 # ---------------------------------------------------------------------------
 
 usage() {

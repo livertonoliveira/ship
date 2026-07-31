@@ -21,9 +21,12 @@ set -euo pipefail
 #      the whole difference between working and legacy_read_only.
 #   2. `orchestration worker-start --task <t> --run <r> --agent claude` creates
 #      the Orca-managed worktree, launches the agent, registers the dispatch and
-#      delivers the lifecycle preamble + TASK block as accepted input — one call
-#      replacing the four this driver used to make, and removing the paste-then-
-#      press-Enter dance that used to leave workers idle with an unsent brief.
+#      is DOCUMENTED to deliver the lifecycle preamble + TASK block as accepted
+#      input — one call replacing four. Measured 2026-07-30 across five workers
+#      started in one burst: it delivered all five briefs and submitted none of
+#      them. Every worker sat idle at its prompt with the whole brief pasted and
+#      unsent. So the delivery is a claim, never a guarantee, and dispatch does
+#      not get to believe it — see confirm_working below.
 #   3. Because the worktree is created THROUGH Orca, it is registered with the
 #      app and shows up in its UI. A plain `git worktree` beside the repo (what
 #      driver-local makes) never does.
@@ -138,8 +141,15 @@ kv_get() {
 # this driver die before it had created anything at all. `run-create` binds the
 # calling terminal as coordinator (legacy: 0) and every later call carries
 # `--run`, so nothing depends on that retired lookup.
+#
+# Creating it is serialized with an atomic mkdir lock, because a graph dispatches
+# its whole frontier at once. Measured live with two concurrent dispatches: both
+# found no Run, both created one, and the second's task-create came back
+# `consumer_fenced: this coordinator terminal is bound to run_X, not run_Y` —
+# the terminal binds to exactly one Run, so every node after the first never
+# started. A read-then-write with no lock loses that race every time.
 ensure_run() {
-  local f="$STATE/driver-orca-run.txt" run
+  local f="$STATE/driver-orca-run.txt" lock="$STATE/driver-orca-run.lock" run tries=0
 
   run="$(cat "$f" 2>/dev/null || true)"
   if [ -n "$run" ]; then
@@ -147,11 +157,118 @@ ensure_run() {
     return 0
   fi
 
-  run="$(orca orchestration run-create --objective "Ship graph: $(basename "$STATE")" --json 2>/dev/null \
-    | json_id run_)"
+  while ! mkdir "$lock" 2>/dev/null; do
+    run="$(cat "$f" 2>/dev/null || true)"
+    if [ -n "$run" ]; then
+      printf '%s' "$run"
+      return 0
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -ge 120 ] && break
+    sleep 1
+  done
+
+  # Re-read inside the lock: the holder we queued behind is what created it.
+  run="$(cat "$f" 2>/dev/null || true)"
+  if [ -z "$run" ]; then
+    run="$(orca orchestration run-create --objective "Ship graph: $(basename "$STATE")" --json 2>/dev/null \
+      | json_id run_)"
+    [ -n "$run" ] && printf '%s\n' "$run" > "$f"
+  fi
+  rmdir "$lock" 2>/dev/null || true
+
   [ -n "$run" ] || return 1
-  printf '%s\n' "$run" > "$f"
   printf '%s' "$run"
+}
+
+# --- proving the worker is actually working ---------------------------------
+#
+# No dispatch may report ok=1 on a runtime's promise. The only acceptable
+# evidence is the worker's own pane moving.
+#
+# Measured live against two panes, one working and one holding an unsent brief:
+# an agent TUI that is processing redraws its status line every second, so a tail
+# read twice a few seconds apart HASHES DIFFERENTLY (1482124910 → 2576027581).
+# One idle at its prompt hashes identically (1653924144 → 1653924144). That is
+# the whole detector: no spinner word, no locale, no runtime version in it.
+BUSY_SAMPLE_S="${SHIP_ORCA_BUSY_SAMPLE_S:-4}"
+
+read_tail() {
+  orca terminal read --terminal "$1" --limit 40 2>/dev/null || true
+}
+
+terminal_working() {
+  local a b
+  a="$(read_tail "$1" | cksum)"
+  sleep "$BUSY_SAMPLE_S"
+  b="$(read_tail "$1" | cksum)"
+  [ "$a" != "$b" ]
+}
+
+# Text sitting in the INPUT BOX is the signature of a delivered-but-unsubmitted
+# brief. Only the box counts, and it is the region between the last two rules at
+# the bottom of the pane — a submitted brief is still echoed in the scrollback
+# above, so matching the whole tail would read every started worker as stuck.
+#
+# Activity alone is not proof either, which is why this gate exists: measured
+# live, a pane still receiving a long paste redraws on every chunk, so the tail
+# changes while nothing has been submitted at all.
+prompt_holds_text() {
+  read_tail "$1" | awk '
+    { line[NR] = $0; if ($0 ~ /^[[:space:]]*─────/) { prev = last; last = NR } }
+    END {
+      if (!last || !prev) exit 1
+      for (i = prev + 1; i < last; i++) {
+        s = line[i]
+        sub(/^[[:space:]]*/, "", s); sub(/^[❯>][[:space:]]*/, "", s)
+        gsub(/[[:space:]]/, "", s)
+        if (length(s) > 0) exit 0
+      }
+      exit 1
+    }'
+}
+
+# Returns only once the pane is observed working. Both failure modes are
+# repaired here, and they need different repairs: a brief that arrived but was
+# never submitted needs a bare Enter, and one that never arrived needs pasting
+# first. A multi-line paste never submits itself — the trailing newline of
+# `--enter` is consumed as part of the paste — so the submit is always its own
+# keystroke, after the text is visible.
+# How many times this dispatch had to repair a delivery the runtime reported as
+# accepted. Reported back so a graph run shows how often the promise was empty
+# instead of hiding it.
+REPAIRS=0
+
+confirm_working() {
+  local handle="$1" text="$2" attempt=0 tries=0
+
+  # Sending before the TUI is up drops the brief into a booting terminal.
+  while [ "$tries" -lt 45 ]; do
+    read_tail "$handle" | grep -qE 'bypass permissions|Claude Code|❯' && break
+    tries=$((tries + 1))
+    sleep 2
+  done
+
+  # An unsent brief is checked BEFORE activity, never after: a pane taking a long
+  # paste is busy redrawing and would otherwise pass as working with the whole
+  # brief still sitting unsubmitted — measured, and exactly the bug being fixed.
+  while [ "$attempt" -lt 6 ]; do
+    attempt=$((attempt + 1))
+    if ! prompt_holds_text "$handle" && terminal_working "$handle"; then
+      return 0
+    fi
+    REPAIRS=$((REPAIRS + 1))
+    if prompt_holds_text "$handle"; then
+      orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
+    else
+      orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || true
+      sleep "$BUSY_SAMPLE_S"
+      orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
+    fi
+    sleep "$BUSY_SAMPLE_S"
+  done
+
+  ! prompt_holds_text "$handle" && terminal_working "$handle"
 }
 
 verb_dispatch() {
@@ -169,10 +286,29 @@ verb_dispatch() {
     exit 1
   }
 
+  # The worker's own completion call needs the Run, and its preamble does not
+  # carry one. Measured 2026-07-30 from a live worker handle:
+  #   send --type worker_done            → legacy_read_only, "this retained legacy
+  #                                        coordinator could not prove its original
+  #                                        process identity. No effects applied."
+  #   send --type worker_done --run <r>  → accepted.
+  # Workers were burning turns retrying a call that could never succeed. The Run
+  # id only exists here, so this is the only place that can hand it over.
+  local spec
+  spec="$prompt
+
+When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only."
+
   local created rtask
-  created="$(orca orchestration task-create --spec "$prompt" --task-title "$task" --run "$run" --json 2>/dev/null)"
+  created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null)"
   rtask="$(printf '%s' "$created" | json_id task_)"
-  [ -n "$rtask" ] || { echo "driver-orca.sh dispatch: task-create returned no task id (run $run)" >&2; exit 1; }
+  if [ -z "$rtask" ]; then
+    echo "driver-orca.sh dispatch: the runtime refused to create a task for $task on run $run" >&2
+    # Its own words beat a generic "no task id": `consumer_fenced` names a Run
+    # collision, and that reads nothing like a parse failure.
+    printf '%s' "$created" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1 >&2
+    exit 1
+  fi
   printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
     > "$STATE/driver-orca-coordinator.txt"
 
@@ -214,15 +350,37 @@ verb_dispatch() {
     start_args+=(--agent claude)
   fi
 
-  local started dispatch_id
-  started="$(orca "${start_args[@]}" 2>/dev/null)"
+  local started dispatch_id rc=0
+  started="$(orca "${start_args[@]}" 2>/dev/null)" || rc=$?
   dispatch_id="$(printf '%s' "$started" | json_id ctx_)"
+
+  # A FAILED worker-start still answers with a dispatch id, so the id alone
+  # proves nothing. It exits non-zero and names the stage it died in; measured
+  # live, a bad --base-branch dies in worktree_create with everything else
+  # looking normal. Reading only the id let that pass, and the driver then died
+  # silently on the empty worktree selector two lines later.
+  if [ "$rc" -ne 0 ] || printf '%s' "$started" | grep -q '"failedStage"'; then
+    echo "driver-orca.sh dispatch: the runtime refused to start $task" >&2
+    printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1 >&2
+    printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1 >&2
+    exit 1
+  fi
   [ -n "$dispatch_id" ] || { echo "driver-orca.sh dispatch: worker-start returned no dispatch id" >&2; exit 1; }
 
   # worker-start reports what it created under result.effects; the worktree id is
   # the only <repo-id>::<path> value in the response.
   [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
   [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_)"
+  # Named explicitly, because the alternative is what actually happened: an empty
+  # selector makes the next call fail, and a failing command substitution under
+  # `set -e` exits the driver with no output on either stream at all.
+  [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: worker-start reported no workspace for $task" >&2; exit 1; }
+  [ -n "$handle" ] || { echo "driver-orca.sh dispatch: worker-start reported no agent terminal for $task" >&2; exit 1; }
+
+  # The brief as the runtime built it, so a re-delivery sends the same lifecycle
+  # preamble the worker was supposed to get — not a bare prompt line.
+  local preamble
+  preamble="$(orca orchestration dispatch-show --task "$rtask" --preamble 2>/dev/null || true)"
 
   local shown path branch
   shown="$(orca worktree show --worktree "id:$wt_id" --json 2>/dev/null)"
@@ -239,13 +397,28 @@ verb_dispatch() {
     printf 'branch=%s\n' "$branch"
   } > "$STATE/driver-orca-$task.txt"
 
+  # The state file is written FIRST so a worker that never starts is still
+  # stoppable: an unconfirmed dispatch left the workspace and the agent behind,
+  # and a driver that exits without recording them strands both.
+  if ! confirm_working "$handle" "${preamble:-$prompt}"; then
+    printf 'ok=0\n'
+    printf 'handle=%s\n' "$handle"
+    printf 'worktree=%s\n' "$path"
+    printf 'reason=the worker never started processing its brief — its pane has not moved after four delivery attempts\n'
+    echo "driver-orca.sh dispatch: $task was never confirmed working (handle $handle, workspace $path)." >&2
+    echo "  Do NOT claim this node. Inspect the pane, then either re-run this dispatch or: driver-orca.sh stop $task --state \"$STATE\"" >&2
+    exit 1
+  fi
+
   printf 'ok=1\n'
   printf 'handle=%s\n' "$handle"
   printf 'worktree=%s\n' "$path"
   printf 'branch=%s\n' "$branch"
   printf 'runtime_task=%s\n' "$rtask"
   printf 'dispatch=%s\n' "$dispatch_id"
-  printf 'note=Worker started and its brief accepted by the runtime; the workspace is Orca-managed and visible in the app.\n'
+  printf 'confirmed=working\n'
+  [ "$REPAIRS" -gt 0 ] && printf 'repaired=%s\n' "$REPAIRS"
+  printf 'note=Worker observed processing its brief in an Orca-managed workspace, visible in the app.\n'
 }
 
 verb_collect() {

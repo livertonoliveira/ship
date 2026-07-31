@@ -1580,6 +1580,9 @@ cmd_next() {
       # the branch exists, and the graph then waits on a worker that was never
       # started. Making it an ordered, numbered step is the fix.
       next_body_add "- if that dispatch printed an \`instruction=\` line, CARRY IT OUT NOW, before the next call — for this driver that line is what actually starts the worker, and the node is not running until you have"
+      # ok=0 means the driver could not observe the worker working. Claiming on
+      # that is how a node goes in_flight with an idle agent behind it.
+      next_body_add "- if that dispatch printed \`ok=0\`, STOP for this node: do not collect it and do not claim it — report the reason= line to the user"
       next_body_add "- bash \"$DRIVER_SH\" collect $t --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\"   → read worktree= and branch= from its output"
       next_body_add "- bash \"$HOOK_DIR/graph.sh\" claim $t --worktree <worktree> --branch <branch>"
     done
