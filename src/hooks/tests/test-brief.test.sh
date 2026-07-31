@@ -105,7 +105,6 @@ drive_to_verify() {
     state="$(field "$out" state)"
     case "$state" in
       plan)        plan_with_contract "$layer" "$testpath" > "$scratch/plan.md" ;;
-      plan-review) printf 'verdict: ok\n' > "$scratch/plan-review.md" ;;
       develop)     mkdir -p "$dir/src"; echo 'module.exports=1' > "$dir/src/b.js" ;;
       verify-a)    printf '%s' "$out"; return 0 ;;
     esac
@@ -150,7 +149,6 @@ test_layer_already_authored_by_develop_is_not_dispatched() {
     state="$(field "$out" state)"
     case "$state" in
       plan)        plan_with_contract unit src/b.test.js > "$sc/plan.md" ;;
-      plan-review) printf 'verdict: ok\n' > "$sc/plan-review.md" ;;
       develop)
         mkdir -p "$dir/src"
         echo 'module.exports=1' > "$dir/src/b.js"
@@ -274,7 +272,6 @@ test_develop_authored_tests_reach_the_manifest() {
     state="$(field "$out" state)"
     case "$state" in
       plan)        plan_with_contract e2e test/e2e/b.e2e-spec.js > "$sc/plan.md" ;;
-      plan-review) printf 'verdict: ok\n' > "$sc/plan-review.md" ;;
       develop)
         mkdir -p "$dir/src" "$dir/test/e2e"
         echo 'module.exports=1' > "$dir/src/b.js"

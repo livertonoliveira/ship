@@ -51,6 +51,9 @@ jobs:
       - name: Check graph.sh stays driver-agnostic
         run: ./scripts/check-graph-driver-isolation.sh
 
+      - name: Check every skill declares a model
+        run: ./scripts/check-model-declared.sh
+
   hook-tests:
     name: Hook Tests — src/hooks/tests/*.test.sh
     runs-on: ubuntu-latest

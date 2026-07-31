@@ -33,7 +33,7 @@ require_hooks() {
   fi
 }
 
-KNOWN_PHASES="plan plan-review dev test perf security review remediation-fix remediation-verify homolog"
+KNOWN_PHASES="plan dev test perf security review remediation-fix remediation-verify homolog"
 
 is_known_phase() {
   local phase="$1"
@@ -1154,7 +1154,7 @@ next_test_dispatch() {
   local scratch="$1" task="$2" lang="$3" layer="$4"
   next_test_brief "$scratch" "$layer"
   cmd_dispatch "$scratch" test Agent "ship-test-$layer" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create, as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when empty). Generate only — never run a test command.\""
+  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Generate only — never run a test command.\""
 }
 
 next_fix_dispatch() {
@@ -1178,12 +1178,6 @@ next_static_cmds() {
   [ -n "$tc" ] && parts="typecheck: $tc"
   [ -n "$lint" ] && parts="${parts:+$parts; }lint: $lint"
   printf '%s' "$parts"
-}
-
-next_plan_review_dispatch() {
-  local scratch="$1" task="$2" lang="$3"
-  cmd_dispatch "$scratch" plan-review Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/plan.md and open ONLY the files each module lists under '- Files:'. Do not survey the wider codebase and do not review code quality — this is a closed question set about the module map: (1) is each module implementable in exactly the files it claims, or does it need one it does not list? (2) is any integration or registration point missing (module registration, route table, barrel export, DI container)? (3) does any module boundary split a unit that cannot be split? Write $scratch/plan-review.md: first line 'verdict: ok' when none of the three raised anything, otherwise 'verdict: blockers' followed by one '- <module-id>: <what is wrong and what the plan should say instead>' line per blocker. Nothing else.\""
 }
 
 next_remediation_verify_dispatch() {
@@ -1346,60 +1340,6 @@ cmd_next() {
         next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — read $SCRATCH/plan-validate-error.txt and fix exactly what it reports\""
         next_common_after
         next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
-      fi
-    fi
-
-    # --- plan confrontation: is this map implementable in these files? ----------
-    # plan-validate proves the plan is coherent with itself, with the spec and
-    # with the repo's file tree — none of which reads the files. The planner is
-    # forbidden from deep-reading them (that is develop's job), so module
-    # boundaries and integration points are decided by someone who only globbed.
-    # One closed question set over the plan's own files closes that gap here,
-    # before develop, the tests and the gate all inherit the same mistake.
-    if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
-      if [ ! -f "$SCRATCH/plan-review.md" ]; then
-        local prr_rc=0
-        if next_dispatched "$SCRATCH" plan-review; then
-          set +e
-          ( cmd_iter "$SCRATCH" plan-review --max 2 ) >/dev/null
-          prr_rc=$?
-          set -e
-          next_body_add "The plan reviewer returned without writing $SCRATCH/plan-review.md (silent write failure). Re-dispatch it:"
-        fi
-        if [ "$prr_rc" -eq 2 ]; then
-          # Advisory: never block the run on the confrontation's own failure.
-          printf 'skipped\n' > "$SCRATCH/plan-confronted.txt"
-        else
-          next_plan_review_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
-          next_common_after
-          next_emit "plan-review" "dispatch" "$RUN" "confronting the plan with the files it claims"
-        fi
-      fi
-      if [ ! -f "$SCRATCH/plan-confronted.txt" ]; then
-        if grep -qiE '^[[:space:]]*verdict:[[:space:]]*ok' "$SCRATCH/plan-review.md"; then
-          printf 'ok\n' > "$SCRATCH/plan-confronted.txt"
-        else
-          case "$ANSWER" in
-            replan)
-              # One confrontation per run: the marker is set before re-planning,
-              # so a second plan is validated but not re-confronted.
-              printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
-              rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
-              cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
-              next_common_after
-              next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
-              ;;
-            proceed)
-              printf 'proceed\n' > "$SCRATCH/plan-confronted.txt"
-              ;;
-            *)
-              next_body_add "The plan reviewer read the files each module claims and raised blockers — present $SCRATCH/plan-review.md to the user in the artifact language."
-              next_body_add "Options: re-plan addressing them | proceed anyway. Re-run next with --answer replan | --answer proceed."
-              next_emit "plan-review" "ask" "$RUN" "plan confrontation raised blockers"
-              ;;
-          esac
-        fi
       fi
     fi
   fi
@@ -1771,7 +1711,7 @@ cmd_next() {
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
     next_body_add "Invoke ship:pr via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
-    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (PR base, pull/push target — never main) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
+    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (the branch to sync onto and target) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
     next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
     next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
   fi

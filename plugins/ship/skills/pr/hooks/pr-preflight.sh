@@ -76,10 +76,11 @@ main() {
     remote="$(git remote)"
   fi
 
-  # Work-graph node: the base is the graph's feature branch, never the repo
-  # default, and the scratch dir must survive the run because the graph polls it
-  # to land the node. Both come from the marker graph.sh claim wrote into the
-  # workspace, so the skill never has to infer either.
+  # Work-graph node: the base is the graph's base branch — the real trunk the
+  # forge merges into, so the PR that lands here lands for everyone — and the
+  # scratch dir must survive the run because the graph polls it to land the node.
+  # Both come from the marker graph.sh claim wrote into the workspace, so the
+  # skill never has to infer either.
   local pr_base="" keep_context="no"
   if [ -n "$task" ] && [ -f ".context/ship-run/$task/pr-mode.txt" ]; then
     pr_base="$(grep -m1 '^base=' ".context/ship-run/$task/pr-mode.txt" | sed 's/^base=//' || true)"

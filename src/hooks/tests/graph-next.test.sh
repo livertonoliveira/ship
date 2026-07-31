@@ -54,7 +54,7 @@ field() {
 }
 
 # A workspace for <task> with one commit, so the graph has a real branch to
-# merge and a real footprint to read.
+# open a PR from and a real footprint to read.
 make_workspace() {
   local dir="$1" task="$2" file="$3"
   (
@@ -154,19 +154,19 @@ test_poll_lands_on_the_completion_artifact_not_a_handshake() {
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
   )
   out="$(cd "$dir" && bash "$GRAPH" poll)"
-  local status
-  status="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "landed"')"
+  local inflight
+  inflight="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "in_flight"' || true)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^landed=TASK-001$' && [ "$status" = "1" ]; then
+  if printf '%s' "$out" | grep -q '^landed=TASK-001$' && [ "$inflight" = "0" ]; then
     log_pass "$name"
   else
-    log_fail "$name (out='$out' landed_nodes=$status)"
+    log_fail "$name (out='$out' inflight_nodes=$inflight)"
   fi
 }
 
 test_poll_seals_uncommitted_work_into_the_branch() {
-  local name="landing commits the workspace — develop never commits, so the merge would be empty"
+  local name="landing commits the workspace — develop never commits, so the branch would be empty"
   local dir commits
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -622,8 +622,8 @@ test_claim_writes_homolog_defer_marker() {
   fi
 }
 
-test_dependents_unlock_after_done() {
-  local name="completing a node unlocks its dependents"
+test_dependents_unlock_after_the_pr_merges() {
+  local name="a node whose PR is merged unlocks its dependents"
   local dir out
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -633,7 +633,7 @@ test_dependents_unlock_after_done() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     bash "$GRAPH" land TASK-001 >/dev/null
-    bash "$GRAPH" merge TASK-001 >/dev/null
+    bash "$GRAPH" complete TASK-001 >/dev/null
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -666,7 +666,7 @@ test_next_is_idempotent() {
 }
 
 test_all_done_emits_done() {
-  local name="a fully integrated graph emits state=done, not another frontier"
+  local name="a graph whose every PR merged emits state=done, not another frontier"
   local dir out
   dir="$(mktemp -d)"
   (
@@ -688,7 +688,7 @@ test_all_done_emits_done() {
     git -C wt commit -qm feat
     bash "$GRAPH" claim TASK-001 --worktree wt --branch ship/TASK-001 >/dev/null
     bash "$GRAPH" land TASK-001 >/dev/null
-    bash "$GRAPH" merge TASK-001 >/dev/null
+    bash "$GRAPH" complete TASK-001 >/dev/null
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -928,10 +928,10 @@ test_counters_survive_a_resumed_graph() {
   (
     cd "$dir"
     bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main >/dev/null
-    bash "$GRAPH" iter merge-fix --max 2 >/dev/null
-    bash "$GRAPH" iter merge-fix --max 2 >/dev/null
+    bash "$GRAPH" iter retry --max 2 >/dev/null
+    bash "$GRAPH" iter retry --max 2 >/dev/null
     bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main >/dev/null 2>&1 || true
-    out="$(bash "$GRAPH" iter merge-fix --max 2)" || exit 2
+    out="$(bash "$GRAPH" iter retry --max 2)" || exit 2
     [ "$out" = "count=3" ] || exit 1
   ) || rc=$?
   rm -rf "$dir"
@@ -1186,7 +1186,7 @@ test_stalled_node_surfaces_instead_of_waiting_forever
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker
-test_dependents_unlock_after_done
+test_dependents_unlock_after_the_pr_merges
 test_next_is_idempotent
 test_all_done_emits_done
 test_dependency_cycle_is_a_deadlock_ask

@@ -11,6 +11,12 @@ set -euo pipefail
 #   conflict   — files(A) ∩ files(B) ≠ ∅; the declared `## Files` footprint until
 #                a node is in flight, then the REAL footprint of its workspace.
 #
+# The graph never merges anything and never runs a test suite. Each node syncs
+# its own branch against the base and opens its own PR from inside its workspace,
+# with the full context of the change it just implemented; the forge is the only
+# place a merge happens. What this script observes is the real PR state, and a
+# dependent is admitted only once its dependency's PR is MERGED there.
+#
 # This script never names a workspace runtime. Everything runtime-specific goes
 # through driver-<name>.sh's five verbs (dispatch/collect/wait/ask/stop), so swapping
 # runtimes is swapping a file. scripts/check-graph-driver-isolation.sh enforces it.
@@ -25,7 +31,6 @@ usage() {
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
   echo "  poll      [--feature <f>] [--stall-max N]" >&2
-  echo "  merge     <task> [--feature <f>] [--config <path>]" >&2
   echo "  complete  <task> [--feature <f>]" >&2
   echo "  fail      <task> --reason <r> [--feature <f>]" >&2
   echo "  answer    <task> <answer> [--feature <f>]" >&2
@@ -44,8 +49,15 @@ ACTIVE_POINTER="$GRAPH_ROOT/active.txt"
 # Column order of nodes.tsv — the awk field numbers below refer to it:
 #   1 id  2 repo  3 title  4 deps  5 files
 #   6 status  7 worktree  8 branch  9 attempts  10 blocked_by_conflict
-# status: pending → ready → in_flight → landed → merging → done
+# status: pending → ready → in_flight → landed → merged
+#         landed = the node's pipeline finished and its PR is open
+#         merged = that PR is merged on the forge — the only signal that
+#                  releases dependents
 #         failed halts admission; `reset` returns it to pending
+#
+# Per-node PR state lives in pr-status.tsv (id, number, state, url) rather than
+# an eleventh column: every awk above indexes nodes.tsv by field number, and the
+# PR is metadata about a node, not an input to scheduling beyond its state.
 
 die() { echo "graph.sh: $*" >&2; exit 1; }
 
@@ -129,6 +141,66 @@ meta_set() {
 # behaviour their next claim should get.
 node_pr_on() {
   [ "$(meta_get "$1" node_pr)" != "off" ]
+}
+
+# --- PR state ----------------------------------------------------------------
+
+# The forge client is resolved through a variable so a test can point it at a
+# stub, and so a repo whose client is wrapped keeps working.
+GH="${GH_BIN:-gh}"
+
+# There is a forge gate only when there is a forge to gate on: node PRs enabled,
+# a client on PATH, and a remote for it to talk about. Without all three nothing
+# will ever report a PR merged, and holding every dependent behind a signal that
+# cannot arrive would deadlock a perfectly good local run.
+forge_gate_on() {
+  local dir="$1"
+  node_pr_on "$dir" || return 1
+  command -v "$GH" >/dev/null 2>&1 || return 1
+  [ -n "$(git remote 2>/dev/null | head -1)" ] || return 1
+  return 0
+}
+
+pr_status_file() { printf '%s/pr-status.tsv' "$1"; }
+
+pr_status_get() {
+  local dir="$1" id="$2" col="$3" f
+  f="$(pr_status_file "$dir")"
+  [ -f "$f" ] || { printf ''; return 0; }
+  awk -F'\t' -v id="$id" -v c="$col" '$1 == id { print $c; exit }' "$f"
+}
+
+pr_status_set() {
+  local dir="$1" id="$2" number="$3" state="$4" url="$5" f tmp
+  f="$(pr_status_file "$dir")"
+  tmp="$dir/.pr-status.tmp"
+  touch "$f"
+  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" '
+    $1 == id { print id, n, s, u; done = 1; next }
+    { print }
+    END { if (!done) print id, n, s, u }
+  ' "$f" > "$tmp"
+  mv "$tmp" "$f"
+}
+
+json_field() {
+  printf '%s' "$1" | tr -d ' \n' | sed -n "s/.*\"$2\":\"\{0,1\}\([^,\"}]*\).*/\1/p" | head -1
+}
+
+# Asks the forge what actually happened to this node's PR. Nothing here is
+# inferred from local git: a branch being an ancestor of the base proves a
+# rebase, not a merge, and that difference is the whole point of this gate.
+#
+# Prints "<state>\t<number>\t<url>". state is the forge's own (OPEN, MERGED,
+# CLOSED), or `none` when the client found no PR for that branch.
+pr_probe() {
+  local dir="$1" id="$2" branch out
+  branch="$(node_field "$dir" "$id" 8)"
+  [ -n "$branch" ] || { printf 'none\t\t'; return 0; }
+  out="$("$GH" pr view "$branch" --json number,state,url 2>"$dir/pr-$id.log" || true)"
+  [ -n "$out" ] || { printf 'none\t\t'; return 0; }
+  printf '%s\t%s\t%s' \
+    "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)"
 }
 
 # --- nodes -------------------------------------------------------------------
@@ -312,14 +384,17 @@ render_json() {
       printf '      "worktree": %s,\n' "$(json_str_or_null "$wt")"
       printf '      "branch": %s,\n' "$(json_str_or_null "$branch")"
       printf '      "attempts": %s,\n' "${attempts:-0}"
-      printf '      "blocked_by_conflict": %s\n' "$(json_str_or_null "$blocked")"
+      printf '      "blocked_by_conflict": %s,\n' "$(json_str_or_null "$blocked")"
+      printf '      "pr": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 2)")"
+      printf '      "pr_state": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 3)")"
+      printf '      "pr_url": %s\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 4)")"
       printf '    }'
     done < <(nodes_rows "$dir")
     [ "$first" -eq 1 ] || printf '\n'
     printf '  ],\n'
-    printf '  "integration": { "last_merged": %s, "status": "%s" }\n' \
-      "$(json_str_or_null "$(meta_get "$dir" integration_last_merged)")" \
-      "$(json_escape "$(meta_get "$dir" integration_status)")"
+    printf '  "pr_gate": { "last_merged": %s, "awaiting_merge": %s }\n' \
+      "$(json_str_or_null "$(meta_get "$dir" last_merged)")" \
+      "$(count_status "$dir" landed)"
     printf '}\n'
   } > "$out"
   mv "$out" "$dir/graph.json"
@@ -349,6 +424,11 @@ files_overlap() {
   return 1
 }
 
+# A dependency is satisfied when its PR is MERGED on the forge — not when its
+# pipeline finished locally. The two came apart in practice: a node whose work
+# only exists on an unmerged branch is not something the next node can build on,
+# and admitting its dependent against a base that does not contain it is how a
+# dependent re-implements or contradicts work that is still in review.
 deps_satisfied() {
   local dir="$1" id="$2" deps d st
   deps="$(node_field "$dir" "$id" 4)"
@@ -358,13 +438,39 @@ deps_satisfied() {
   for d in $deps; do
     [ -n "$d" ] || continue
     st="$(node_field "$dir" "$d" 6)"
-    if [ -z "$st" ] || [ "$st" != "done" ]; then IFS="$old_ifs"; return 1; fi
+    if [ -z "$st" ] || [ "$st" != "merged" ]; then IFS="$old_ifs"; return 1; fi
   done
   IFS="$old_ifs"
   return 0
 }
 
 # --- init --------------------------------------------------------------------
+
+# The base is what every node branches from AND what every node PR targets, so
+# it has to be the branch the forge actually merges into. An ephemeral branch
+# only the coordinator ever sees would make every node PR a PR against a
+# coordinator-local fiction: merging it would land the work nowhere real, and
+# the graph's own "merged" signal would mean nothing outside this machine.
+#
+# The remote's HEAD is the honest answer; the conventional local names and then
+# the checked-out branch are the fallbacks for a repo with no remote.
+default_branch() {
+  local remote d
+  remote="$(git config --get "branch.$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true).remote" 2>/dev/null || true)"
+  if [ -z "$remote" ] && git remote get-url origin >/dev/null 2>&1; then remote="origin"; fi
+  if [ -z "$remote" ] && [ "$(git remote 2>/dev/null | awk 'END { print NR + 0 }')" = "1" ]; then
+    remote="$(git remote)"
+  fi
+  if [ -n "$remote" ]; then
+    d="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s|^$remote/||" || true)"
+    [ -n "$d" ] && { printf '%s' "$d"; return 0; }
+  fi
+  for d in main master; do
+    git show-ref --verify --quiet "refs/heads/$d" && { printf '%s' "$d"; return 0; }
+  done
+  d="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  printf '%s' "${d:-main}"
+}
 
 # Local mode keeps the spec in ship/changes/<feature>/, and /ship:spec leaves it
 # UNCOMMITTED — only /ship:pr ever commits. Every node workspace is branched from
@@ -375,8 +481,16 @@ deps_satisfied() {
 # it per node instead would have every node commit the same files and collide at
 # merge time.
 seal_spec() {
-  local dir="$1" feature="$2" spec_dir="ship/changes/$feature"
+  local dir="$1" feature="$2" spec_dir="ship/changes/$feature" head_branch
   [ -d "$spec_dir" ] || return 0
+  # Sealing means committing onto whatever is checked out here, and the nodes
+  # branch from the BASE. When the two differ the commit would land somewhere no
+  # node ever reads, so say so instead of leaving a silent gap.
+  head_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [ -n "$head_branch" ] && [ "$head_branch" != "$(meta_get "$dir" base_branch)" ]; then
+    log_line "$dir" "spec NOT sealed: HEAD is $head_branch but nodes branch from $(meta_get "$dir" base_branch) — check out the base branch and re-run init if the nodes need the spec"
+    return 0
+  fi
   git add -- "$spec_dir" >/dev/null 2>&1 || return 0
   git diff --cached --quiet -- "$spec_dir" 2>/dev/null && return 0
   git commit -q -m "docs($feature): spec artifacts for the work graph" -- "$spec_dir" >/dev/null 2>&1 || return 0
@@ -432,9 +546,9 @@ autoselect_driver() {
 # over, and the degradation was invisible in every status it printed.
 #
 # Re-electing here makes recovery automatic instead of remembered. It is safe
-# only while no node is HELD by the current driver — an in-flight or merging node
-# can be collected, waited on and stopped only through the driver that dispatched
-# it — which is the same guard `set --driver` uses.
+# only while no node is HELD by the current driver — an in-flight node can be
+# collected, waited on and stopped only through the driver that dispatched it —
+# which is the same guard `set --driver` uses.
 #
 # A driver named explicitly by a human is never re-elected: `--driver local` has
 # to mean local, or pinning a runtime would be impossible. An election recorded
@@ -445,7 +559,7 @@ reelect_driver() {
   chosen="$(meta_get "$dir" driver_chosen_by)"
   [ "$chosen" != "explicit" ] || return 0
 
-  busy="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; } | tr -d '[:space:]' )"
+  busy="$(nodes_with_status "$dir" in_flight | tr -d '[:space:]')"
   [ -z "$busy" ] || return 0
 
   sel="$(autoselect_driver)"
@@ -525,7 +639,7 @@ cmd_init() {
     printf 'nodes=%s\n' "$(awk 'END { print NR }' "$dir/nodes.tsv")"
     printf 'inflight=%s\n' "$(count_status "$dir" in_flight)"
     printf 'landed=%s\n' "$(count_status "$dir" landed)"
-    printf 'done=%s\n' "$(count_status "$dir" done)"
+    printf 'merged=%s\n' "$(count_status "$dir" merged)"
     # A re-init almost always means "the driver I picked does not work here" or
     # "give me more slots" — not "throw the run away". Naming the non-destructive
     # command here is what keeps the next reflex off --fresh.
@@ -536,10 +650,7 @@ cmd_init() {
     exit 3
   fi
 
-  if [ -z "$base_branch" ]; then
-    base_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-    base_branch="${base_branch:-main}"
-  fi
+  [ -n "$base_branch" ] || base_branch="$(default_branch)"
 
   mkdir -p "$dir"
   # --fresh has to clear EVERY per-run file, not just the two that describe the
@@ -548,10 +659,9 @@ cmd_init() {
   # signal surviving a reset, which is exactly what the observe-the-artifact
   # rule exists to prevent. Stall and progress counters are just as poisonous.
   if [ "$fresh" -eq 1 ]; then
-    rm -rf "$dir/merge"
     rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt \
-          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/merge-*.log "$dir"/publish-*.log \
-          "$dir/nodes.tsv" "$dir/meta.tsv"
+          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/pr-*.log \
+          "$dir/pr-status.tsv" "$dir/nodes.tsv" "$dir/meta.tsv"
   fi
 
   local parsed
@@ -604,8 +714,7 @@ cmd_init() {
   meta_set "$dir" max_in_flight "$max_in_flight"
   meta_set "$dir" repo "$default_repo"
   meta_set "$dir" node_pr "$node_pr"
-  meta_set "$dir" integration_status green
-  meta_set "$dir" integration_last_merged ""
+  meta_set "$dir" last_merged ""
 
   mkdir -p "$GRAPH_ROOT"
   printf '%s\n' "$feature" > "$ACTIVE_POINTER"
@@ -636,9 +745,10 @@ set_usage() {
 # work in this environment (no CLI, no permission to dispatch) is discovered
 # AFTER init by construction, so "start over" was the wrong and only answer.
 #
-# Only the two knobs that carry no node state are settable. base_branch is not:
-# every workspace is already branched from it, so changing it mid-run would make
-# the conflict edges and the merge node read against a base the nodes never saw.
+# Only the knobs that carry no node state are settable. base_branch is not:
+# every workspace is already branched from it and every open node PR already
+# targets it, so changing it mid-run would leave the conflict edges reading
+# against a base the nodes never saw.
 cmd_set() {
   local feature="" driver="" max_in_flight="" node_pr="" changed=0
   while [ $# -gt 0 ]; do
@@ -684,7 +794,7 @@ cmd_set() {
     # collected, waited on and stopped through it. Swapping underneath it orphans
     # a worker that keeps running and billing with nothing able to reach it.
     local busy
-    busy="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; } | tr '\n' ' ' )"
+    busy="$(nodes_with_status "$dir" in_flight | tr '\n' ' ')"
     busy="$(printf '%s' "$busy" | sed 's/ *$//')"
     if [ -n "$busy" ]; then
       die "set: cannot change the driver while node(s) are still held by the current one: $busy
@@ -859,10 +969,10 @@ cmd_claim() {
 
   # One issue, one PR: the node's own pipeline opens it, from the workspace that
   # holds the diff, so the commits are the atomic ones /ship:pr writes instead of
-  # the single blob seal_workspace falls back to. The base is the graph's base
-  # branch and never main — a node is only dispatched once its deps are done,
-  # i.e. already merged into that base, so its PR diff is its own work alone and
-  # no stacking is needed.
+  # the single blob seal_workspace falls back to. The base is the graph's base —
+  # the real trunk — and the node's own /ship:pr syncs onto it before pushing,
+  # with the context of the change it just implemented. A node is only dispatched
+  # once every dependency's PR is merged there, so its diff is its own work alone.
   local node_pr_state="off"
   if node_pr_on "$dir"; then
     node_pr_state="on"
@@ -913,6 +1023,71 @@ seal_workspace() {
 
 poll_usage() {
   echo "usage: graph.sh poll [--feature <f>] [--stall-max N]" >&2
+}
+
+SETTLE_MERGED=0
+SETTLE_AWAITING=0
+SETTLE_CLOSED=0
+
+# The forge gate. A landed node has finished its pipeline and opened its PR; what
+# happens next happens on the forge, where a human reviews and merges. This reads
+# that outcome and nothing else — it never merges, never pushes, never verifies.
+#
+# A PR closed without merging is a decision, not a pause: leaving the node landed
+# would hold every dependent behind a merge that is never coming.
+settle_landed() {
+  local dir="$1" gated=1 id probe rest state number url
+  SETTLE_MERGED=0
+  SETTLE_AWAITING=0
+  SETTLE_CLOSED=0
+  forge_gate_on "$dir" || gated=0
+
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+
+    if [ "$gated" -eq 0 ]; then
+      pr_status_set "$dir" "$id" "" "no-forge" ""
+      transition "$dir" "$id" landed merged
+      meta_set "$dir" last_merged "$id"
+      log_line "$dir" "$id merged — no forge gate here (node PRs off, no forge client, or no remote)"
+      printf 'merged=%s\n' "$id"
+      SETTLE_MERGED=$((SETTLE_MERGED + 1))
+      continue
+    fi
+
+    probe="$(pr_probe "$dir" "$id")"
+    state="${probe%%	*}"
+    rest="${probe#*	}"
+    number="${rest%%	*}"
+    url="${rest#*	}"
+    pr_status_set "$dir" "$id" "$number" "$state" "$url"
+
+    case "$state" in
+      MERGED)
+        transition "$dir" "$id" landed merged
+        meta_set "$dir" last_merged "$id"
+        log_line "$dir" "$id PR #$number merged on the forge — its dependents are free"
+        printf 'merged=%s\n' "$id"
+        SETTLE_MERGED=$((SETTLE_MERGED + 1))
+        ;;
+      CLOSED)
+        node_set "$dir" "$id" 6 failed
+        node_set "$dir" "$id" 10 ""
+        log_line "$dir" "$id → failed: PR #$number was closed without being merged"
+        printf 'pr_closed=%s\n' "$id"
+        SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
+        ;;
+      none)
+        log_line "$dir" "$id landed but the forge reports no PR for $(node_field "$dir" "$id" 8)"
+        printf 'pr_missing=%s\n' "$id"
+        SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
+        ;;
+      *)
+        printf 'awaiting_merge=%s\n' "$id"
+        SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
+        ;;
+    esac
+  done < <(nodes_with_status "$dir" landed)
 }
 
 # The completion signal, independent of anything a worker chooses to report.
@@ -997,8 +1172,11 @@ cmd_poll() {
     fi
   done < <(nodes_with_status "$dir" in_flight)
 
+  settle_landed "$dir"
+
   render_json "$dir"
-  printf 'summary=landed:%s working:%s stalled:%s\n' "$landed" "$working" "$stalled"
+  printf 'summary=landed:%s working:%s stalled:%s merged:%s awaiting_merge:%s\n' \
+    "$landed" "$working" "$stalled" "$SETTLE_MERGED" "$SETTLE_AWAITING"
 }
 
 cmd_land() {
@@ -1035,9 +1213,10 @@ cmd_complete() {
   local dir
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
-  transition "$dir" "$id" "merging,landed" done
-  meta_set "$dir" integration_last_merged "$id"
-  meta_set "$dir" integration_status green
+  # The manual counterpart of the forge gate: a node whose work reached the base
+  # by a route the forge cannot report (merged by hand, landed in another PR).
+  transition "$dir" "$id" "landed" merged
+  meta_set "$dir" last_merged "$id"
   render_json "$dir"
   printf 'completed=%s\n' "$id"
 }
@@ -1205,10 +1384,13 @@ cmd_conflicts() {
     node_set "$dir" "$id" 5 "$real"
     log_line "$dir" "$id footprint refreshed from workspace: $real"
     refreshed=$((refreshed + 1))
-  done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging)
+  done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed)
 
+  # A landed node still counts as active: its PR is open, so its files are not
+  # on the base yet and a neighbour touching them would be writing against a
+  # version of that file the forge is about to replace.
   local active blocked_count=0 cand cand_files act act_files
-  active="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; } | sort )"
+  active="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed; } | sort )"
 
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
@@ -1265,143 +1447,6 @@ cmd_iter() {
   fi
 }
 
-# --- merge node --------------------------------------------------------------
-
-# "origin" is a convention, not a guarantee — this very repo's only remote is
-# named something else, and a hardcoded origin turns every publish into a silent
-# skipped-no-remote there. The base branch's own tracking config is the honest
-# answer; origin and "the only remote there is" are the fallbacks.
-base_remote() {
-  local base="$1" r
-  r="$(git config --get "branch.$base.remote" 2>/dev/null || true)"
-  if [ -z "$r" ] && git remote get-url origin >/dev/null 2>&1; then r="origin"; fi
-  if [ -z "$r" ] && [ "$(git remote | awk 'END { print NR + 0 }')" = "1" ]; then r="$(git remote)"; fi
-  printf '%s' "$r"
-}
-
-# What closes a node's PR. The integration suite has just run green over the
-# merge, so the local base is the verified state; pushing it makes the node's
-# head an ancestor of the remote base and the forge marks that PR merged. The
-# merge node stays the single decision point — nothing merges on the forge that
-# was not verified here first.
-#
-# Never fatal: a red push (no remote, no credentials, base moved underneath) is
-# a publication problem, not an integration one, and failing the merge over it
-# would roll a green node back into the fix loop.
-publish_base() {
-  local dir="$1" id="$2" base remote
-  node_pr_on "$dir" || { printf 'skipped-node-pr-off'; return 0; }
-  base="$(meta_get "$dir" base_branch)"
-  [ -n "$base" ] || { printf 'skipped-no-base'; return 0; }
-  remote="$(base_remote "$base")"
-  [ -n "$remote" ] || { printf 'skipped-no-remote'; return 0; }
-  if git push -q "$remote" "HEAD:refs/heads/$base" >"$dir/publish-$id.log" 2>&1; then
-    log_line "$dir" "$id merged and $base published — its PR closes as merged"
-    printf 'yes'
-  else
-    log_line "$dir" "$id merged locally but pushing $base failed — see $dir/publish-$id.log"
-    printf 'failed'
-  fi
-}
-
-# The verifier that does not exist inside a single task's pipeline: two nodes
-# green in isolation can be red together. Merges one landed branch into the base
-# checkout, then re-runs the FULL suite — a synthetic scratch with no
-# generated-tests.md is exactly what makes test-exec.sh drop its file scoping.
-cmd_merge() {
-  local feature="" id="" config="ship/config.md"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --feature) feature="$2"; shift 2 ;;
-      --config) config="$2"; shift 2 ;;
-      -h|--help) usage; exit 0 ;;
-      -*) usage; exit 1 ;;
-      *) if [ -z "$id" ]; then id="$1"; else usage; exit 1; fi; shift ;;
-    esac
-  done
-  [ -n "$id" ] || die "merge: <task> is required"
-
-  local dir
-  dir="$(graph_dir "$(resolve_feature "$feature")")"
-  require_graph "$dir"
-  node_exists "$dir" "$id" || die "unknown node: $id"
-
-  local status branch wt
-  status="$(node_field "$dir" "$id" 6)"
-  case "$status" in
-    landed|merging) ;;
-    *) die "merge: $id is '$status' — only a landed node can be merged" ;;
-  esac
-  branch="$(node_field "$dir" "$id" 8)"
-  [ -n "$branch" ] || die "merge: $id has no branch recorded (claim it first)"
-  wt="$(node_field "$dir" "$id" 7)"
-
-  [ "$status" = "merging" ] || { transition "$dir" "$id" "landed" merging; render_json "$dir"; }
-
-  # Already an ancestor → this is a re-verification after a merge-fix round, not
-  # a second merge. Idempotent by construction.
-  if ! git merge-base --is-ancestor "$branch" HEAD 2>/dev/null; then
-    if ! git merge --no-ff --no-edit "$branch" >"$dir/merge-$id.log" 2>&1; then
-      meta_set "$dir" integration_status red
-      meta_set "$dir" integration_reason "merge conflict on $branch"
-      render_json "$dir"
-      log_line "$dir" "$id merge conflict — see $dir/merge-$id.log"
-      printf 'result=red\n'
-      printf 'reason=merge-conflict\n'
-      printf 'log=%s\n' "$dir/merge-$id.log"
-      exit 1
-    fi
-  fi
-
-  local ms="$dir/merge/$id"
-  mkdir -p "$ms"
-  if [ -n "$wt" ] && [ -f "$wt/.context/ship-run/$id/stack.md" ]; then
-    cp "$wt/.context/ship-run/$id/stack.md" "$ms/stack.md"
-  else
-    {
-      printf '# Stack\n\n'
-      local f v
-      for f in Runtime Framework 'Package Manager' 'Test Framework' Typecheck Lint; do
-        v="$(grep -m1 -E "^- $f:" "$config" 2>/dev/null | sed -E "s/^- $f:[[:space:]]*//" || true)"
-        printf -- '- %s: %s\n' "$f" "${v:-unknown}"
-      done
-    } > "$ms/stack.md"
-  fi
-  rm -f "$ms/generated-tests.md" "$ms/static-exec-done.txt"
-
-  local rc=0
-  set +e
-  bash "$HOOK_DIR/test-exec.sh" "$ms" --config "$config" >"$ms/exec.log" 2>&1
-  rc=$?
-  set -e
-
-  case "$rc" in
-    0|2)
-      meta_set "$dir" integration_status green
-      meta_set "$dir" integration_reason ""
-      transition "$dir" "$id" "merging" done
-      meta_set "$dir" integration_last_merged "$id"
-      render_json "$dir"
-      printf 'result=green\n'
-      printf 'completed=%s\n' "$id"
-      printf 'published=%s\n' "$(publish_base "$dir" "$id")"
-      if [ "$rc" -eq 2 ]; then
-        printf 'note=no test runner resolved — merge accepted on the static gate alone\n'
-      fi
-      ;;
-    *)
-      meta_set "$dir" integration_status red
-      meta_set "$dir" integration_reason "integration suite red after merging $id"
-      render_json "$dir"
-      log_line "$dir" "$id integration suite red — see $ms/test-failures.md"
-      printf 'result=red\n'
-      printf 'reason=suite-red\n'
-      printf 'failures=%s\n' "$ms/test-failures.md"
-      exit 1
-      ;;
-  esac
-}
-
 # --- status ------------------------------------------------------------------
 
 abort_usage() {
@@ -1439,7 +1484,7 @@ cmd_abort() {
     log_line "$dir" "$id → failed: $reason (worker stopped)"
     printf 'stopped=%s\n' "$id"
     stopped=$((stopped + 1))
-  done < <({ nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; })
+  done < <(nodes_with_status "$dir" in_flight)
 
   render_json "$dir"
   printf 'aborted=%s\n' "$stopped"
@@ -1465,13 +1510,20 @@ cmd_status() {
     return 0
   fi
 
-  printf 'feature=%s driver=%s mode=%s base=%s max_in_flight=%s integration=%s\n' \
+  printf 'feature=%s driver=%s mode=%s base=%s max_in_flight=%s awaiting_merge=%s\n' \
     "$(meta_get "$dir" feature)" "$(meta_get "$dir" driver)" "$(meta_get "$dir" mode)" \
     "$(meta_get "$dir" base_branch)" "$(meta_get "$dir" max_in_flight)" \
-    "$(meta_get "$dir" integration_status)"
+    "$(count_status "$dir" landed)"
   printf 'workspaces: %s\n' "$(meta_get "$dir" driver_workspaces)"
-  printf '\n%-16s %-10s %-10s %s\n' "node" "status" "blocked-by" "deps"
-  awk -F'\t' '{ printf "%-16s %-10s %-10s %s\n", $1, $6, ($10 == "" ? "-" : $10), ($4 == "" ? "-" : $4) }' "$dir/nodes.tsv"
+  printf '\n%-16s %-10s %-10s %-10s %s\n' "node" "status" "pr" "blocked-by" "deps"
+  local sid
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    printf '%-16s %-10s %-10s %-10s %s\n' "$sid" "$(node_field "$dir" "$sid" 6)" \
+      "$(pr_status_get "$dir" "$sid" 3)" \
+      "$(printf '%s' "$(node_field "$dir" "$sid" 10)" | sed 's/^$/-/')" \
+      "$(printf '%s' "$(node_field "$dir" "$sid" 4)" | sed 's/^$/-/')"
+  done < <(awk -F'\t' '{ print $1 }' "$dir/nodes.tsv")
 }
 
 # --- next --------------------------------------------------------------------
@@ -1513,12 +1565,11 @@ cmd_next() {
   # fallen back forever.
   reelect_driver "$dir"
 
-  local driver max_in_flight integ log_path
+  local driver max_in_flight log_path
   driver="$(meta_get "$dir" driver)"
   NEXT_DRIVER="$driver"
   NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
   max_in_flight="$(meta_get "$dir" max_in_flight)"
-  integ="$(meta_get "$dir" integration_status)"
   log_path="$dir/graph-log.md"
 
   # An unreadable slot count must not look like a deadlock. Empty is 0 in bash
@@ -1535,45 +1586,22 @@ cmd_next() {
 
   local DRIVER_SH="$HOOK_DIR/driver-$driver.sh"
 
-  local inflight merging landed failed total done_n
+  local inflight landed failed total merged_n
   inflight="$(count_status "$dir" in_flight)"
-  merging="$(count_status "$dir" merging)"
   landed="$(count_status "$dir" landed)"
   failed="$(count_status "$dir" failed)"
-  done_n="$(count_status "$dir" done)"
+  merged_n="$(count_status "$dir" merged)"
   total="$(awk 'END { print NR }' "$dir/nodes.tsv")"
 
-  # --- integration red: fix the merge before anything else -------------------
-  if [ "$integ" = "red" ] && [ "$merging" -gt 0 ]; then
-    local mid ms rc=0
-    mid="$(nodes_with_status "$dir" merging | head -1)"
-    ms="$dir/merge/$mid"
-    set +e
-    ( cmd_iter "$mid-merge-fix" --max 2 --feature "$(meta_get "$dir" feature)" ) >/dev/null
-    rc=$?
-    set -e
-    if [ "$rc" -eq 2 ]; then
-      next_body_add "Integration stayed red after 2 fix rounds merging $mid ($(meta_get "$dir" integration_reason))."
-      next_body_add "Present $ms/test-failures.md and $dir/merge-$mid.log to the user, then ask: fix by hand and re-run \`bash \"$HOOK_DIR/graph.sh\" merge $mid\`, or abandon with \`bash \"$HOOK_DIR/graph.sh\" fail $mid --reason <r>\`."
-      next_emit "ask" "ask" "$inflight" "" "merge-fix cap reached on $mid"
-    fi
-    next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Integration is red after merging $mid into $(meta_get "$dir" base_branch). Read $ms/test-failures.md and $dir/merge-$mid.log and apply the minimal source fixes — no unrelated refactors, no comments, no spec IDs in code. Report what you changed.\""
-    next_body_add "- bash \"$HOOK_DIR/graph.sh\" merge $mid"
-    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
-    next_emit "merge-fix" "dispatch" "$inflight" "" "integration red on $mid — dispatching fix agent"
-  fi
-
-  # --- merge node: serialized, one at a time ---------------------------------
-  if [ "$merging" -gt 0 ] || [ "$landed" -gt 0 ]; then
-    local mid
-    if [ "$merging" -gt 0 ]; then
-      mid="$(nodes_with_status "$dir" merging | head -1)"
-    else
-      mid="$(nodes_with_status "$dir" landed | head -1)"
-    fi
-    next_body_add "- bash \"$HOOK_DIR/graph.sh\" merge $mid"
-    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
-    next_emit "merge" "work" "$inflight" "" "integrating $mid into $(meta_get "$dir" base_branch)"
+  # With no forge to report a merge, a landed node would sit there forever and
+  # every dependent behind it with it. Settling those here — not only in `poll` —
+  # keeps a run with no remote moving without inventing a merge that never
+  # happened: nothing is pushed, nothing is integrated, the node is simply not
+  # held behind a signal this environment cannot produce.
+  if [ "$landed" -gt 0 ] && ! forge_gate_on "$dir"; then
+    settle_landed "$dir" >/dev/null
+    landed="$(count_status "$dir" landed)"
+    merged_n="$(count_status "$dir" merged)"
   fi
 
   # --- a failed node freezes admission ---------------------------------------
@@ -1688,28 +1716,47 @@ cmd_next() {
       next_emit "ask" "ask" "$inflight" "" "stalled node(s):${stalled}"
     fi
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"   → blocks until a worker reports or the wait window closes; a timeout is a checkpoint, not a failure"
-    next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished. This is the completion signal; do NOT decide it yourself from what a worker said."
+    next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" conflicts"
     next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
     next_emit "wait" "wait" "$inflight" "" "$inflight node(s) in flight"
   fi
 
+  # --- landed: the forge has the ball ----------------------------------------
+  # Nothing here merges. Each landed node synced itself onto the base and opened
+  # its own PR from the workspace that implemented it; what remains is a human
+  # review and a merge on the forge, and the dependents wait on that and not on
+  # anything this script could decide.
+  if [ "$landed" -gt 0 ]; then
+    local lid lstate lurl lnum
+    next_body_add "Waiting on the forge. These nodes finished and their PR targets $(meta_get "$dir" base_branch):"
+    while IFS= read -r lid; do
+      [ -n "$lid" ] || continue
+      lstate="$(pr_status_get "$dir" "$lid" 3)"
+      lnum="$(pr_status_get "$dir" "$lid" 2)"
+      lurl="$(pr_status_get "$dir" "$lid" 4)"
+      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}]"
+    done < <(nodes_with_status "$dir" landed)
+    next_body_add "Present them to the user for review and merge, in the artifact language. Ship never merges a PR itself."
+    next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
+    next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
+    next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
+  fi
+
   # --- done ------------------------------------------------------------------
-  if [ "$done_n" -eq "$total" ]; then
-    next_body_add "Every node is integrated into $(meta_get "$dir" base_branch)."
+  if [ "$merged_n" -eq "$total" ]; then
+    next_body_add "Every node's PR is merged into $(meta_get "$dir" base_branch)."
     next_body_add "Present the batch homolog: for each node, its workspace's .context/ship-run/<task>/homolog-report.md (written by the deferred homolog), in the artifact language."
-    if node_pr_on "$dir"; then
-      next_body_add "Then inform: every node PR is already open and merged into $(meta_get "$dir" base_branch); what remains is the integration PR from that branch to the default branch — run /ship:pr when ready. NEVER auto-invoke /ship:pr."
-    else
-      next_body_add "Then inform: run /ship:pr when ready. NEVER auto-invoke /ship:pr."
+    if ! node_pr_on "$dir"; then
+      next_body_add "Then inform: node PRs were off, so each node's branch is still unmerged — run /ship:pr per branch when ready. NEVER auto-invoke /ship:pr."
     fi
-    next_emit "done" "done" "0" "" "graph complete — $done_n/$total nodes"
+    next_emit "done" "done" "0" "" "graph complete — $merged_n/$total nodes"
   fi
 
   # --- deadlock --------------------------------------------------------------
   next_body_add "No node can advance: nothing in flight, nothing landed, and every remaining node is blocked."
   next_body_add "Run \`bash \"$HOOK_DIR/graph.sh\" status\` and present it — a dependency cycle or a permanent conflict edge needs a human call."
-  next_emit "ask" "ask" "0" "" "deadlock — $done_n/$total nodes done"
+  next_emit "ask" "ask" "0" "" "deadlock — $merged_n/$total nodes merged"
 }
 
 # --- dispatch ----------------------------------------------------------------
@@ -1729,7 +1776,6 @@ case "$SUBCOMMAND" in
   claim)     cmd_claim "$@" ;;
   land)      cmd_land "$@" ;;
   poll)      cmd_poll "$@" ;;
-  merge)     cmd_merge "$@" ;;
   complete)  cmd_complete "$@" ;;
   fail)      cmd_fail "$@" ;;
   answer)    cmd_answer "$@" ;;

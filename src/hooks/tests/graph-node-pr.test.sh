@@ -3,13 +3,13 @@
 # One issue, one workspace, one PR. Three seams carry that, and each is easy to
 # break silently:
 #
-#   * claim writes the pr-mode marker (with the graph's base, never main) into
-#     the node's scratch dir — the only place the node's own pipeline can learn
-#     it is running inside a graph;
+#   * claim writes the pr-mode marker (carrying the graph's base — the branch the
+#     forge really merges into) into the node's scratch dir, the only place the
+#     node's own pipeline can learn it is running inside a graph;
 #   * pipeline.sh turns that marker into a node-pr step BEFORE homolog, because
 #     homolog-approved.txt is what the graph polls to land and seal;
-#   * a green merge publishes the base, which is what closes the node's PR as
-#     merged — and a failed push must never roll a green node back.
+#   * pr-sync.sh rebases the node onto that base before the push, and hands a
+#     conflict back to the agent that wrote the change instead of to anyone else.
 
 set -euo pipefail
 
@@ -18,6 +18,7 @@ GRAPH="$SCRIPT_DIR/../graph.sh"
 PIPELINE="$SCRIPT_DIR/../pipeline.sh"
 PR_PREFLIGHT="$SCRIPT_DIR/../pr-preflight.sh"
 PR_FINALIZE="$SCRIPT_DIR/../pr-finalize.sh"
+PR_SYNC="$SCRIPT_DIR/../pr-sync.sh"
 
 pass_count=0
 fail_count=0
@@ -284,98 +285,92 @@ test_preflight_resolves_a_remote_not_named_origin() {
   fi
 }
 
-# The merge node is the only thing that may merge, so publishing is what turns
-# its verdict into a closed PR upstream.
-test_green_merge_publishes_the_base() {
-  local name="a green merge pushes the base, which is what closes the node's PR as merged"
-  local dir remote out pushed
+# Whoever is behind rebases, with the context that wrote the change. These pin
+# the two outcomes the node's own pipeline has to act on.
+test_sync_rebases_onto_the_base() {
+  local name="pr-sync fast-forwards the node's branch onto the base it will target"
+  local dir remote out has_base=0
   dir="$(mktemp -d)"
   remote="$(mktemp -d)"
   git init -q --bare "$remote/origin.git"
   new_repo "$dir"
-  init_graph "$dir"
   (
     cd "$dir"
+    git checkout -q main
     git remote add origin "$remote/origin.git"
-    git push -q -u origin feat/base
-    git worktree add -q wt -b ship/TASK-001 feat/base
-    mkdir -p wt/src
-    printf 'export const a = 1\n' > wt/src/a.ts
-    git -C wt add -A
-    git -C wt commit -qm "feat: TASK-001"
-    bash "$GRAPH" claim TASK-001 --worktree wt --branch ship/TASK-001 >/dev/null
-    bash "$GRAPH" land TASK-001 >/dev/null
+    git push -q -u origin main
+    git checkout -q -b ship/TASK-001
+    printf 'node\n' > node.txt
+    git add -A && git commit -qm "feat: node"
+    # The base moves on underneath, in a file the node never touched.
+    git checkout -q main
+    printf 'trunk\n' > trunk.txt
+    git add -A && git commit -qm "feat: trunk"
+    git push -q origin main
+    git checkout -q ship/TASK-001
   )
-  out="$(cd "$dir" && bash "$GRAPH" merge TASK-001)"
-  pushed="$(git -C "$remote/origin.git" log --oneline feat/base 2>/dev/null | wc -l | tr -d ' ')"
+  out="$(cd "$dir" && bash "$PR_SYNC" --remote origin --base main)"
+  git -C "$dir" show "ship/TASK-001:trunk.txt" >/dev/null 2>&1 && has_base=1
   rm -rf "$dir" "$remote"
 
-  if [ "$(field "$out" result)" = "green" ] \
-    && [ "$(field "$out" published)" = "yes" ] \
-    && [ "$pushed" -ge 2 ]; then
+  if [ "$(field "$out" result)" = "clean" ] && [ "$has_base" -eq 1 ]; then
     log_pass "$name"
   else
-    log_fail "$name (published='$(field "$out" published)' commits_on_remote=$pushed)"
+    log_fail "$name (result='$(field "$out" result)' base_commit_present=$has_base)"
   fi
 }
 
-test_green_merge_publishes_to_a_remote_not_named_origin() {
-  local name="a repo whose only remote is not called origin still gets its base published"
-  local dir remote out pushed
+test_sync_hands_the_conflict_back_with_the_files() {
+  local name="a conflicting rebase reports every unmerged path and leaves it resolvable in place"
+  local dir remote out
   dir="$(mktemp -d)"
   remote="$(mktemp -d)"
-  git init -q --bare "$remote/forja.git"
+  git init -q --bare "$remote/origin.git"
   new_repo "$dir"
-  init_graph "$dir"
   (
     cd "$dir"
-    git remote add forja "$remote/forja.git"
-    git push -q -u forja feat/base
-    git worktree add -q wt -b ship/TASK-001 feat/base
-    mkdir -p wt/src
-    printf 'export const a = 1\n' > wt/src/a.ts
-    git -C wt add -A
-    git -C wt commit -qm "feat: TASK-001"
-    bash "$GRAPH" claim TASK-001 --worktree wt --branch ship/TASK-001 >/dev/null
-    bash "$GRAPH" land TASK-001 >/dev/null
+    git checkout -q main
+    git remote add origin "$remote/origin.git"
+    printf 'shared\n' > shared.css
+    git add -A && git commit -qm "feat: shared"
+    git push -q -u origin main
+    git checkout -q -b ship/TASK-001
+    printf 'node side\n' > shared.css
+    git add -A && git commit -qm "feat: node"
+    git checkout -q main
+    printf 'trunk side\n' > shared.css
+    git add -A && git commit -qm "feat: trunk"
+    git push -q origin main
+    git checkout -q ship/TASK-001
   )
-  out="$(cd "$dir" && bash "$GRAPH" merge TASK-001)"
-  pushed="$(git -C "$remote/forja.git" log --oneline feat/base 2>/dev/null | wc -l | tr -d ' ')"
+  out="$(cd "$dir" && bash "$PR_SYNC" --remote origin --base main)"
+  # Resolve it the way the node's own agent would, then continue.
+  printf 'both sides\n' > "$dir/shared.css"
+  local cont
+  cont="$(cd "$dir" && bash "$PR_SYNC" --continue)"
   rm -rf "$dir" "$remote"
 
-  if [ "$(field "$out" published)" = "yes" ] && [ "$pushed" -ge 2 ]; then
+  if [ "$(field "$out" result)" = "conflict" ] \
+    && printf '%s' "$out" | grep -q '^conflict:shared.css$' \
+    && [ "$(field "$cont" result)" = "clean" ]; then
     log_pass "$name"
   else
-    log_fail "$name (published='$(field "$out" published)' commits_on_remote=$pushed)"
+    log_fail "$name (result='$(field "$out" result)' continue='$(field "$cont" result)')"
   fi
 }
 
-test_merge_stays_green_when_publishing_fails() {
-  local name="no remote to publish to leaves the node done and the merge green"
-  local dir out json
+test_sync_without_a_remote_is_not_an_error() {
+  local name="no remote means nothing to sync against, not a failed PR"
+  local dir out
   dir="$(mktemp -d)"
   new_repo "$dir"
-  init_graph "$dir"
-  (
-    cd "$dir"
-    git worktree add -q wt -b ship/TASK-001 feat/base
-    mkdir -p wt/src
-    printf 'export const a = 1\n' > wt/src/a.ts
-    git -C wt add -A
-    git -C wt commit -qm "feat: TASK-001"
-    bash "$GRAPH" claim TASK-001 --worktree wt --branch ship/TASK-001 >/dev/null
-    bash "$GRAPH" land TASK-001 >/dev/null
-  )
-  out="$(cd "$dir" && bash "$GRAPH" merge TASK-001)"
-  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  out="$(cd "$dir" && bash "$PR_SYNC" --base main)"
   rm -rf "$dir"
 
-  if [ "$(field "$out" result)" = "green" ] \
-    && [ "$(field "$out" published)" = "skipped-no-remote" ] \
-    && printf '%s' "$json" | grep -q '"status": "done"'; then
+  if [ "$(field "$out" result)" = "skipped-no-remote" ]; then
     log_pass "$name"
   else
-    log_fail "$name (published='$(field "$out" published)' result='$(field "$out" result)')"
+    log_fail "$name (result='$(field "$out" result)')"
   fi
 }
 
@@ -389,9 +384,9 @@ test_pr_created_marker_retires_the_step
 test_preflight_reports_the_graph_base_and_keep_context
 test_preflight_outside_a_graph_keeps_the_default_base
 test_preflight_resolves_a_remote_not_named_origin
-test_green_merge_publishes_the_base
-test_green_merge_publishes_to_a_remote_not_named_origin
-test_merge_stays_green_when_publishing_fails
+test_sync_rebases_onto_the_base
+test_sync_hands_the_conflict_back_with_the_files
+test_sync_without_a_remote_is_not_an_error
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

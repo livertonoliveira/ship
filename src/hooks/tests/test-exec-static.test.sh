@@ -117,11 +117,29 @@ test_full_run_carries_forward_a_red_typecheck() {
   rm -rf "$d"
 }
 
+test_unrecognized_test_framework_fails_with_actionable_message() {
+  local name="a Test Framework value that resolves to no executable command fails clearly instead of a bare 'command not found'"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Test Framework: node:assert (custom runner)\n' >> "$d/config.md"
+  local out rc=0
+  out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md 2>&1)" || rc=$?
+  if [ "$rc" -eq 2 ] \
+    && printf '%s' "$out" | grep -qF "Test Framework 'node:assert (custom runner)' is not a known runner" \
+    && printf '%s' "$out" | grep -qF "fix Test Framework in stack.md or ship/config.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$d"
+}
+
 test_print_static_resolves_from_package_json
 test_print_static_prefers_explicit_config
 test_print_static_exits_2_when_nothing_resolves
 test_static_only_records_individual_exits
 test_full_run_carries_forward_a_red_typecheck
+test_unrecognized_test_framework_fails_with_actionable_message
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

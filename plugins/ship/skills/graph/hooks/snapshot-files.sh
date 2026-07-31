@@ -7,9 +7,32 @@ hash_or_absent() {
   git hash-object -- "$f" 2>/dev/null || printf 'absent'
 }
 
+# `origin/main` is not proof it names real history — a repo with no remote, or
+# whose default branch isn't literally "main", has no such ref and `git
+# merge-base` fails under `set -e` with a bare "fatal: Not a valid object
+# name" that gives no indication what to do about it. Same fallback chain as
+# capture-diff.sh's resolve_base_ref: the ref itself, its local name, then the
+# repo's root commit.
+resolve_base_ref() {
+  local ref="$1" local_name
+  if git rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+    printf '%s' "$ref"
+    return 0
+  fi
+  local_name="${ref#*/}"
+  if [ "$local_name" != "$ref" ] && git rev-parse --verify --quiet "$local_name^{commit}" >/dev/null; then
+    echo "snapshot-files.sh: $ref not found — using local $local_name instead" >&2
+    printf '%s' "$local_name"
+    return 0
+  fi
+  echo "snapshot-files.sh: $ref not found and no local $local_name — snapshotting against the repo's root commit" >&2
+  git rev-list --max-parents=0 HEAD | tail -1
+}
+
 cmd_snapshot() {
-  local out="$1" base
-  base="$(git merge-base origin/main HEAD)"
+  local out="$1" base resolved
+  resolved="$(resolve_base_ref origin/main)"
+  base="$(git merge-base "$resolved" HEAD)"
   git add -A -N >/dev/null 2>&1 || true
 
   {

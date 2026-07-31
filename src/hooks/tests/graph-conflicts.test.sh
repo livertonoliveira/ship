@@ -217,7 +217,7 @@ EOF
 
 test_conflicts_reports_how_many_it_refreshed() {
   local name="conflicts reports the count of footprints it refreshed and nodes it blocked"
-  local dir out
+  local dir out still_blocked
   dir="$(mktemp -d)"
   new_repo "$dir"
   (
@@ -246,9 +246,9 @@ EOF
   fi
 }
 
-test_conflict_clears_once_the_holder_is_done() {
-  local name="a conflict edge clears once the node holding it is integrated"
-  local dir out
+test_conflict_clears_once_the_holder_is_merged() {
+  local name="a conflict edge holds while the holder's PR is open and clears once it merges"
+  local dir out still_blocked
   dir="$(mktemp -d)"
   new_repo "$dir"
   (
@@ -268,16 +268,23 @@ EOF
     bash "$GRAPH" claim TASK-002 --worktree wt-002 --branch ship/TASK-002 >/dev/null
     bash "$GRAPH" conflicts >/dev/null
     bash "$GRAPH" land TASK-002 >/dev/null
-    bash "$GRAPH" merge TASK-002 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  # Landed is not merged: the PR is still open, so its files are not on the base
+  # and the neighbour must stay blocked.
+  still_blocked="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"blocked_by_conflict": "TASK-002"' || true)"
+  (
+    cd "$dir"
+    bash "$GRAPH" complete TASK-002 >/dev/null
     bash "$GRAPH" conflicts >/dev/null
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
 
-  if [ "$(field "$out" frontier)" = "TASK-004" ]; then
+  if [ "$still_blocked" = "1" ] && [ "$(field "$out" frontier)" = "TASK-004" ]; then
     log_pass "$name"
   else
-    log_fail "$name (frontier='$(field "$out" frontier)')"
+    log_fail "$name (blocked_while_open=$still_blocked frontier='$(field "$out" frontier)')"
   fi
 }
 
@@ -288,7 +295,7 @@ test_lowest_id_wins_the_slot_deterministically
 test_loser_is_blocked_by_conflict_not_failed
 test_real_footprint_overrides_the_declared_one
 test_conflicts_reports_how_many_it_refreshed
-test_conflict_clears_once_the_holder_is_done
+test_conflict_clears_once_the_holder_is_merged
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

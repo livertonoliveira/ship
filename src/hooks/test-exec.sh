@@ -90,6 +90,15 @@ build_test_command() {
       ;;
     *)
       read -r -a CMD_WORDS <<< "$runner"
+      # An unrecognized runner is treated as a literal command — the escape
+      # hatch for a custom test setup. But a config value that is prose, not a
+      # command (e.g. "node:assert (custom runner)"), shells out to a
+      # non-existent binary and fails as a bare "command not found" deep in
+      # the run, with nothing pointing back at the config field to fix.
+      if [ "${#CMD_WORDS[@]}" -eq 0 ] || ! command -v "${CMD_WORDS[0]}" >/dev/null 2>&1; then
+        echo "test-exec.sh: Test Framework '$runner' is not a known runner (jest, vitest, mocha, ava, pytest, node --test) and '${CMD_WORDS[0]:-}' is not an executable command on PATH — fix Test Framework in stack.md or ship/config.md" >&2
+        exit 2
+      fi
       ;;
   esac
 }

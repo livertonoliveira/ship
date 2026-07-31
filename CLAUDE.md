@@ -17,7 +17,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:review` | Code review (SOLID, DRY, KISS) |
 | `/ship:homolog` | Final report + user homologation |
 | `/ship:pr` | Create PR with atomic commits and aggregated quality report |
-| `/ship:graph` | Cross-task parallelism: runs a feature's independent tasks in isolated workspaces, one `/ship:run` per node, with a merge node that verifies them together |
+| `/ship:graph` | Cross-task parallelism: runs a feature's independent tasks in isolated workspaces, one `/ship:run` per node, each opening its own PR against the real trunk; the coordinator only polls whether those PRs actually merged |
 | `/ship:audit:backend` | Project-wide backend performance audit (3 parallel agents) |
 | `/ship:audit:frontend` | Project-wide frontend performance audit (Next.js 5-layer or generic 11-category) |
 | `/ship:audit:database` | Project-wide database audit (MongoDB / PostgreSQL / MySQL) |
@@ -69,17 +69,18 @@ ship/
 - Parallel fan-out is allowed only where independent read-only analysis or disjoint test layers pay for the per-agent startup cost: the quality phases (`/ship:perf`, `/ship:security`, `/ship:review`), the test layers in `/ship:test`, and the `/ship:audit:*` commands
 - Everything else runs sequentially in a single context — `/ship:develop` implements all modules itself, in dependency order, with no leaf workers
 - Each parallel agent writes to separate files (no race conditions)
-- `/ship:graph` is the one exception, and it is parallelism **between tasks**, not inside one: each node is a whole `/ship:run` in its own workspace, admitted only when its dependency and file-conflict edges allow it, and integrated through a serialized merge node. Nothing inside a task changes.
+- `/ship:graph` is the one exception, and it is parallelism **between tasks**, not inside one: each node is a whole `/ship:run` in its own workspace, admitted only when its dependency and file-conflict edges allow it. Verification happens per node, against the real trunk: the node syncs its own branch and resolves any conflict in the context that implemented the change, then opens its PR. Nothing inside a task changes.
 
 ### Pipeline State Machine
 
-- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating, the plan confrontation pass and the single remediation round. It is a deterministic script, testable in CI with no runtime installed.
+- All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating and the single remediation round. The plan confrontation pass is not a phase: it is `/ship:develop`'s own first step, paid inside the context that is about to implement. It is a deterministic script, testable in CI with no runtime installed.
 - `run/SKILL.md` is only the executor of what `pipeline.sh next` prints — never re-add phase choreography, gate arithmetic, or ordering decisions to a SKILL or agent file.
 - Fix-loop counters and the findings ledger NEVER reset on resume — resetting restarts the loop.
 
 ### Work Graph
 
-- The graph's scheduling, conflict edges, merge node and caps live in `src/hooks/graph.sh` — a deterministic script, testable in CI with no runtime installed.
+- The graph's scheduling, conflict edges, PR-state gate and caps live in `src/hooks/graph.sh` — a deterministic script, testable in CI with no runtime installed.
+- The coordinator never merges into a shared trunk and never runs a test suite. A dependent node is admitted only once its dependency's PR is **merged on the forge** (`graph.sh poll` reads that state); local pipeline completion is not that signal.
 - `graph.sh` must never name a workspace runtime. Everything runtime-specific goes through `src/hooks/driver-<name>.sh` and its four verbs (`dispatch`/`collect`/`wait`/`ask`); `scripts/check-graph-driver-isolation.sh` enforces it.
 - `.context/ship-graph/<feature>/` holds the graph state. `graph.sh` is its only writer.
 

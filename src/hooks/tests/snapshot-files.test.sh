@@ -181,10 +181,51 @@ test_diff_mode_fails_on_missing_snapshot() {
   rm -rf "$repo" "$tmp"
 }
 
+test_falls_back_when_origin_main_is_absent() {
+  local name="missing origin/main falls back to the local branch of the same name instead of crashing"
+  local dir stderr_output out rc=0
+  dir="$(mktemp -d)"
+  (
+    cd "$dir"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git checkout -q -b main
+    echo "one" > a.ts
+    git add -A
+    git commit -q -m "initial"
+    git checkout -q -b feature
+    echo "changed" > a.ts
+  )
+  out="$dir/out.txt"
+
+  stderr_output="$(cd "$dir" && bash "$SNAPSHOT_SCRIPT" snapshot "$out" 2>&1 >/dev/null)" || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    log_fail "$name (exit code was $rc: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! printf '%s' "$stderr_output" | grep -qF "origin/main not found — using local main instead"; then
+    log_fail "$name (stderr did not note the fallback: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! grep -q "a.ts" "$out"; then
+    log_fail "$name (snapshot did not capture the changed file: $(cat "$out"))"
+    rm -rf "$dir"
+    return
+  fi
+
+  log_pass "$name"
+  rm -rf "$dir"
+}
+
 test_snapshot_mode_outputs_sorted_hash_path_lines
 test_deleted_file_appears_in_diff
 test_diff_mode_fails_on_missing_snapshot "missing" "present" "pre"
 test_diff_mode_fails_on_missing_snapshot "present" "missing" "post"
+test_falls_back_when_origin_main_is_absent
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

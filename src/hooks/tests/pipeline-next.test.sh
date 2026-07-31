@@ -98,7 +98,7 @@ valid_plan() {
 EOF
 }
 
-drive_to_plan_review() {
+drive_to_develop() {
   local dir="$1" task="$2" scratch out state i
   scratch="$dir/.context/ship-run/$task"
   next "$dir" "$task" >/dev/null
@@ -110,25 +110,26 @@ drive_to_plan_review() {
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
-      plan) valid_plan > "$scratch/plan.md" ;;
-      plan-review) printf '%s' "$out"; return 0 ;;
+      plan)    valid_plan > "$scratch/plan.md" ;;
+      develop) printf '%s' "$out"; return 0 ;;
+      *)       printf '%s' "$out"; return 0 ;;
     esac
   done
   printf '%s' "$out"
 }
 
-test_plan_is_confronted_before_develop() {
-  local name="a validated plan is confronted with the files it claims before develop runs"
+test_validated_plan_goes_straight_to_develop() {
+  local name="a validated plan dispatches develop directly — the confrontation is develop's own first step, not a phase"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: disabled
 - integration: disabled
 - e2e: disabled' '- test: disabled'
   local scratch="$dir/.context/ship-run/TP1"
-  local out; out="$(drive_to_plan_review "$dir" TP1)"
-  if [ "$(field "$out" state)" = "plan-review" ] && [ "$(field "$out" action)" = "dispatch" ] \
-    && printf '%s' "$out" | grep -q 'plan-review.md' \
-    && printf '%s' "$out" | grep -q 'closed question set' \
-    && ! grep -q '| dev |' "$scratch/dispatch-log.md"; then
+  local out; out="$(drive_to_develop "$dir" TP1)"
+  if [ "$(field "$out" state)" = "develop" ] && [ "$(field "$out" action)" = "dispatch" ] \
+    && grep -q '| dev |' "$scratch/dispatch-log.md" \
+    && ! grep -q 'plan-review' "$scratch/dispatch-log.md" \
+    && [ ! -f "$scratch/plan-review.md" ] && [ ! -f "$scratch/plan-confronted.txt" ]; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state)/$(field "$out" action))"
@@ -136,65 +137,21 @@ test_plan_is_confronted_before_develop() {
   rm -rf "$dir"
 }
 
-test_plan_review_ok_proceeds_to_develop() {
-  local name="verdict ok advances straight to develop"
+test_stale_confrontation_artifacts_are_ignored() {
+  local name="a run resumed with plan-review.md/plan-confronted.txt left by an older Ship still reaches develop"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: disabled
 - integration: disabled
 - e2e: disabled' '- test: disabled'
   local scratch="$dir/.context/ship-run/TP2"
-  drive_to_plan_review "$dir" TP2 >/dev/null
-  plan_review_ok "$scratch"
-  local out; out="$(next "$dir" TP2)"
-  if [ "$(field "$out" state)" = "develop" ] && grep -q '^ok' "$scratch/plan-confronted.txt"; then
-    log_pass "$name"
-  else
-    log_fail "$name (state=$(field "$out" state))"
-  fi
-  rm -rf "$dir"
-}
-
-test_plan_review_blockers_ask_then_replan_once() {
-  local name="blockers ask the user; --answer replan re-dispatches the planner and the confrontation is not repeated"
-  local dir; dir="$(mktemp -d)"
-  setup_repo "$dir" '- unit: disabled
-- integration: disabled
-- e2e: disabled' '- test: disabled'
-  local scratch="$dir/.context/ship-run/TP3"
-  drive_to_plan_review "$dir" TP3 >/dev/null
-  printf 'verdict: blockers\n- M1: needs src/registry.js to register the module\n' \
-    > "$scratch/plan-review.md"
-  local ask replan after
-  ask="$(next "$dir" TP3)"
-  replan="$(next "$dir" TP3 --answer replan)"
-  valid_plan > "$scratch/plan.md"
-  after="$(next "$dir" TP3)"
-  if [ "$(field "$ask" state)" = "plan-review" ] && [ "$(field "$ask" action)" = "ask" ] \
-    && [ "$(field "$replan" state)" = "plan" ] && [ "$(field "$replan" action)" = "dispatch" ] \
-    && printf '%s' "$replan" | grep -q 'raised blockers' \
-    && [ "$(field "$after" state)" = "develop" ]; then
-    log_pass "$name"
-  else
-    log_fail "$name (ask=$(field "$ask" state)/$(field "$ask" action) replan=$(field "$replan" state) after=$(field "$after" state))"
-  fi
-  rm -rf "$dir"
-}
-
-test_plan_review_blockers_can_be_overridden() {
-  local name="--answer proceed accepts the blockers and continues to develop"
-  local dir; dir="$(mktemp -d)"
-  setup_repo "$dir" '- unit: disabled
-- integration: disabled
-- e2e: disabled' '- test: disabled'
-  local scratch="$dir/.context/ship-run/TP4"
-  drive_to_plan_review "$dir" TP4 >/dev/null
+  next "$dir" TP2 >/dev/null
   printf 'verdict: blockers\n- M1: boundary splits an indivisible unit\n' > "$scratch/plan-review.md"
-  next "$dir" TP4 >/dev/null
-  local out; out="$(next "$dir" TP4 --answer proceed)"
-  if [ "$(field "$out" state)" = "develop" ] && grep -q '^proceed' "$scratch/plan-confronted.txt"; then
+  printf 'replanned\n' > "$scratch/plan-confronted.txt"
+  local out; out="$(drive_to_develop "$dir" TP2)"
+  if [ "$(field "$out" state)" = "develop" ] && [ "$(field "$out" action)" = "dispatch" ]; then
     log_pass "$name"
   else
-    log_fail "$name (state=$(field "$out" state))"
+    log_fail "$name (state=$(field "$out" state)/$(field "$out" action))"
   fi
   rm -rf "$dir"
 }
@@ -210,7 +167,6 @@ advance_past_planning() {
     state="$(field "$out" state)"
     case "$state" in
       plan)        valid_plan > "$scratch/plan.md" ;;
-      plan-review) plan_review_ok "$scratch" ;;
       *)           printf '%s' "$out"; return 0 ;;
     esac
   done
@@ -553,7 +509,6 @@ test_gate_fail_defer_proceeds() {
   next "$dir" T6 >/dev/null
   valid_plan > "$scratch/plan.md"
   next "$dir" T6 >/dev/null
-  plan_review_ok "$scratch"
   next "$dir" T6 >/dev/null
   mkdir -p "$dir/src"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
@@ -605,17 +560,10 @@ drive_to_verify_a() {
     state="$(field "$out" state)"
     case "$state" in
       plan) valid_plan > "$scratch/plan.md" ;;
-      plan-review) plan_review_ok "$scratch" ;;
       verify-a) return 0 ;;
     esac
   done
   return 1
-}
-
-# The confrontation pass returns a closed verdict; fixtures that are not about it
-# answer 'ok' so the run proceeds.
-plan_review_ok() {
-  printf 'verdict: ok\n' > "$1/plan-review.md"
 }
 
 review_round() {
@@ -754,7 +702,6 @@ drive_to_static_gate() {
     state="$(field "$out" state)"
     case "$state" in
       plan) valid_plan > "$scratch/plan.md" ;;
-      plan-review) plan_review_ok "$scratch" ;;
       verify-a) printf '%s' "$out"; return 0 ;;
     esac
   done
@@ -837,7 +784,6 @@ test_denylist_excludes_test_files() {
   next "$dir" TD1 >/dev/null
   plan_with_test_in_files > "$scratch/plan.md"
   next "$dir" TD1 >/dev/null
-  plan_review_ok "$scratch"
   next "$dir" TD1 >/dev/null
   mkdir -p "$dir/src"
   echo 'module.exports=1' > "$dir/src/a.js"
@@ -902,10 +848,8 @@ test_invalid_plan_replans_before_asking
 test_invalid_plan_abort_stops
 test_graph_node_posts_its_question_instead_of_asking
 test_graph_node_consumes_the_coordinators_answer
-test_plan_is_confronted_before_develop
-test_plan_review_ok_proceeds_to_develop
-test_plan_review_blockers_ask_then_replan_once
-test_plan_review_blockers_can_be_overridden
+test_validated_plan_goes_straight_to_develop
+test_stale_confrontation_artifacts_are_ignored
 test_post_develop_no_mutation_stops
 test_develop_receives_resolved_static_commands
 test_develop_gets_no_static_field_when_unresolvable

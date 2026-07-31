@@ -138,9 +138,90 @@ test_malformed_content_fails_loudly() {
   rm -rf "$dir"
 }
 
+test_falls_back_to_local_branch_when_origin_ref_is_absent() {
+  local name="missing origin/main falls back to the local branch of the same name, with a clear stderr note"
+  local dir out stderr_output rc=0
+  dir="$(mktemp -d)"
+  (
+    cd "$dir"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git checkout -q -b main
+    echo "one" > a.ts
+    git add -A
+    git commit -q -m "initial"
+    git checkout -q -b feature
+    echo "changed" > a.ts
+  )
+  out="$dir/out.md"
+
+  stderr_output="$(cd "$dir" && bash "$CAPTURE_DIFF_SCRIPT" "$out" 2>&1 >/dev/null)" || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    log_fail "$name (exit code was $rc: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! printf '%s' "$stderr_output" | grep -qF "origin/main not found — using local main instead"; then
+    log_fail "$name (stderr did not note the fallback: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! grep -q '^diff --git ' "$out"; then
+    log_fail "$name (output file has no 'diff --git' header: $(cat "$out"))"
+    rm -rf "$dir"
+    return
+  fi
+
+  log_pass "$name"
+  rm -rf "$dir"
+}
+
+test_falls_back_to_root_commit_when_no_base_ref_resolves() {
+  local name="missing origin/main and local main falls back to the repo's root commit, with a clear stderr note"
+  local dir out stderr_output rc=0
+  dir="$(mktemp -d)"
+  (
+    cd "$dir"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git checkout -q -b trunk
+    echo "one" > a.ts
+    git add -A
+    git commit -q -m "initial"
+    echo "changed" > a.ts
+  )
+  out="$dir/out.md"
+
+  stderr_output="$(cd "$dir" && bash "$CAPTURE_DIFF_SCRIPT" "$out" 2>&1 >/dev/null)" || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    log_fail "$name (exit code was $rc: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! printf '%s' "$stderr_output" | grep -qF "diffing against the repo's root commit"; then
+    log_fail "$name (stderr did not note the fallback: $stderr_output)"
+    rm -rf "$dir"
+    return
+  fi
+  if ! grep -q '^diff --git ' "$out"; then
+    log_fail "$name (output file has no 'diff --git' header: $(cat "$out"))"
+    rm -rf "$dir"
+    return
+  fi
+
+  log_pass "$name"
+  rm -rf "$dir"
+}
+
 test_capture_produces_valid_unified_diff_with_new_and_modified_files
 test_clean_working_tree_produces_empty_file_with_success
 test_malformed_content_fails_loudly
+test_falls_back_to_local_branch_when_origin_ref_is_absent
+test_falls_back_to_root_commit_when_no_base_ref_resolves
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
