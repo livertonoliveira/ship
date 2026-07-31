@@ -381,7 +381,12 @@ test_the_run_is_reused_across_dispatches() {
   local root state
   root="$(new_case)"; run_dispatch "$root"
   state="$root/state"
+  # The fake's pane state has to be wired here too: without it the driver runs
+  # its real repair loop against a pane that never revives, and this assertion
+  # about run-create pays for six delivery attempts to learn nothing.
   ORCA_FAKE_LOG="$root/argv.log" PATH="$root/bin:$PATH" \
+    ORCA_FAKE_TUI=busy ORCA_FAKE_TUI_STATE="$root/tui-n2" ORCA_FAKE_TICK="$root/tick-n2" \
+    SHIP_ORCA_BUSY_SAMPLE_S=0 \
     bash "$DRIVER" dispatch N2 "/ship:run N2" --state "$state" --base main >/dev/null 2>&1 || true
 
   if [ "$(grep -c '^orchestration run-create ' "$root/argv.log")" -eq 1 ]; then
