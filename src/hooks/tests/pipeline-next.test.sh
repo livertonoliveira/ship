@@ -250,6 +250,37 @@ test_greenfield_multi_module_runs_planner() {
   rm -rf "$dir"
 }
 
+test_invalid_plan_replans_before_asking() {
+  local name="an invalid plan.md re-dispatches the planner with the validator's own error, and only asks once the cap is spent"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  next "$dir" TASK-1 >/dev/null
+  multi_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
+  next "$dir" TASK-1 >/dev/null
+  local scratch="$dir/.context/ship-run/TASK-1"
+  local first second third
+  echo 'garbage' > "$scratch/plan.md"
+  first="$(next "$dir" TASK-1)"
+  echo 'garbage' > "$scratch/plan.md"
+  second="$(next "$dir" TASK-1)"
+  echo 'garbage' > "$scratch/plan.md"
+  third="$(next "$dir" TASK-1)"
+
+  if [ "$(field "$first" action)" = "dispatch" ] \
+    && printf '%s' "$first" | grep -q 'Skill ship:plan' \
+    && printf '%s' "$first" | grep -q "read .context/ship-run/TASK-1/plan-validate-error.txt" \
+    && [ -s "$scratch/plan-validate-error.txt" ] \
+    && [ "$(field "$second" action)" = "dispatch" ] \
+    && [ "$(field "$third" action)" = "ask" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (first=$(field "$first" action) second=$(field "$second" action) third=$(field "$third" action))"
+  fi
+  rm -rf "$dir"
+}
+
 test_graph_node_posts_its_question_instead_of_asking() {
   local name="in a graph node an ask becomes a question file plus a wait — there is no user in that loop to ask"
   local dir; dir="$(mktemp -d)"
@@ -299,8 +330,8 @@ test_graph_node_consumes_the_coordinators_answer() {
   rm -rf "$dir"
 }
 
-test_invalid_plan_asks_then_replans() {
-  local name="an invalid plan.md asks the user; --answer replan re-dispatches the planner"
+test_invalid_plan_abort_stops() {
+  local name="--answer abort on an invalid plan.md stops the run instead of re-planning"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -309,14 +340,11 @@ test_invalid_plan_asks_then_replans() {
   multi_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   next "$dir" TASK-1 >/dev/null
   echo 'garbage' > "$dir/.context/ship-run/TASK-1/plan.md"
-  local ask replan
-  ask="$(next "$dir" TASK-1)"
-  replan="$(next "$dir" TASK-1 --answer replan)"
-  if [ "$(field "$ask" action)" = "ask" ] && [ "$(field "$replan" action)" = "dispatch" ] \
-    && printf '%s' "$replan" | grep -q 'Skill ship:plan'; then
+  local out; out="$(next "$dir" TASK-1 --answer abort)"
+  if [ "$(field "$out" action)" = "stop" ]; then
     log_pass "$name"
   else
-    log_fail "$name"
+    log_fail "$name (action=$(field "$out" action))"
   fi
   rm -rf "$dir"
 }
@@ -870,7 +898,8 @@ test_static_gate_skip_when_no_checks() {
 
 test_first_call_asks_for_context_staging
 test_greenfield_multi_module_runs_planner
-test_invalid_plan_asks_then_replans
+test_invalid_plan_replans_before_asking
+test_invalid_plan_abort_stops
 test_graph_node_posts_its_question_instead_of_asking
 test_graph_node_consumes_the_coordinators_answer
 test_plan_is_confronted_before_develop

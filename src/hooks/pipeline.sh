@@ -1312,30 +1312,40 @@ cmd_next() {
       if [ -f "$CONFIG" ]; then pv_spec="$pv_spec --config $CONFIG"; fi
       if [ -f "$SCRATCH/plan-scaffold.md" ]; then pv_spec="$pv_spec --scaffold $SCRATCH/plan-scaffold.md"; fi
       set +e
-      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
+      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec \
+        >/dev/null 2>"$SCRATCH/plan-validate-error.txt"
       pv_rc=$?
       set -e
       if [ "$pv_rc" -eq 0 ]; then
+        rm -f "$SCRATCH/plan-validate-error.txt"
         printf 'ok\n' > "$SCRATCH/plan-validated.txt"
+      elif [ "$ANSWER" = "abort" ]; then
+        next_body_add "Plan validation failed and the user chose to abort. Report and stop."
+        next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
       else
-        case "$ANSWER" in
-          replan)
-            rm -f "$SCRATCH/plan.md"
-            cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
-            next_common_after
-            next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
-            ;;
-          abort)
-            next_body_add "Plan validation failed and the user chose to abort. Report and stop."
-            next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
-            ;;
-          *)
-            next_body_add "plan.md failed validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md $pv_spec — surface its stderr to the user, in the artifact language)."
-            next_body_add "Ask the user: re-plan or abort? Then re-run next with --answer replan | --answer abort."
-            next_emit "plan" "ask" "$RUN" "plan failed validation"
-            ;;
-        esac
+        # Validation failed on a machine-checkable artifact and the exact defect
+        # is on stderr, so the planner can act on it with no human in the loop —
+        # and under ship:graph there is no human in that loop to ask. Stopping
+        # here was the whole failure: the run parked on a question while the
+        # answer was sitting in a file nobody passed back to the planner.
+        # Bounded, because a defect that survives a replan fed the real error is
+        # almost never the planner's — it is the spec's, and that does need a
+        # person.
+        set +e
+        ( cmd_iter "$SCRATCH" plan-revalidate --max 2 ) >/dev/null
+        local pvi_rc=$?
+        set -e
+        if [ "$pvi_rc" -eq 2 ]; then
+          next_body_add "plan.md failed validation on every replan. The last error is in $SCRATCH/plan-validate-error.txt — present it to the user in the artifact language."
+          next_body_add "A defect that survives replans is usually in the spec, not the plan: most often one scenario id reused across two behaviorally distinct scenarios, which no plan can satisfy. Check the spec's scenario ids first."
+          next_body_add "Then: fix the spec and re-run next, or abort with --answer abort."
+          next_emit "plan" "ask" "$RUN" "plan failed validation after retries"
+        fi
+        rm -f "$SCRATCH/plan.md"
+        cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+        next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — read $SCRATCH/plan-validate-error.txt and fix exactly what it reports\""
+        next_common_after
+        next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
       fi
     fi
 
