@@ -391,8 +391,11 @@ seal_spec() {
 # common case used to be a graph whose every workspace had to be made by hand.
 # Selecting in a script rather than describing the choice in a skill is the point:
 # a rule written as prose is a rule that sometimes does not run.
+# Prints "<name><TAB><workspaces-label>" so the caller can report what the
+# elected driver actually produces without knowing which driver it got. The
+# label is the driver's own words, echoed verbatim.
 autoselect_driver() {
-  local f name out ready prio best="" best_prio=""
+  local f name out ready prio ws best="" best_prio="" best_ws=""
   for f in "$HOOK_DIR"/driver-*.sh; do
     [ -f "$f" ] || continue
     name="$(basename "$f" .sh)"
@@ -401,6 +404,7 @@ autoselect_driver() {
     ready="$(printf '%s' "$out" | sed -n 's/^ready=//p' | head -1)"
     [ "$ready" = "1" ] || continue
     prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
+    ws="$(printf '%s' "$out" | sed -n 's/^workspaces=//p' | head -1)"
     # A driver that claims readiness without a usable priority still gets to
     # run; it just sorts last. Refusing it would make a malformed probe look
     # like an absent driver.
@@ -408,9 +412,49 @@ autoselect_driver() {
     if [ -z "$best_prio" ] || [ "$prio" -lt "$best_prio" ]; then
       best="$name"
       best_prio="$prio"
+      best_ws="$ws"
     fi
   done
-  printf '%s' "$best"
+  [ -n "$best" ] || return 0
+  printf '%s\t%s' "$best" "$best_ws"
+}
+
+# A probe-elected driver was elected against the runtimes that answered AT THAT
+# MOMENT. The real cost of never revisiting it was measured: a graph whose first
+# init hit a broken runtime fell back to the driver that spawns nothing, and
+# every later batch — for hours, across sessions, long after the runtime was
+# fixed — kept using it, because the election is written to meta once and the
+# only thing that could revisit it was an operator remembering to. So a run that
+# was supposed to open one app workspace per issue quietly opened none, twice
+# over, and the degradation was invisible in every status it printed.
+#
+# Re-electing here makes recovery automatic instead of remembered. It is safe
+# only while no node is HELD by the current driver — an in-flight or merging node
+# can be collected, waited on and stopped only through the driver that dispatched
+# it — which is the same guard `set --driver` uses.
+#
+# A driver named explicitly by a human is never re-elected: `--driver local` has
+# to mean local, or pinning a runtime would be impossible. An election recorded
+# by a Ship older than this field is treated as a probe, so those graphs heal too.
+reelect_driver() {
+  local dir="$1" cur chosen busy sel best ws
+  cur="$(meta_get "$dir" driver)"
+  chosen="$(meta_get "$dir" driver_chosen_by)"
+  [ "$chosen" != "explicit" ] || return 0
+
+  busy="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" merging; } | tr -d '[:space:]' )"
+  [ -z "$busy" ] || return 0
+
+  sel="$(autoselect_driver)"
+  best="${sel%%$'\t'*}"
+  ws="${sel#*$'\t'}"
+  [ -n "$best" ] || return 0
+  meta_set "$dir" driver_workspaces "$ws"
+  [ "$best" != "$cur" ] || return 0
+
+  meta_set "$dir" driver "$best"
+  meta_set "$dir" driver_chosen_by probe
+  log_line "$dir" "driver re-elected $cur → $best (probe; no node held by $cur)"
 }
 
 cmd_init() {
@@ -442,13 +486,18 @@ cmd_init() {
   [ "$max_in_flight" -ge 1 ] || die "init: --max-in-flight must be >= 1"
   case "$mode" in linear|local) ;; *) die "init: --mode must be linear or local: $mode" ;; esac
   case "$node_pr" in on|off) ;; *) die "init: --node-pr must be on or off: $node_pr" ;; esac
+  local driver_workspaces=""
   if [ -z "$driver" ]; then
-    driver="$(autoselect_driver)"
+    local sel
+    sel="$(autoselect_driver)"
+    driver="${sel%%$'\t'*}"
+    driver_workspaces="${sel#*$'\t'}"
     [ -n "$driver" ] || die "init: no driver reported itself ready here — pass --driver <name> explicitly"
     chosen_by="probe"
   fi
   valid_id "$driver" || die "init: invalid driver name: $driver"
   [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "init: no driver at $HOOK_DIR/driver-$driver.sh"
+  [ -n "$driver_workspaces" ] || driver_workspaces="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
 
   local dir
   dir="$(graph_dir "$feature")"
@@ -543,6 +592,11 @@ cmd_init() {
   meta_set "$dir" feature "$feature"
   meta_set "$dir" mode "$mode"
   meta_set "$dir" driver "$driver"
+  # Without this, every election looks the same to a later reader, so a fallback
+  # forced by a broken runtime is indistinguishable from a deliberate pin — and
+  # re-election cannot tell which ones it is allowed to revisit.
+  meta_set "$dir" driver_chosen_by "$chosen_by"
+  meta_set "$dir" driver_workspaces "$driver_workspaces"
   meta_set "$dir" base_branch "$base_branch"
   meta_set "$dir" max_in_flight "$max_in_flight"
   meta_set "$dir" repo "$default_repo"
@@ -633,12 +687,27 @@ cmd_set() {
       die "set: cannot change the driver while node(s) are still held by the current one: $busy
     Let them finish, or release them first: graph.sh abort (stops the workers, keeps the workspaces)."
     fi
-    local prev
+    local prev prev_ws ws
     prev="$(meta_get "$dir" driver)"
+    prev_ws="$(meta_get "$dir" driver_workspaces)"
+    ws="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
     meta_set "$dir" driver "$driver"
-    log_line "$dir" "driver $prev → $driver"
+    # Naming a driver by hand pins it: re-election must not undo the operator's
+    # choice on the very next `next`.
+    meta_set "$dir" driver_chosen_by explicit
+    meta_set "$dir" driver_workspaces "$ws"
+    log_line "$dir" "driver $prev → $driver (explicit; workspaces: ${ws:-unknown})"
     printf 'driver=%s\n' "$driver"
     printf 'previous_driver=%s\n' "$prev"
+    printf 'workspaces=%s\n' "$ws"
+    # Pinning by hand is also opting OUT of automatic recovery, and the run that
+    # made this necessary spent hours on a driver nobody had chosen on purpose.
+    # Saying what changed here is what makes the trade visible at the moment it
+    # is made, in the same transcript the operator is already reading.
+    if [ -n "$prev_ws" ] && [ "$prev_ws" != "$ws" ]; then
+      printf 'previous_workspaces=%s\n' "$prev_ws"
+    fi
+    printf 'note=pinned — this driver is now used regardless of what else becomes available; undo with: graph.sh set --driver <name>\n'
     changed=1
   fi
 
@@ -1281,6 +1350,7 @@ cmd_status() {
     "$(meta_get "$dir" feature)" "$(meta_get "$dir" driver)" "$(meta_get "$dir" mode)" \
     "$(meta_get "$dir" base_branch)" "$(meta_get "$dir" max_in_flight)" \
     "$(meta_get "$dir" integration_status)"
+  printf 'workspaces: %s\n' "$(meta_get "$dir" driver_workspaces)"
   printf '\n%-16s %-10s %-10s %s\n' "node" "status" "blocked-by" "deps"
   awk -F'\t' '{ printf "%-16s %-10s %-10s %s\n", $1, $6, ($10 == "" ? "-" : $10), ($4 == "" ? "-" : $4) }' "$dir/nodes.tsv"
 }
@@ -1294,10 +1364,15 @@ next_body_add() {
 "
 }
 
+# `driver`/`workspaces` ride on every emission so the runtime in force is never
+# something the operator has to go and ask for. A graph silently running on the
+# driver that opens nothing is the failure this whole path exists to prevent;
+# printing it each turn is what makes that visible the first time instead of
+# hours later.
 next_emit() {
   local state="$1" action="$2" inflight="$3" frontier="$4" log="$5"
-  printf 'state=%s\naction=%s\ninflight=%s\nfrontier=%s\nlog=%s\ninstruction:\n%s\n' \
-    "$state" "$action" "$inflight" "$frontier" "$log" "$NEXT_BODY"
+  printf 'state=%s\naction=%s\ninflight=%s\nfrontier=%s\ndriver=%s\nworkspaces=%s\nlog=%s\ninstruction:\n%s\n' \
+    "$state" "$action" "$inflight" "$frontier" "${NEXT_DRIVER:-}" "${NEXT_DRIVER_WORKSPACES:-}" "$log" "$NEXT_BODY"
   exit 0
 }
 
@@ -1315,8 +1390,14 @@ cmd_next() {
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
 
+  # Before anything reads the driver: a graph that fell back once must not stay
+  # fallen back forever.
+  reelect_driver "$dir"
+
   local driver max_in_flight integ log_path
   driver="$(meta_get "$dir" driver)"
+  NEXT_DRIVER="$driver"
+  NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
   max_in_flight="$(meta_get "$dir" max_in_flight)"
   integ="$(meta_get "$dir" integration_status)"
   log_path="$dir/graph-log.md"
