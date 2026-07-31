@@ -173,7 +173,9 @@ test_dispatch_reports_the_workspace_it_made() {
      && printf '%s' "$out" | grep -q '^branch=ship/N1$'; then
     log_pass "dispatch reports the workspace path and short branch back to the graph"
   else
-    log_fail "dispatch reports the workspace path and short branch back to the graph (got: $out)"
+    # stderr too: an empty stdout means the driver died before printing, and the
+    # reason is only ever on the other stream.
+    log_fail "dispatch reports the workspace path and short branch back to the graph (stdout: $out / stderr: $(cat "$root/err.txt"))"
   fi
   rm -rf "$root"
 }
