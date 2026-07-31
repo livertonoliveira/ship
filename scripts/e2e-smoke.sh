@@ -204,6 +204,44 @@ if [ -n "$SCR" ]; then
     ok "planner skipped (trivial/minor baseline) — plan.md not expected"
   elif [ -s "$SCR/plan.md" ]; then
     ok "scratch artifact: plan.md"
+    # The scaffold contract, checked against a REAL planner rather than a
+    # fixture: every generated slot key has to survive into plan.md with its
+    # layer intact, and no TBD path may be left behind. Fixtures cannot answer
+    # this — whether the model actually copies the keys is the whole question.
+    if [ -s "$SCR/plan-scaffold.md" ]; then
+      ok "scratch artifact: plan-scaffold.md"
+      keys_of() {
+        grep -E '^### S[0-9]+[^>]*->' "$1" 2>/dev/null \
+          | sed -E 's/^### (S[0-9]+)[^>]*->[[:space:]]*([a-zA-Z0-9]+)[[:space:]]*->.*/\1|\2/' | sort
+      }
+      missing="$(comm -23 <(keys_of "$SCR/plan-scaffold.md") <(keys_of "$SCR/plan.md"))"
+      if [ -z "$(keys_of "$SCR/plan-scaffold.md")" ]; then
+        ok "scaffold generated no keyed slots (spec has no tagged scenarios) — nothing to carry"
+      elif [ -z "$missing" ]; then
+        ok "planner carried every scaffold slot key and layer into plan.md"
+      else
+        bad "planner dropped or re-layered scaffold slots: $(echo "$missing" | tr '\n' ' ')"
+      fi
+      if grep -qE '^### .*->.*->[[:space:]]*TBD([[:space:]]|$)' "$SCR/plan.md"; then
+        bad "plan.md still carries an unfilled TBD test path"
+      else
+        ok "every contract slot has a real test path"
+      fi
+    fi
+    if bash "$REPO_ROOT/src/hooks/plan-validate.sh" "$SCR/plan.md" \
+         --scaffold "$SCR/plan-scaffold.md" >/dev/null 2>&1; then
+      ok "plan.md passes plan-validate against its scaffold"
+    else
+      bad "plan.md fails plan-validate: $(bash "$REPO_ROOT/src/hooks/plan-validate.sh" "$SCR/plan.md" --scaffold "$SCR/plan-scaffold.md" 2>&1 >/dev/null | head -2)"
+    fi
+    # A replan means the first plan was rejected. The run can still end green,
+    # so without this the retry loop hides exactly what we came to measure.
+    plans="$(grep -cE '^\| *plan .*\| *ship:plan ' "$SCR/dispatch-log.md" 2>/dev/null || echo 0)"
+    if [ "$plans" -le 1 ]; then
+      ok "planner ran once — no replan was needed"
+    else
+      bad "planner ran $plans times: the first plan(s) failed validation"
+    fi
   else
     bad "missing/empty scratch artifact: plan.md (planner ran but wrote none)"
   fi
