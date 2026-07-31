@@ -19,11 +19,33 @@ assert_valid_unified_diff() {
   return 0
 }
 
+# <ref> alone is not proof it names real history — a freshly bootstrapped repo
+# with no remote (or one whose default branch was never pushed) has no
+# `origin/main` to merge-base against, and `git merge-base` failing under
+# `set -e` used to abort the whole pipeline on a bare "fatal: Not a valid
+# object name" with no indication which ref or what to do about it.
+resolve_base_ref() {
+  local ref="$1" local_name
+  if git rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+    printf '%s' "$ref"
+    return 0
+  fi
+  local_name="${ref#*/}"
+  if [ "$local_name" != "$ref" ] && git rev-parse --verify --quiet "$local_name^{commit}" >/dev/null; then
+    echo "capture-diff.sh: $ref not found — using local $local_name instead" >&2
+    printf '%s' "$local_name"
+    return 0
+  fi
+  echo "capture-diff.sh: $ref not found and no local $local_name — diffing against the repo's root commit" >&2
+  git rev-list --max-parents=0 HEAD | tail -1
+}
+
 capture_diff() {
-  local out="$1" base_ref="$2" base
+  local out="$1" base_ref="$2" base resolved
 
   mkdir -p "$(dirname "$out")"
-  base="$(git merge-base "$base_ref" HEAD)"
+  resolved="$(resolve_base_ref "$base_ref")"
+  base="$(git merge-base "$resolved" HEAD)"
   git add -A -N >/dev/null 2>&1 || true
   git diff "$base" > "$out"
 }
