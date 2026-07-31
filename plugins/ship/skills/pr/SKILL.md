@@ -23,7 +23,7 @@ Run the deterministic preflight once and act on its output — never re-derive t
 bash "${CLAUDE_SKILL_DIR}/hooks/pr-preflight.sh" --task <task-id> --feature <feature-name>
 ```
 
-It prints `storage=` (linear|local — ${CLAUDE_SKILL_DIR}/patterns/storage-mode.md is the definition), `branch=`/`on_default_branch=`, `remote=`/`pr_base=` (pull, push and `--base` target these — never a hardcoded `origin`/`main`), `keep_context=` (`yes` = work-graph node: the graph polls this scratch dir and merges the PR itself), `pending_changes=`, `profile=`, `approval=` (local marker check; `unknown` in Linear — check cached comments), and one `gate_row:` per phase when the scratch dir exists.
+It prints `storage=` (linear|local — ${CLAUDE_SKILL_DIR}/patterns/storage-mode.md is the definition), `branch=`/`on_default_branch=`, `remote=`/`pr_base=` (pull, push and `--base` target these — never a hardcoded `origin`/`main`), `keep_context=` (`yes` = work-graph node: the graph polls this scratch dir and watches this PR's state on the forge), `pending_changes=`, `profile=`, `approval=` (local marker check; `unknown` in Linear — check cached comments), and one `gate_row:` per phase when the scratch dir exists.
 
 Feature: **Linear** — `$ARGUMENTS` as issue ID/project name (ask if empty). **Local** — `$ARGUMENTS` as feature name in `ship/changes/`, else most recent feature with approved acceptance in `report.md`, else most recent feature folder (fast path below handles it).
 
@@ -79,16 +79,18 @@ Analyze `git diff`/`git status`, group into atomic commits, stage per file (`git
 
 Run typecheck, tests, and lint per `ship/config.md`. On failure: fix, re-commit, re-run.
 
-### 5. Push
+### 5. Sync onto the base, then push
 
 ```bash
-git pull --rebase <remote> <pr_base>
-git push -u <remote> <branch-name>
+bash "${CLAUDE_SKILL_DIR}/hooks/pr-sync.sh" --remote <remote> --base <pr_base>
 ```
 
 `<remote>` and `<pr_base>` are the preflight's — never the literal `origin`/`main`, which are conventions this repo may not follow.
 
-Resolve rebase conflicts, asking the user if ambiguous.
+- `result=clean` (or any `skipped-`) → `git push -u <remote> <branch-name>`.
+- `result=conflict` → resolve every `conflict:<path>` **yourself, here**: you implemented this change and hold its intent, so never delegate it and never ask the user to arbitrate what you already know. Keep both sides' behavior; drop nothing you cannot justify. Then `bash "${CLAUDE_SKILL_DIR}/hooks/pr-sync.sh" --continue`, repeating while it still reports `conflict`. Once clean, re-run step 4's validation, then push.
+
+Ask the user only when the conflict encodes a product decision your task never made.
 
 ### 6. Strict-profile audit gate
 
@@ -130,7 +132,7 @@ Pass `--keep-context` when the preflight printed `keep_context=yes` or the user 
 
 ### 10. Finalize
 
-Inform the user of the PR URL, commit count, and branch name. Remind: "Do NOT merge — review the PR and merge manually." With `keep_context=yes`, say instead that the graph's merge node merges it once the integration suite is green.
+Inform the user of the PR URL, commit count, and branch name. Remind: "Do NOT merge — review the PR and merge manually." With `keep_context=yes`, say the same: the graph polls this PR's real state and only releases the dependent nodes once it is merged on the forge.
 
 ---
 

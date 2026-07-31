@@ -1771,7 +1771,7 @@ cmd_next() {
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
     next_body_add "Invoke ship:pr via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
-    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (PR base, pull/push target — never main) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
+    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (the branch to sync onto and target) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
     next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
     next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
   fi

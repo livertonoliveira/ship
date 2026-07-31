@@ -13,8 +13,8 @@ set -euo pipefail
 #
 # Workspaces are created OUTSIDE the repo (../.ship-graph/<feature>/<task>).
 # Nesting them under .context/ would put whole extra checkouts inside the tree
-# the merge node runs the full test suite over — the runner would collect their
-# test files too.
+# each node's own test run collects over — the runner would pick up their test
+# files too.
 #
 # Verbs: dispatch | collect | wait | ask | stop | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------

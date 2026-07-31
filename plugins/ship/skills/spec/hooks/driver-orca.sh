@@ -492,7 +492,8 @@ verb_ask() {
   fi
 
   # A gate needs a task to hang off. Graph-level questions (dependency deadlock,
-  # merge-fix cap) belong to no task, so they go back to the user in context.
+  # a PR waiting to be merged) belong to no task, so they go back to the user in
+  # context.
   if [ -n "$rtask" ]; then
     gate="$(orca orchestration gate-create --task "$rtask" --question "$question" --json 2>/dev/null | json_id gate_)"
     if [ -n "$gate" ]; then
