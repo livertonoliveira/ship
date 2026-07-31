@@ -28,6 +28,7 @@ usage() {
   echo "  merge     <task> [--feature <f>] [--config <path>]" >&2
   echo "  complete  <task> [--feature <f>]" >&2
   echo "  fail      <task> --reason <r> [--feature <f>]" >&2
+  echo "  answer    <task> <answer> [--feature <f>]" >&2
   echo "  reset     <task>... | --all [--feature <f>]" >&2
   echo "  abort     [--feature <f>] [--reason <r>]" >&2
   echo "  conflicts [--feature <f>]" >&2
@@ -850,6 +851,12 @@ cmd_claim() {
   mkdir -p "$scratch"
   printf 'defer\n' > "$scratch/homolog-mode.txt"
 
+  # Tells the node's pipeline it has a coordinator to talk to: instead of an
+  # `ask` no one is there to answer, it posts the question to ask.md in this same
+  # dir and `graph.sh next` brings it up here.
+  printf '%s\n' "$dir" > "$scratch/graph-node.txt"
+  rm -f "$scratch/ask.md" "$scratch/answer.txt"
+
   # One issue, one PR: the node's own pipeline opens it, from the workspace that
   # holds the diff, so the commits are the atomic ones /ship:pr writes instead of
   # the single blob seal_workspace falls back to. The base is the graph's base
@@ -1058,6 +1065,44 @@ cmd_fail() {
   render_json "$dir"
   printf 'failed=%s\n' "$id"
   printf 'reason=%s\n' "$reason"
+}
+
+# The reply half of the node → coordinator channel. Writing the answer clears the
+# question in the same call, so a node can never be handed an answer to a gate it
+# has already moved past.
+cmd_answer() {
+  local feature="" id="" answer=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *)
+        if [ -z "$id" ]; then id="$1"
+        elif [ -z "$answer" ]; then answer="$1"
+        else usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "answer: <task> is required"
+  [ -n "$answer" ] || die "answer: <answer> is required"
+  local dir wt scratch
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  node_exists "$dir" "$id" || die "unknown node: $id"
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && [ -d "$wt" ] || die "answer: $id has no workspace yet"
+  scratch="$wt/.context/ship-run/$id"
+  [ -f "$scratch/ask.md" ] || die "answer: $id has no pending question"
+  printf '%s\n' "$answer" > "$scratch/answer.txt"
+  rm -f "$scratch/ask.md"
+  # The stall counter has been ticking the whole time the node waited on this, so
+  # clear it — otherwise the answer arrives and the cap kills the node anyway.
+  rm -f "$dir/stall-$id.txt"
+  log_line "$dir" "$id answered: $answer"
+  printf 'answered=%s\n' "$id"
+  printf 'answer=%s\n' "$answer"
+  printf 'note=The node consumes it on its next pipeline.sh next and resumes.\n'
 }
 
 reset_usage() {
@@ -1591,6 +1636,28 @@ cmd_next() {
     next_emit "frontier" "dispatch" "$inflight" "$frontier" "$((max_in_flight - inflight)) slot(s) free"
   fi
 
+  # --- questions from the nodes ----------------------------------------------
+  # Checked before the stall cap on purpose: a node waiting on an answer makes no
+  # phase progress, so it reads as stalled and gets reported as stuck when in
+  # fact it asked something and is waiting for this.
+  if [ "$inflight" -gt 0 ]; then
+    local qid qwt qask asked=""
+    while IFS= read -r qid; do
+      [ -n "$qid" ] || continue
+      qwt="$(node_field "$dir" "$qid" 7)"
+      [ -n "$qwt" ] || continue
+      qask="$qwt/.context/ship-run/$qid/ask.md"
+      [ -f "$qask" ] || continue
+      asked="$asked $qid"
+      next_body_add "- $qid asks: $(grep -m1 '^question=' "$qask" | sed 's/^question=//') — full text in $qask"
+    done < <(nodes_with_status "$dir" in_flight)
+    if [ -n "${asked# }" ]; then
+      next_body_add "Read each ask.md above and present its question to the user in the artifact language. These come from a node's own pipeline; do not answer them yourself."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that unblocks the node and it resumes on its next poll."
+      next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+    fi
+  fi
+
   # --- wait ------------------------------------------------------------------
   if [ "$inflight" -gt 0 ]; then
     local stalled=""
@@ -1665,6 +1732,7 @@ case "$SUBCOMMAND" in
   merge)     cmd_merge "$@" ;;
   complete)  cmd_complete "$@" ;;
   fail)      cmd_fail "$@" ;;
+  answer)    cmd_answer "$@" ;;
   reset)     cmd_reset "$@" ;;
   abort)     cmd_abort "$@" ;;
   conflicts) cmd_conflicts "$@" ;;

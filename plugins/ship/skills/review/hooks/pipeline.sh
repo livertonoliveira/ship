@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1089,6 +1089,21 @@ NEXT_BODY=""
 
 next_emit() {
   local state="$1" action="$2" run="$3" log="$4"
+  # Inside a graph node there is no user to ask: the worker runs unattended in
+  # its own workspace, so an `ask` reaches nobody and the node sits there until
+  # the stall cap kills it — the run's answer sitting in a workspace no one
+  # opened. Post the question where `graph.sh next` collects it instead, and let
+  # the coordinator reply with `graph.sh answer`.
+  if [ "$action" = "ask" ] && [ -n "${SCRATCH:-}" ] && [ -f "$SCRATCH/graph-node.txt" ]; then
+    {
+      printf 'state=%s\n' "$state"
+      printf 'question=%s\n' "$log"
+      printf 'detail:\n%s\n' "$NEXT_BODY"
+    } > "$SCRATCH/ask.md"
+    action="wait"
+    NEXT_BODY="Question posted to $SCRATCH/ask.md — the graph coordinator collects it and replies with graph.sh answer. Stop this turn; do not ask the user and do not decide it yourself.
+"
+  fi
   printf 'state=%s\naction=%s\nrun=%s\nlog=%s\ninstruction:\n%s\n' "$state" "$action" "$run" "$log" "$NEXT_BODY"
   exit 0
 }
@@ -1100,6 +1115,28 @@ next_body_add() {
 
 next_common_after() {
   next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
+}
+
+# The derived half of the plan, generated once per run before the planner is
+# first dispatched and reused on every replan — it is a pure function of spec.md,
+# so regenerating it could only produce the same file or mask a spec edit.
+next_plan_scaffold() {
+  local scratch="$1" config="$2"
+  [ -f "$scratch/spec.md" ] || return 0
+  [ -f "$scratch/plan-scaffold.md" ] && return 0
+  if [ -f "$config" ]; then
+    bash "$HOOK_DIR/plan-scaffold.sh" "$scratch" --config "$config" >/dev/null 2>&1 || true
+  else
+    bash "$HOOK_DIR/plan-scaffold.sh" "$scratch" >/dev/null 2>&1 || true
+  fi
+}
+
+# What the planner is told about the generated lists. Empty when no scaffold
+# exists (no spec.md, or standalone), which is the legacy free-derivation path.
+next_plan_scaffold_arg() {
+  local scratch="$1"
+  [ -f "$scratch/plan-scaffold.md" ] || return 0
+  printf ' | Scaffold: %s/plan-scaffold.md — its ## File Inventory and ## Test Contract are COMPLETE and generated from the spec. Carry every slot into plan.md keeping its S<n> key and its layer, replace only each TBD test path, and give every inventory row a module. Never add, drop, merge or re-layer a keyed slot; a slot you add for an AC outcome no scenario covers must be marked (derived: ...), and a path that no longer exists goes under ## Map Divergences.' "$scratch"
 }
 
 next_quality_dispatch() {
@@ -1180,6 +1217,15 @@ cmd_next() {
   local SCRATCH=".context/ship-run/$TASK_ID"
   local RUN LANG_ STORE resumed=""
 
+  # A graph node runs unattended, so its answers arrive as a file the coordinator
+  # writes rather than as a flag on the command line. Consumed once and deleted
+  # with the question that prompted it: if it does not resolve the gate, the next
+  # emit posts a fresh question instead of replaying a stale answer forever.
+  if [ -z "$ANSWER" ] && [ -f "$SCRATCH/answer.txt" ]; then
+    ANSWER="$(head -1 "$SCRATCH/answer.txt")"
+  fi
+  rm -f "$SCRATCH/answer.txt" "$SCRATCH/ask.md"
+
   # --- init (first call, or forced fresh/resume) -------------------------------
   if [ ! -f "$SCRATCH/diff-class.txt" ] || [ "$MODE" != "check" ]; then
     local init_out init_rc=0
@@ -1254,8 +1300,9 @@ cmd_next() {
         fi
         next_body_add "The planner returned without writing $SCRATCH/plan.md (silent write failure). Re-dispatch it:"
       fi
+      next_plan_scaffold "$SCRATCH" "$CONFIG"
       cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-      next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
+      next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH")\""
       next_common_after
       next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
     fi
@@ -1263,31 +1310,42 @@ cmd_next() {
       local pv_rc=0 pv_spec=""
       [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
       if [ -f "$CONFIG" ]; then pv_spec="$pv_spec --config $CONFIG"; fi
+      if [ -f "$SCRATCH/plan-scaffold.md" ]; then pv_spec="$pv_spec --scaffold $SCRATCH/plan-scaffold.md"; fi
       set +e
-      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
+      bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec \
+        >/dev/null 2>"$SCRATCH/plan-validate-error.txt"
       pv_rc=$?
       set -e
       if [ "$pv_rc" -eq 0 ]; then
+        rm -f "$SCRATCH/plan-validate-error.txt"
         printf 'ok\n' > "$SCRATCH/plan-validated.txt"
+      elif [ "$ANSWER" = "abort" ]; then
+        next_body_add "Plan validation failed and the user chose to abort. Report and stop."
+        next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
       else
-        case "$ANSWER" in
-          replan)
-            rm -f "$SCRATCH/plan.md"
-            cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
-            next_common_after
-            next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
-            ;;
-          abort)
-            next_body_add "Plan validation failed and the user chose to abort. Report and stop."
-            next_emit "plan" "stop" "$RUN" "aborted on invalid plan"
-            ;;
-          *)
-            next_body_add "plan.md failed validation (run: bash $HOOK_DIR/plan-validate.sh $SCRATCH/plan.md $pv_spec — surface its stderr to the user, in the artifact language)."
-            next_body_add "Ask the user: re-plan or abort? Then re-run next with --answer replan | --answer abort."
-            next_emit "plan" "ask" "$RUN" "plan failed validation"
-            ;;
-        esac
+        # Validation failed on a machine-checkable artifact and the exact defect
+        # is on stderr, so the planner can act on it with no human in the loop —
+        # and under ship:graph there is no human in that loop to ask. Stopping
+        # here was the whole failure: the run parked on a question while the
+        # answer was sitting in a file nobody passed back to the planner.
+        # Bounded, because a defect that survives a replan fed the real error is
+        # almost never the planner's — it is the spec's, and that does need a
+        # person.
+        set +e
+        ( cmd_iter "$SCRATCH" plan-revalidate --max 2 ) >/dev/null
+        local pvi_rc=$?
+        set -e
+        if [ "$pvi_rc" -eq 2 ]; then
+          next_body_add "plan.md failed validation on every replan. The last error is in $SCRATCH/plan-validate-error.txt — present it to the user in the artifact language."
+          next_body_add "A defect that survives replans is usually in the spec, not the plan: most often one scenario id reused across two behaviorally distinct scenarios, which no plan can satisfy. Check the spec's scenario ids first."
+          next_body_add "Then: fix the spec and re-run next, or abort with --answer abort."
+          next_emit "plan" "ask" "$RUN" "plan failed validation after retries"
+        fi
+        rm -f "$SCRATCH/plan.md"
+        cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+        next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — read $SCRATCH/plan-validate-error.txt and fix exactly what it reports\""
+        next_common_after
+        next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
       fi
     fi
 
@@ -1328,7 +1386,7 @@ cmd_next() {
               printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
               rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
               cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
+              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
               next_common_after
               next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
               ;;

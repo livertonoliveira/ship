@@ -5,7 +5,10 @@ set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: plan-validate.sh <plan-file> [--spec <spec-file>] [--config <path>]" >&2
+  echo "usage: plan-validate.sh <plan-file> [--scaffold <file>] [--spec <spec-file>] [--config <path>]" >&2
+  echo "  With a scaffold (auto-detected beside the plan) the plan is confronted" >&2
+  echo "  with it instead of with the spec: the derived lists were generated, not" >&2
+  echo "  transcribed, so only the planner's own assignments are checked." >&2
   echo "  Without --spec only the plan's internal consistency is checked." >&2
   echo "  With --spec the plan is also confronted with the spec and the" >&2
   echo "  repository: no spec scenario or spec file may be silently dropped," >&2
@@ -56,16 +59,26 @@ module_depends_on() {
   printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
 }
 
+# A slot header may carry a qualifier between the scenario id and the first
+# arrow: `### <id> (dark theme) -> unit -> <file>`. Requiring the bare id made a
+# spec that reuses one scenario id across two behaviorally distinct scenarios
+# impossible to plan at all — one id can hold one slot, so the planner had no
+# valid output and every replan failed the same way. The leading non-digit guard
+# keeps an id from matching a longer one with the same prefix.
+slot_header_re() {
+  printf '^### %s([^0-9][^>]*)?->' "$1"
+}
+
 test_contract_layer_for() {
   local f="$1" scenario_id="$2"
-  grep -E "^### ${scenario_id}[[:space:]]*->" "$f" 2>/dev/null \
+  grep -E "$(slot_header_re "$scenario_id")" "$f" 2>/dev/null \
     | head -1 \
     | sed -E 's/^### [^>]+->[[:space:]]*([a-zA-Z0-9]+)[[:space:]]*->.*/\1/'
 }
 
 test_contract_slot_exists() {
   local f="$1" scenario_id="$2"
-  grep -qE "^### ${scenario_id}[[:space:]]*->" "$f" 2>/dev/null
+  grep -qE "$(slot_header_re "$scenario_id")" "$f" 2>/dev/null
 }
 
 check_module_map_present() {
@@ -385,6 +398,87 @@ diverged_paths() {
   ' "$1" 2>/dev/null | grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+' | sort -u || true
 }
 
+# --- confrontation with the scaffold ----------------------------------------
+# When plan-scaffold.sh generated the derived lists, the plan is checked against
+# THEM rather than against the spec. The difference matters: the spec has to be
+# interpreted, and both the planner and this validator interpreting it
+# separately is exactly how a plan came to fail on a spec it had transcribed
+# faithfully. The scaffold is one interpretation, produced once, and all that is
+# left to check is that the planner assigned every row it was handed.
+
+# "S<n>|<layer>" for every slot the scaffold keyed. The key is what identifies a
+# slot: an id cannot (two scenarios may share one) and a title should not (it
+# would make the plan hinge on re-typing accented prose byte for byte).
+slot_keys() {
+  grep -E '^### S[0-9]+[^>]*->' "$1" 2>/dev/null \
+    | sed -E 's/^### (S[0-9]+)[^>]*->[[:space:]]*([a-zA-Z0-9]+)[[:space:]]*->.*/\1|\2/' \
+    | sort || true
+}
+
+# Slots carrying no key — everything the planner added on its own.
+unkeyed_slots() {
+  grep -E '^### .*->.*->' "$1" 2>/dev/null \
+    | grep -vE '^### S[0-9]+[^>]*->' || true
+}
+
+scaffold_inventory() {
+  grep -E '^- .* \((create|modify)\)' "$1" 2>/dev/null \
+    | sed -E 's/^- (.*) \((create|modify)\).*/\1/' \
+    | sed 's/`//g' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sort -u || true
+}
+
+check_contract_matches_scaffold() {
+  local f="$1" scaffold="$2" missing extra
+  # A spec with no tagged scenarios scaffolds no slots and tells the planner to
+  # derive them from the acceptance criteria instead. There the scaffold is not
+  # the authority on the contract, so neither direction of this comparison means
+  # anything — checking it would reject every slot the planner correctly derived.
+  [ -n "$(slot_keys "$scaffold")" ] || return 0
+  missing="$(comm -23 <(slot_keys "$scaffold") <(slot_keys "$f"))"
+  if [ -n "$missing" ]; then
+    echo "plan-validate: slot do scaffold ausente ou re-camadado no plano — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  extra="$(comm -13 <(slot_keys "$scaffold") <(slot_keys "$f"))"
+  if [ -n "$extra" ]; then
+    echo "plan-validate: slot com chave que o scaffold não emitiu — $(printf '%s' "$extra" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  # An unkeyed slot is one the planner added. That is legitimate for an AC
+  # outcome no scenario covers — it holds both lists, so it is the only stage
+  # that can see the gap — but it has to say so, or the contract grows tests
+  # nothing traces back to.
+  extra="$(unkeyed_slots "$f" | grep -v '(derived' || true)"
+  if [ -n "$extra" ]; then
+    echo "plan-validate: slot fora do scaffold e não marcado '(derived: ...)' — $(printf '%s' "$extra" | head -3 | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
+}
+
+check_inventory_assigned() {
+  local f="$1" scaffold="$2" missing
+  missing="$(comm -23 <(scaffold_inventory "$scaffold") \
+    <(cat <(plan_files "$f") <(contract_files "$f") <(diverged_paths "$f") | sort -u))"
+  if [ -n "$missing" ]; then
+    echo "plan-validate: arquivo do inventário sem módulo (e sem registro em ## Map Divergences) — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
+}
+
+# The one field the scaffold deliberately leaves open: the test path follows the
+# repo's own conventions, which only the planner surveyed.
+check_no_unfilled_slots() {
+  local f="$1" left
+  left="$(grep -E '^### .*->.*->[[:space:]]*TBD([[:space:]]|$)' "$f" 2>/dev/null || true)"
+  if [ -n "$left" ]; then
+    echo "plan-validate: slot com caminho de teste não preenchido (TBD) — $(printf '%s' "$left" | head -3 | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
+}
+
 check_spec_scenarios_claimed() {
   local f="$1" spec="$2" missing
   missing="$(comm -23 <(spec_scenarios "$spec") <(plan_scenarios "$f"))"
@@ -434,8 +528,9 @@ check_modify_targets_exist() {
 }
 
 validate_plan() {
-  local f="$1" spec="${2:-}" config="${3:-}"
+  local f="$1" spec="${2:-}" config="${3:-}" scaffold="${4:-}"
 
+  # Decisions the planner actually made — the only things left worth checking.
   if ! check_module_map_present "$f"; then
     echo "plan-validate: module map vazio" >&2
     return 2
@@ -445,7 +540,11 @@ validate_plan() {
     return 2
   fi
 
-  if ! check_scenario_layers "$f"; then
+  if ! check_dependency_refs "$f"; then
+    return 2
+  fi
+
+  if ! check_cycle "$f"; then
     return 2
   fi
 
@@ -453,11 +552,25 @@ validate_plan() {
     return 2
   fi
 
-  if ! check_dependency_refs "$f"; then
-    return 2
+  # Scaffolded run: the derived lists were handed to the planner, so all that is
+  # left is that it assigned them. These replace the four spec-transcription
+  # checks below, which no longer have anything to catch.
+  if [ -n "$scaffold" ] && [ -f "$scaffold" ]; then
+    if ! check_no_unfilled_slots "$f"; then
+      return 2
+    fi
+    if ! check_contract_matches_scaffold "$f" "$scaffold"; then
+      return 2
+    fi
+    if ! check_inventory_assigned "$f" "$scaffold"; then
+      return 2
+    fi
+    return 0
   fi
 
-  if ! check_cycle "$f"; then
+  # Standalone / legacy: no scaffold was generated, so the spec is still the only
+  # thing to confront the plan with.
+  if ! check_scenario_layers "$f"; then
     return 2
   fi
 
@@ -479,10 +592,18 @@ validate_plan() {
 }
 
 main() {
-  local positional=() spec="" config=""
+  local positional=() spec="" config="" scaffold=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
+      --scaffold)
+        scaffold="${2:-}"
+        if [ -z "$scaffold" ]; then
+          echo "plan-validate: --scaffold requires a path" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
       --spec)
         spec="${2:-}"
         if [ -z "$spec" ]; then
@@ -528,7 +649,14 @@ main() {
     exit 1
   fi
 
-  if validate_plan "$plan_file" "$spec" "$config"; then
+  # The scaffold lives beside the plan; the flag only has to name it when the two
+  # are apart, so a caller that forgets it still gets the scaffolded checks.
+  if [ -z "$scaffold" ]; then
+    local sibling="$(dirname "$plan_file")/plan-scaffold.md"
+    [ -f "$sibling" ] && scaffold="$sibling"
+  fi
+
+  if validate_plan "$plan_file" "$spec" "$config" "$scaffold"; then
     echo "plan-validate: plan válido"
     exit 0
   else
