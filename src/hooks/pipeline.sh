@@ -1089,6 +1089,21 @@ NEXT_BODY=""
 
 next_emit() {
   local state="$1" action="$2" run="$3" log="$4"
+  # Inside a graph node there is no user to ask: the worker runs unattended in
+  # its own workspace, so an `ask` reaches nobody and the node sits there until
+  # the stall cap kills it — the run's answer sitting in a workspace no one
+  # opened. Post the question where `graph.sh next` collects it instead, and let
+  # the coordinator reply with `graph.sh answer`.
+  if [ "$action" = "ask" ] && [ -n "${SCRATCH:-}" ] && [ -f "$SCRATCH/graph-node.txt" ]; then
+    {
+      printf 'state=%s\n' "$state"
+      printf 'question=%s\n' "$log"
+      printf 'detail:\n%s\n' "$NEXT_BODY"
+    } > "$SCRATCH/ask.md"
+    action="wait"
+    NEXT_BODY="Question posted to $SCRATCH/ask.md — the graph coordinator collects it and replies with graph.sh answer. Stop this turn; do not ask the user and do not decide it yourself.
+"
+  fi
   printf 'state=%s\naction=%s\nrun=%s\nlog=%s\ninstruction:\n%s\n' "$state" "$action" "$run" "$log" "$NEXT_BODY"
   exit 0
 }
@@ -1179,6 +1194,15 @@ cmd_next() {
 
   local SCRATCH=".context/ship-run/$TASK_ID"
   local RUN LANG_ STORE resumed=""
+
+  # A graph node runs unattended, so its answers arrive as a file the coordinator
+  # writes rather than as a flag on the command line. Consumed once and deleted
+  # with the question that prompted it: if it does not resolve the gate, the next
+  # emit posts a fresh question instead of replaying a stale answer forever.
+  if [ -z "$ANSWER" ] && [ -f "$SCRATCH/answer.txt" ]; then
+    ANSWER="$(head -1 "$SCRATCH/answer.txt")"
+  fi
+  rm -f "$SCRATCH/answer.txt" "$SCRATCH/ask.md"
 
   # --- init (first call, or forced fresh/resume) -------------------------------
   if [ ! -f "$SCRATCH/diff-class.txt" ] || [ "$MODE" != "check" ]; then

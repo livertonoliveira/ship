@@ -67,6 +67,80 @@ make_workspace() {
   )
 }
 
+test_claim_marks_the_workspace_as_having_a_coordinator() {
+  local name="claim tells the node's pipeline it has a coordinator to post questions to"
+  local dir
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+  )
+  if [ -s "$dir/wt-TASK-001/.context/ship-run/TASK-001/graph-node.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (no graph-node.txt in the claimed workspace)"
+  fi
+  rm -rf "$dir"
+}
+
+test_a_nodes_question_reaches_the_coordinator() {
+  local name="a question a node posts is surfaced by next, and answer clears it and unfreezes the stall counter"
+  local dir out scratch answered
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  scratch="$dir/wt-TASK-001/.context/ship-run/TASK-001"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'state=gate\nquestion=medium findings, continue?\ndetail:\nfull text\n' \
+      > .context/ship-graph/f/../../../wt-TASK-001/.context/ship-run/TASK-001/ask.md 2>/dev/null \
+      || printf 'state=gate\nquestion=medium findings, continue?\ndetail:\nfull text\n' \
+        > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+    # The node looks stalled while it waits — the counter must not outlive the answer.
+    printf '3\n' > .context/ship-graph/f/stall-TASK-001.txt
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next 2>/dev/null || true)"
+  answered="$(cd "$dir" && bash "$GRAPH" answer TASK-001 proceed 2>&1 || true)"
+
+  if [ "$(field "$out" action)" = "ask" ] \
+    && printf '%s' "$out" | grep -q 'medium findings, continue?' \
+    && printf '%s' "$out" | grep -q 'graph.sh" answer <task> <answer>' \
+    && [ "$(field "$answered" answered)" = "TASK-001" ] \
+    && [ "$(head -1 "$scratch/answer.txt")" = "proceed" ] \
+    && [ ! -f "$scratch/ask.md" ] \
+    && [ ! -f "$dir/.context/ship-graph/f/stall-TASK-001.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action) answered=$(field "$answered" answered))"
+  fi
+  rm -rf "$dir"
+}
+
+test_answer_refuses_a_node_with_no_pending_question() {
+  local name="answer refuses a node that asked nothing, instead of planting an answer for a future gate"
+  local dir rc=0
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+  )
+  (cd "$dir" && bash "$GRAPH" answer TASK-001 proceed >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -f "$dir/wt-TASK-001/.context/ship-run/TASK-001/answer.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (exit $rc)"
+  fi
+  rm -rf "$dir"
+}
+
 test_poll_lands_on_the_completion_artifact_not_a_handshake() {
   local name="poll lands a node from homolog-approved.txt — no worker report needed"
   local dir out
@@ -1103,6 +1177,9 @@ test_tasks_md_parser_ignores_rules_and_prose
 test_failed_init_leaves_no_debris
 test_corrected_init_after_a_failure_is_not_refused_as_resume
 test_poll_lands_on_the_completion_artifact_not_a_handshake
+test_claim_marks_the_workspace_as_having_a_coordinator
+test_a_nodes_question_reaches_the_coordinator
+test_answer_refuses_a_node_with_no_pending_question
 test_poll_seals_uncommitted_work_into_the_branch
 test_poll_reports_progress_without_landing
 test_stalled_node_surfaces_instead_of_waiting_forever

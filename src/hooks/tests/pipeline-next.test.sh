@@ -250,6 +250,55 @@ test_greenfield_multi_module_runs_planner() {
   rm -rf "$dir"
 }
 
+test_graph_node_posts_its_question_instead_of_asking() {
+  local name="in a graph node an ask becomes a question file plus a wait — there is no user in that loop to ask"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  next "$dir" TASK-1 >/dev/null
+  multi_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
+  next "$dir" TASK-1 >/dev/null
+  local scratch="$dir/.context/ship-run/TASK-1"
+  printf '/some/graph/dir\n' > "$scratch/graph-node.txt"
+  local out
+  echo 'garbage' > "$scratch/plan.md"; next "$dir" TASK-1 >/dev/null
+  echo 'garbage' > "$scratch/plan.md"; next "$dir" TASK-1 >/dev/null
+  echo 'garbage' > "$scratch/plan.md"; out="$(next "$dir" TASK-1)"
+
+  if [ "$(field "$out" action)" = "wait" ] \
+    && [ -f "$scratch/ask.md" ] \
+    && grep -q '^question=' "$scratch/ask.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action))"
+  fi
+  rm -rf "$dir"
+}
+
+test_graph_node_consumes_the_coordinators_answer() {
+  local name="an answer file the coordinator wrote is consumed exactly like --answer, then deleted"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  next "$dir" TASK-1 >/dev/null
+  multi_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
+  next "$dir" TASK-1 >/dev/null
+  local scratch="$dir/.context/ship-run/TASK-1"
+  printf '/some/graph/dir\n' > "$scratch/graph-node.txt"
+  echo 'garbage' > "$scratch/plan.md"
+  printf 'abort\n' > "$scratch/answer.txt"
+  local out; out="$(next "$dir" TASK-1)"
+
+  if [ "$(field "$out" action)" = "stop" ] && [ ! -f "$scratch/answer.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action))"
+  fi
+  rm -rf "$dir"
+}
+
 test_invalid_plan_asks_then_replans() {
   local name="an invalid plan.md asks the user; --answer replan re-dispatches the planner"
   local dir; dir="$(mktemp -d)"
@@ -822,6 +871,8 @@ test_static_gate_skip_when_no_checks() {
 test_first_call_asks_for_context_staging
 test_greenfield_multi_module_runs_planner
 test_invalid_plan_asks_then_replans
+test_graph_node_posts_its_question_instead_of_asking
+test_graph_node_consumes_the_coordinators_answer
 test_plan_is_confronted_before_develop
 test_plan_review_ok_proceeds_to_develop
 test_plan_review_blockers_ask_then_replan_once
