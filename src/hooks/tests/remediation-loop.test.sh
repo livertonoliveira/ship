@@ -168,7 +168,6 @@ drive() {
     case "$state" in
       context)            spec_fixture > "$scratch/spec.md" ;;
       plan)               plan_fixture > "$scratch/plan.md" ;;
-      plan-review)        printf 'verdict: ok\n' > "$scratch/plan-review.md" ;;
       develop)            mock_develop "$dir" ;;
       verify-a|verify-pending) mock_quality_workers "$dir" "$scratch" "$out" ;;
       remediation-fix)    mock_fix_agent "$dir" "$scratch" ;;
