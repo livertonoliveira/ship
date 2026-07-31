@@ -9,6 +9,15 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive-git.sh\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__linear-server__save_document|mcp__linear-server__save_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/spec-ids-scan-mcp.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
