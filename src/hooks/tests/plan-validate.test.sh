@@ -12,6 +12,10 @@ scenario_tag() {
   printf '@S''C-%s' "$1"
 }
 
+criterion_tag() {
+  printf 'A''C''-%s' "$1"
+}
+
 log_pass() {
   pass_count=$((pass_count + 1))
   echo "PASS: $1"
@@ -221,6 +225,201 @@ test_orphan_scenario_fails() {
     "$(contract_slot "$(scenario_tag 02)" unit "src/b.ts")")"
 
   assert_exit_and_message "$name" "$plan" 2 "plan-validate: cenário órfão — $(scenario_tag 01) sem slot no Test Contract"
+  rm -rf "$dir"
+}
+
+# A scaffold beside the plan switches the validator onto the generated lists.
+make_scaffold_fixture() {
+  local dir="$1"
+  shift
+  local out="$dir/plan-scaffold.md"
+  : > "$out"
+  local line
+  for line in "$@"; do
+    printf '%s\n' "$line" >> "$out"
+  done
+  printf '%s' "$out"
+}
+
+scaffolded_plan() {
+  local dir="$1" slot_path="${2:-src/a.test.ts}"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> $slot_path"
+}
+
+test_scaffolded_plan_that_assigns_everything_passes() {
+  local name="a plan that assigns every scaffold row passes without the spec being re-parsed"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(scaffolded_plan "$dir")"
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_missing_a_slot_fails() {
+  local name="a plan that drops a slot the scaffold generated is rejected"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" \
+    "### S2 $(scenario_tag 02) (segundo) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: slot do scaffold ausente ou re-camadado no plano"
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_inventing_a_slot_fails() {
+  local name="a plan that invents a slot the scaffold never generated is rejected"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts" \
+    "### S9 $(scenario_tag 99) (inventado) -> unit -> src/x.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: slot com chave que o scaffold não emitiu"
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_keeps_a_derived_slot() {
+  local name="a derived slot for an AC outcome no scenario covers is the planner's to add, not an invention"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts" \
+    "### $(criterion_tag 07) (derived: no scenario) -> unit -> src/b.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_with_an_unmarked_extra_slot_fails() {
+  local name="a slot the planner added without marking it derived is rejected — the contract must not grow tests nothing traces to"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts" \
+    "### algo inventado -> unit -> src/x.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: slot fora do scaffold e não marcado"
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_with_an_unfilled_path_fails() {
+  local name="a slot left at TBD is rejected — the test path is the one field the planner owes"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(scaffolded_plan "$dir" "TBD")"
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: slot com caminho de teste não preenchido"
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails() {
+  local name="an inventory file no module claims is rejected"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "- src/esquecido.ts (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: arquivo do inventário sem módulo"
+  rm -rf "$dir"
+}
+
+test_scaffolded_plan_may_divert_an_inventory_file() {
+  local name="an inventory file logged under Map Divergences is accounted for without a module"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "- src/mudou.ts (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts" \
+    "## Map Divergences" \
+    "- src/mudou.ts → src/novo-lugar.ts — moved")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_qualified_slot_header_counts() {
+  local name="a slot header qualified after the scenario id still counts as that scenario's slot"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### $(scenario_tag 01) (tema escuro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_qualified_slot_does_not_match_longer_id() {
+  local name="a qualified slot for one id never satisfies a longer id sharing its prefix"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 010)")" \
+    "## Test Contract" \
+    "### $(scenario_tag 01) (tema escuro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: cenário órfão — $(scenario_tag 010) sem slot no Test Contract"
   rm -rf "$dir"
 }
 
@@ -461,6 +660,16 @@ test_anchor_line_is_not_an_owned_file() {
 test_empty_module_map_fails
 test_file_overlap_fails
 test_orphan_scenario_fails
+test_qualified_slot_header_counts
+test_qualified_slot_does_not_match_longer_id
+test_scaffolded_plan_that_assigns_everything_passes
+test_scaffolded_plan_missing_a_slot_fails
+test_scaffolded_plan_inventing_a_slot_fails
+test_scaffolded_plan_keeps_a_derived_slot
+test_scaffolded_plan_with_an_unfilled_path_fails
+test_scaffolded_plan_with_an_unmarked_extra_slot_fails
+test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails
+test_scaffolded_plan_may_divert_an_inventory_file
 test_invalid_layer_fails
 test_invalid_dependency_ref_fails
 test_two_node_cycle_fails
