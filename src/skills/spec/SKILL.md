@@ -63,7 +63,7 @@ Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `#
 - **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4) → `## Deps`. Both omitted at depth `none`.
 - `## Deps`: one blocking ID per line, bare (`none` if independent) — parsed by `/ship:graph`; free text is not. Linear: also set the native **blocked by** relation.
 
-**SC↔task cross-reference:** `bash "@@ship/hooks/sc-crossref.sh" --index <file> --issues <dir> --proposal <file>`; fix violations, re-run until clean, before §7.
+**SC↔task cross-reference:** `bash "@@ship/hooks/sc-crossref.sh" --index <file> --issues <dir> --proposal <file>`; fix violations, re-run until clean, before §7. A `duplicate:` violation is never a numbering nit — one id cannot key two test slots, so a plan for that spec cannot exist. Renumber; never merge the scenarios to make it go away.
 
 ## 7. Present to the user
 
