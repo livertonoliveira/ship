@@ -52,6 +52,7 @@ setup_repo() {
 # out-of-scope ones sit under a later quoted-requirement section — the exact
 # shape that leaked another slice's criteria into the brief.
 spec_with_out_of_scope_acs() {
+  local layer="${1:-unit}"
   cat <<EOF
 ## Files
 - create \`src/b.js\` — the module
@@ -60,7 +61,7 @@ spec_with_out_of_scope_acs() {
 - $AC_IN: the module greets by name.
 
 ## Scenarios
-$SCEN_ID @unit
+$SCEN_ID @$layer
 Scenario: greets
   Given a name
   Then it greets
@@ -82,7 +83,7 @@ plan_with_contract() {
 
 ## Test Contract
 
-### $SCEN_ID -> $layer -> $path
+### S1 $SCEN_ID (greets) -> $layer -> $path
 - arrange: x
 - act: y
 - assert: z
@@ -97,7 +98,7 @@ drive_to_verify() {
   local dir="$1" task="$2" layer="${3:-unit}" testpath="${4:-src/b.test.js}"
   local scratch; scratch="$(scratch_of "$dir" "$task")"
   next "$dir" "$task" >/dev/null
-  spec_with_out_of_scope_acs > "$scratch/spec.md"
+  spec_with_out_of_scope_acs "$layer" > "$scratch/spec.md"
   local i out state
   for i in 1 2 3 4 5 6; do
     out="$(next "$dir" "$task" 2>/dev/null)" || return 1
@@ -267,7 +268,7 @@ test_develop_authored_tests_reach_the_manifest() {
 - e2e: enabled'
   sc="$(scratch_of "$dir" TASK-1)"
   next "$dir" TASK-1 >/dev/null
-  spec_with_out_of_scope_acs > "$sc/spec.md"
+  spec_with_out_of_scope_acs e2e > "$sc/spec.md"
   for i in 1 2 3 4 5 6 7 8; do
     out="$(next "$dir" TASK-1 2>/dev/null)" || break
     state="$(field "$out" state)"

@@ -91,7 +91,7 @@ valid_plan() {
 
 ## Test Contract
 
-### $SCEN_ID -> unit -> src/a.test.js
+### S1 $SCEN_ID (greets) -> unit -> src/a.test.js
 - arrange: x
 - act: y
 - assert: z

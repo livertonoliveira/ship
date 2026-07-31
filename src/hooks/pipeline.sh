@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1117,6 +1117,28 @@ next_common_after() {
   next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
 }
 
+# The derived half of the plan, generated once per run before the planner is
+# first dispatched and reused on every replan — it is a pure function of spec.md,
+# so regenerating it could only produce the same file or mask a spec edit.
+next_plan_scaffold() {
+  local scratch="$1" config="$2"
+  [ -f "$scratch/spec.md" ] || return 0
+  [ -f "$scratch/plan-scaffold.md" ] && return 0
+  if [ -f "$config" ]; then
+    bash "$HOOK_DIR/plan-scaffold.sh" "$scratch" --config "$config" >/dev/null 2>&1 || true
+  else
+    bash "$HOOK_DIR/plan-scaffold.sh" "$scratch" >/dev/null 2>&1 || true
+  fi
+}
+
+# What the planner is told about the generated lists. Empty when no scaffold
+# exists (no spec.md, or standalone), which is the legacy free-derivation path.
+next_plan_scaffold_arg() {
+  local scratch="$1"
+  [ -f "$scratch/plan-scaffold.md" ] || return 0
+  printf ' | Scaffold: %s/plan-scaffold.md — its ## File Inventory and ## Test Contract are COMPLETE and generated from the spec. Carry every slot into plan.md keeping its S<n> key and its layer, replace only each TBD test path, and give every inventory row a module. Never add, drop, merge or re-layer a keyed slot; a slot you add for an AC outcome no scenario covers must be marked (derived: ...), and a path that no longer exists goes under ## Map Divergences.' "$scratch"
+}
+
 next_quality_dispatch() {
   local scratch="$1" task="$2" lang="$3" mode="$4" phase="$5" depth="$6"
   local extra=""
@@ -1278,8 +1300,9 @@ cmd_next() {
         fi
         next_body_add "The planner returned without writing $SCRATCH/plan.md (silent write failure). Re-dispatch it:"
       fi
+      next_plan_scaffold "$SCRATCH" "$CONFIG"
       cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-      next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
+      next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH")\""
       next_common_after
       next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
     fi
@@ -1287,6 +1310,7 @@ cmd_next() {
       local pv_rc=0 pv_spec=""
       [ -f "$SCRATCH/spec.md" ] && pv_spec="--spec $SCRATCH/spec.md"
       if [ -f "$CONFIG" ]; then pv_spec="$pv_spec --config $CONFIG"; fi
+      if [ -f "$SCRATCH/plan-scaffold.md" ]; then pv_spec="$pv_spec --scaffold $SCRATCH/plan-scaffold.md"; fi
       set +e
       bash "$HOOK_DIR/plan-validate.sh" "$SCRATCH/plan.md" $pv_spec >/dev/null 2>&1
       pv_rc=$?
@@ -1298,7 +1322,7 @@ cmd_next() {
           replan)
             rm -f "$SCRATCH/plan.md"
             cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
+            next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — fix the module map/test contract per plan-validate.sh; every spec scenario and spec file must be claimed by a module or logged under ## Map Divergences\""
             next_common_after
             next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
             ;;
@@ -1352,7 +1376,7 @@ cmd_next() {
               printf 'replanned\n' > "$SCRATCH/plan-confronted.txt"
               rm -f "$SCRATCH/plan.md" "$SCRATCH/plan-validated.txt"
               cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
-              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
+              next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan raised blockers in $SCRATCH/plan-review.md — address every one of them\""
               next_common_after
               next_emit "plan" "dispatch" "$RUN" "re-planning after the confrontation pass"
               ;;
