@@ -141,8 +141,15 @@ kv_get() {
 # this driver die before it had created anything at all. `run-create` binds the
 # calling terminal as coordinator (legacy: 0) and every later call carries
 # `--run`, so nothing depends on that retired lookup.
+#
+# Creating it is serialized with an atomic mkdir lock, because a graph dispatches
+# its whole frontier at once. Measured live with two concurrent dispatches: both
+# found no Run, both created one, and the second's task-create came back
+# `consumer_fenced: this coordinator terminal is bound to run_X, not run_Y` —
+# the terminal binds to exactly one Run, so every node after the first never
+# started. A read-then-write with no lock loses that race every time.
 ensure_run() {
-  local f="$STATE/driver-orca-run.txt" run
+  local f="$STATE/driver-orca-run.txt" lock="$STATE/driver-orca-run.lock" run tries=0
 
   run="$(cat "$f" 2>/dev/null || true)"
   if [ -n "$run" ]; then
@@ -150,10 +157,27 @@ ensure_run() {
     return 0
   fi
 
-  run="$(orca orchestration run-create --objective "Ship graph: $(basename "$STATE")" --json 2>/dev/null \
-    | json_id run_)"
+  while ! mkdir "$lock" 2>/dev/null; do
+    run="$(cat "$f" 2>/dev/null || true)"
+    if [ -n "$run" ]; then
+      printf '%s' "$run"
+      return 0
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -ge 120 ] && break
+    sleep 1
+  done
+
+  # Re-read inside the lock: the holder we queued behind is what created it.
+  run="$(cat "$f" 2>/dev/null || true)"
+  if [ -z "$run" ]; then
+    run="$(orca orchestration run-create --objective "Ship graph: $(basename "$STATE")" --json 2>/dev/null \
+      | json_id run_)"
+    [ -n "$run" ] && printf '%s\n' "$run" > "$f"
+  fi
+  rmdir "$lock" 2>/dev/null || true
+
   [ -n "$run" ] || return 1
-  printf '%s\n' "$run" > "$f"
   printf '%s' "$run"
 }
 
