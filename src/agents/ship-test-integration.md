@@ -33,9 +33,9 @@ Remediates hygiene hits, not generation: in each `## Violations` file, strip eve
 
 Do §2–3 but skip the execution steps — no test command run, no pass/fail counts; generate file(s) only.
 
-Honor injected `## Denylist` (paths `ship:develop` owns): write test files only, never a denylisted path. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot) — driving `DONE_WITH_CONCERNS` (§4) — and continue. Report files created.
+Honor injected `## Denylist` (paths `ship:develop` owns): write test files only, never a denylisted path. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot) — driving `DONE_WITH_CONCERNS` (§4) — and continue. Report files created or extended.
 
-`Manifest: <path>` in the prompt: after generating, write one `- <path> (integration)` line per file actually created to that manifest file — no header, write it even when empty; denylist-skipped slots are reported verbally, never listed.
+`Manifest: <path>` in the prompt: after generating, write one `- <path> (integration)` line per file actually created **or extended** (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything) to that manifest file — no header, write it even when zero files touched; denylist-skipped slots are reported verbally, never listed.
 
 ---
 
