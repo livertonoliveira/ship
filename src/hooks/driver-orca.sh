@@ -302,7 +302,13 @@ When you report completion, your orchestration send MUST carry --run $run in add
   local created rtask
   created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null)"
   rtask="$(printf '%s' "$created" | json_id task_)"
-  [ -n "$rtask" ] || { echo "driver-orca.sh dispatch: task-create returned no task id (run $run)" >&2; exit 1; }
+  if [ -z "$rtask" ]; then
+    echo "driver-orca.sh dispatch: the runtime refused to create a task for $task on run $run" >&2
+    # Its own words beat a generic "no task id": `consumer_fenced` names a Run
+    # collision, and that reads nothing like a parse failure.
+    printf '%s' "$created" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1 >&2
+    exit 1
+  fi
   printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
     > "$STATE/driver-orca-coordinator.txt"
 
@@ -344,15 +350,32 @@ When you report completion, your orchestration send MUST carry --run $run in add
     start_args+=(--agent claude)
   fi
 
-  local started dispatch_id
-  started="$(orca "${start_args[@]}" 2>/dev/null)"
+  local started dispatch_id rc=0
+  started="$(orca "${start_args[@]}" 2>/dev/null)" || rc=$?
   dispatch_id="$(printf '%s' "$started" | json_id ctx_)"
+
+  # A FAILED worker-start still answers with a dispatch id, so the id alone
+  # proves nothing. It exits non-zero and names the stage it died in; measured
+  # live, a bad --base-branch dies in worktree_create with everything else
+  # looking normal. Reading only the id let that pass, and the driver then died
+  # silently on the empty worktree selector two lines later.
+  if [ "$rc" -ne 0 ] || printf '%s' "$started" | grep -q '"failedStage"'; then
+    echo "driver-orca.sh dispatch: the runtime refused to start $task" >&2
+    printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1 >&2
+    printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1 >&2
+    exit 1
+  fi
   [ -n "$dispatch_id" ] || { echo "driver-orca.sh dispatch: worker-start returned no dispatch id" >&2; exit 1; }
 
   # worker-start reports what it created under result.effects; the worktree id is
   # the only <repo-id>::<path> value in the response.
   [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
   [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_)"
+  # Named explicitly, because the alternative is what actually happened: an empty
+  # selector makes the next call fail, and a failing command substitution under
+  # `set -e` exits the driver with no output on either stream at all.
+  [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: worker-start reported no workspace for $task" >&2; exit 1; }
+  [ -n "$handle" ] || { echo "driver-orca.sh dispatch: worker-start reported no agent terminal for $task" >&2; exit 1; }
 
   # The brief as the runtime built it, so a re-delivery sends the same lifecycle
   # preamble the worker was supposed to get — not a bare prompt line.
