@@ -28,7 +28,7 @@ Load `## Scenarios` (`@SC-XX`) — the behavioral contract. None → plan agains
 
 ## 2. Shallow survey
 
-Check for a `## Files` section in the spec (`create|modify \`<path>\` — <intent>`, optional `Âncora` lines, per `ship:spec`).
+Scaffold given → its `## File Inventory` **is** the map; skip the extraction below and validate those paths. Otherwise check for a `## Files` section in the spec (`create|modify \`<path>\` — <intent>`, optional `Âncora` lines, per `ship:spec`).
 
 **Map present → validate, don't re-derive:**
 - `modify`: file still exists? `create`: target dir matches convention (file itself needn't exist yet)? Anchor: still exists and still analogous?
@@ -45,13 +45,19 @@ Map present → group its file sets into modules per the rules below, reusing th
 - Each module owns a **disjoint** file set — no two modules share a file (keeps ownership unambiguous for develop and the test denylist).
 - Doubt → prefer fewer, coarser modules over an incorrect split.
 
-## 4. Map scenarios to a test contract
+## 4. Fill the test contract
 
-For each `@SC-XX`, derive the test slot — map, don't recreate the scenario:
-- Layer = scenario's `@unit`/`@integration`/`@e2e` tag (don't re-classify).
-- Test file name follows project test-location conventions (step 2).
-- `arrange`←`Given`/`Background`, `act`←`When`, `assert`←`Then`. `Scenario Outline` → one parameterized case over its `Examples`.
-- Map each scenario to the module(s) it exercises.
+**Scaffold given** (`Scaffold:` in the args — the pipeline's normal case): its `## Test Contract` is already complete and its `## File Inventory` already lists every file. Both were generated from the spec, so you never enumerate either — you assign.
+
+- Carry every slot into `plan.md` keeping its `S<n>` key, its id/title and its layer exactly. Replace only the `TBD` test path, following the test-location conventions from step 2.
+- Give every inventory row a module. A path that no longer exists goes under `## Map Divergences` instead.
+- A slot flagged `LAYER DISABLED` or a row flagged `ABSENT on disk` is a real problem: fix it in the plan and say so under `## Map Divergences`.
+- Never add, drop, merge or re-layer a keyed slot. The one slot you may add is §4.5's, and it must be marked `(derived: ...)`.
+- `## Spec Defects` is informational — carry it into your report, not into the plan.
+
+**No scaffold** (standalone, or a spec with no tagged scenarios): derive slots yourself — layer from the scenario's `@unit`/`@integration`/`@e2e` tag (never re-classify), `arrange`←`Given`/`Background`, `act`←`When`, `assert`←`Then`, `Scenario Outline` → one parameterized case over its `Examples`.
+
+Either way, map each scenario to the module(s) it exercises.
 
 ## 4.5. AC outcome completeness
 
@@ -97,7 +103,7 @@ Write `.context/ship-run/<task-id>/plan.md`, exact format:
 - Register: <module registration / export / route points>
 
 ## Test Contract
-### @SC-01 -> unit -> <test file>
+### S1 @SC-01 (<scenario title>) -> unit -> <test file>
 - arrange/act/assert: <from Given|Background / When / Then>
 ### AC-07 (skip outcome) -> unit -> <test file> (derived: no @SC)
 - arrange/act/assert: <outcome's precondition / trigger / expected result>
