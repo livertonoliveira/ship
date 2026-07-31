@@ -116,6 +116,16 @@ EOF
 )"
 ```
 
+#### Graph nodes: arm auto-merge
+
+`keep_context=yes` only — the gate that produced this PR (test ∥ quality) already came back green, so there is nothing left for a human to wait on:
+
+```bash
+gh pr merge --auto --squash <branch-name>
+```
+
+This arms GitHub's native auto-merge — it still waits on the forge's own required checks/branch protection and merges nothing itself; `graph.sh poll` (never this skill) is what later reads the merge back. If the command fails (auto-merge not enabled on the repo, or branch protection missing), log it plainly and fall back to the manual-merge reminder in Step 10 — never treat the failure as a pipeline error.
+
 ### 8. Update artifacts
 
 **Linear (all mandatory):** `create_attachment` with the PR URL; `save_comment` with the PR URL and a brief summary; re-`get_issue`, confirm `state.type == "completed"` — a stale-name `save_issue` no-op earlier can leave it open, so re-run ${CLAUDE_SKILL_DIR}/patterns/linear-status.md if needed.
@@ -132,13 +142,18 @@ Pass `--keep-context` when the preflight printed `keep_context=yes` or the user 
 
 ### 10. Finalize
 
-Inform the user of the PR URL, commit count, and branch name. Remind: "Do NOT merge — review the PR and merge manually." With `keep_context=yes`, say the same: the graph polls this PR's real state and only releases the dependent nodes once it is merged on the forge.
+Inform the user of the PR URL, commit count, and branch name.
+
+- `keep_context=yes` and auto-merge armed: say auto-merge is armed and will complete once the forge's required checks pass — no action needed; the graph polls this PR and releases dependent nodes once it lands.
+- `keep_context=yes` and arming failed: say auto-merge could not be armed (reason from the failed command) and the PR needs a manual merge.
+- Otherwise: remind "Do NOT merge — review the PR and merge manually."
 
 ---
 
 ## Rules
 
-- Never merge automatically — create the PR only.
+- Standalone runs: never merge automatically — create the PR only, for a human to review.
+- Graph nodes (`keep_context=yes`): arm GitHub's native auto-merge right after creating the PR — the pipeline's own gate already gated it green, and auto-merge still respects the forge's own required checks. This skill still never merges anything itself.
 - Atomic commits, Conventional Commits, Co-Authored-By in every commit — never group unrelated changes.
 - Never force-push unless explicitly requested.
 - Language: ${CLAUDE_SKILL_DIR}/patterns/language.md.

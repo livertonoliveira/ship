@@ -50,16 +50,20 @@ new_repo() {
 
 # The stub answers exactly what pr_probe asks for. `--state` picks the verdict;
 # the branch `ship/NOPR` gets the no-such-PR answer (non-zero, no output), which
-# is what a real client does when nothing was ever opened.
+# is what a real client does when nothing was ever opened. A third arg of
+# "armed" reports an autoMergeRequest on the PR, the way /ship:pr leaves one
+# after arming GitHub's native auto-merge on a landed node.
 make_gh() {
-  local dir="$1" state="$2"
+  local dir="$1" state="$2" automerge="${3:-}"
+  local amr='null'
+  [ "$automerge" = "armed" ] && amr='{"enabledAt":"2026-07-31T00:00:00Z"}'
   cat > "$dir/fake-gh" <<EOF
 #!/usr/bin/env bash
 branch="\$3"
 case "\$branch" in
   ship/NOPR) exit 1 ;;
 esac
-printf '{"number":7,"state":"$state","url":"https://forge.test/acme/repo/pull/7"}\n'
+printf '{"number":7,"state":"$state","url":"https://forge.test/acme/repo/pull/7","autoMergeRequest":$amr}\n'
 EOF
   chmod +x "$dir/fake-gh"
 }
@@ -250,6 +254,46 @@ test_next_hands_the_open_prs_to_the_user() {
   fi
 }
 
+test_an_armed_pr_waits_instead_of_asking() {
+  local name="an OPEN PR with auto-merge armed reports wait, not ask — nobody needs to merge it by hand"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh "$dir" OPEN armed
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" state)" = "landed" ] \
+    && [ "$(field "$out" action)" = "wait" ] \
+    && printf '%s' "$out" | grep -q 'graph.sh" poll'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
+  fi
+}
+
+test_an_unarmed_pr_still_asks() {
+  local name="an OPEN PR with no auto-merge armed still needs a human — action stays ask"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh "$dir" OPEN
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" state)" = "landed" ] && [ "$(field "$out" action)" = "ask" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
+  fi
+}
+
 test_no_forge_does_not_deadlock_the_run() {
   local name="a repo with no forge settles landed nodes instead of waiting on a signal that cannot come"
   local dir out json
@@ -351,6 +395,8 @@ test_a_missing_pr_is_surfaced_not_assumed
 test_the_coordinator_checkout_is_never_touched
 test_a_dependent_waits_for_the_real_merge
 test_next_hands_the_open_prs_to_the_user
+test_an_armed_pr_waits_instead_of_asking
+test_an_unarmed_pr_still_asks
 test_no_forge_does_not_deadlock_the_run
 test_next_settles_a_forgeless_node_itself
 test_complete_is_the_manual_override

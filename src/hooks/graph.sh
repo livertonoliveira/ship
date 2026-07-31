@@ -171,14 +171,14 @@ pr_status_get() {
 }
 
 pr_status_set() {
-  local dir="$1" id="$2" number="$3" state="$4" url="$5" f tmp
+  local dir="$1" id="$2" number="$3" state="$4" url="$5" armed="${6:-no}" f tmp
   f="$(pr_status_file "$dir")"
   tmp="$dir/.pr-status.tmp"
   touch "$f"
-  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" '
-    $1 == id { print id, n, s, u; done = 1; next }
+  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" -v a="$armed" '
+    $1 == id { print id, n, s, u, a; done = 1; next }
     { print }
-    END { if (!done) print id, n, s, u }
+    END { if (!done) print id, n, s, u, a }
   ' "$f" > "$tmp"
   mv "$tmp" "$f"
 }
@@ -191,16 +191,24 @@ json_field() {
 # inferred from local git: a branch being an ancestor of the base proves a
 # rebase, not a merge, and that difference is the whole point of this gate.
 #
-# Prints "<state>\t<number>\t<url>". state is the forge's own (OPEN, MERGED,
-# CLOSED), or `none` when the client found no PR for that branch.
+# Prints "<state>\t<number>\t<url>\t<armed>". state is the forge's own (OPEN,
+# MERGED, CLOSED), or `none` when the client found no PR for that branch. armed
+# is `yes` when /ship:pr already requested GitHub's native auto-merge on this PR
+# (that request lives on the forge, so it survives even if this run of the
+# graph never issued it) — it decides whether an OPEN PR still needs a human.
 pr_probe() {
-  local dir="$1" id="$2" branch out
+  local dir="$1" id="$2" branch out armed
   branch="$(node_field "$dir" "$id" 8)"
-  [ -n "$branch" ] || { printf 'none\t\t'; return 0; }
-  out="$("$GH" pr view "$branch" --json number,state,url 2>"$dir/pr-$id.log" || true)"
-  [ -n "$out" ] || { printf 'none\t\t'; return 0; }
-  printf '%s\t%s\t%s' \
-    "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)"
+  [ -n "$branch" ] || { printf 'none\t\t\tno'; return 0; }
+  out="$("$GH" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
+  [ -n "$out" ] || { printf 'none\t\t\tno'; return 0; }
+  armed=no
+  case "$(printf '%s' "$out" | tr -d ' \n')" in
+    *'"autoMergeRequest":null'*) armed=no ;;
+    *'"autoMergeRequest"'*) armed=yes ;;
+  esac
+  printf '%s\t%s\t%s\t%s' \
+    "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)" "$armed"
 }
 
 # --- nodes -------------------------------------------------------------------
@@ -387,7 +395,8 @@ render_json() {
       printf '      "blocked_by_conflict": %s,\n' "$(json_str_or_null "$blocked")"
       printf '      "pr": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 2)")"
       printf '      "pr_state": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 3)")"
-      printf '      "pr_url": %s\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 4)")"
+      printf '      "pr_url": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 4)")"
+      printf '      "pr_automerge": %s\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 5)")"
       printf '    }'
     done < <(nodes_rows "$dir")
     [ "$first" -eq 1 ] || printf '\n'
@@ -1036,7 +1045,7 @@ SETTLE_CLOSED=0
 # A PR closed without merging is a decision, not a pause: leaving the node landed
 # would hold every dependent behind a merge that is never coming.
 settle_landed() {
-  local dir="$1" gated=1 id probe rest state number url
+  local dir="$1" gated=1 id probe rest rest2 state number url armed
   SETTLE_MERGED=0
   SETTLE_AWAITING=0
   SETTLE_CLOSED=0
@@ -1046,7 +1055,7 @@ settle_landed() {
     [ -n "$id" ] || continue
 
     if [ "$gated" -eq 0 ]; then
-      pr_status_set "$dir" "$id" "" "no-forge" ""
+      pr_status_set "$dir" "$id" "" "no-forge" "" "no"
       transition "$dir" "$id" landed merged
       meta_set "$dir" last_merged "$id"
       log_line "$dir" "$id merged — no forge gate here (node PRs off, no forge client, or no remote)"
@@ -1059,8 +1068,10 @@ settle_landed() {
     state="${probe%%	*}"
     rest="${probe#*	}"
     number="${rest%%	*}"
-    url="${rest#*	}"
-    pr_status_set "$dir" "$id" "$number" "$state" "$url"
+    rest2="${rest#*	}"
+    url="${rest2%%	*}"
+    armed="${rest2#*	}"
+    pr_status_set "$dir" "$id" "$number" "$state" "$url" "$armed"
 
     case "$state" in
       MERGED)
@@ -1724,23 +1735,35 @@ cmd_next() {
 
   # --- landed: the forge has the ball ----------------------------------------
   # Nothing here merges. Each landed node synced itself onto the base and opened
-  # its own PR from the workspace that implemented it; what remains is a human
-  # review and a merge on the forge, and the dependents wait on that and not on
-  # anything this script could decide.
+  # its own PR from the workspace that implemented it — /ship:pr already armed
+  # GitHub's native auto-merge on it, since the gate that produced it was
+  # already green. A PR that is armed needs nobody: it merges itself once the
+  # forge's own required checks pass, so this only asks a human for the ones
+  # that are NOT armed (auto-merge could not be enabled — branch protection
+  # missing, etc.) or whose forge state this script cannot make sense of.
   if [ "$landed" -gt 0 ]; then
-    local lid lstate lurl lnum
-    next_body_add "Waiting on the forge. These nodes finished and their PR targets $(meta_get "$dir" base_branch):"
+    local lid lstate lurl lnum larmed unarmed=""
+    next_body_add "These nodes finished and their PR targets $(meta_get "$dir" base_branch):"
     while IFS= read -r lid; do
       [ -n "$lid" ] || continue
       lstate="$(pr_status_get "$dir" "$lid" 3)"
       lnum="$(pr_status_get "$dir" "$lid" 2)"
       lurl="$(pr_status_get "$dir" "$lid" 4)"
-      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}]"
+      larmed="$(pr_status_get "$dir" "$lid" 5)"
+      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}"
+      [ "$larmed" = "yes" ] || unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
-    next_body_add "Present them to the user for review and merge, in the artifact language. Ship never merges a PR itself."
-    next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
-    next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
-    next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
+    if [ -n "${unarmed# }" ]; then
+      next_body_add "Node(s)${unarmed} have no auto-merge armed on their PR — present them to the user for review and merge, in the artifact language. Ship never merges a PR itself."
+      next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
+      next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
+      next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
+    else
+      next_body_add "All landed PRs have auto-merge armed — nothing for a human to do; they merge themselves once the forge's required checks pass."
+      next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → reads the real PR state from the forge and releases the dependents once one lands"
+      next_body_add "After it returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+      next_emit "landed" "wait" "$inflight" "" "$landed node(s) auto-merging on the forge"
+    fi
   fi
 
   # --- done ------------------------------------------------------------------
