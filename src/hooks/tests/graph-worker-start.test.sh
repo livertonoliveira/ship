@@ -349,7 +349,11 @@ test_init_without_driver_picks_the_keenest() {
     printf 'x\n' > f.txt; git add f.txt; git commit -qm init; git branch -M main
     printf '[ { "id": "N1", "title": "One", "deps": [], "files": ["a.ts"] } ]\n' > nodes.json
   )
-  want="$(keenest_ready_driver)"
+  # Probed from the SAME directory init runs in: driver readiness is a property
+  # of the working tree (driver-local answers on whether it is inside one), so
+  # asking from the test's own cwd compares two different questions and makes the
+  # result depend on where the suite happens to be checked out.
+  want="$(cd "$repo" && keenest_ready_driver)"
   out="$(cd "$repo" && bash "$GRAPH" init --feature f --from nodes.json --mode local)"
   got="$(printf '%s' "$out" | sed -n 's/^driver=//p' | head -1)"
   # The old fixed default was the one driver that spawns nothing, so the common

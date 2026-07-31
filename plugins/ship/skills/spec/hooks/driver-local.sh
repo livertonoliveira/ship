@@ -189,6 +189,7 @@ verb_probe() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     printf 'ready=1\n'
     printf 'priority=50\n'
+    printf 'workspaces=plain git worktrees on disk, NOT visible in any app\n'
     printf 'reason=git worktree plus in-context Agents; no external runtime\n'
   else
     printf 'ready=0\n'
