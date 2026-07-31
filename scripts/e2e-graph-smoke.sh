@@ -3,12 +3,16 @@
 #
 # Sibling of e2e-smoke.sh, which proves the single-task pipeline. This one proves
 # the COMPOSITION the unit tests cannot: /ship:spec → /ship:graph → per-node
-# /ship:run in isolated workspaces → poll → seal → merge node → done.
+# /ship:run in isolated workspaces → poll → seal → PR gate → done.
 #
 # Every individual mechanism has unit coverage; what has none is the whole loop
 # running against a real LLM in real workspaces. That is the only way to catch a
-# node that lands with an empty commit, a merge that integrates nothing, or a
-# graph that waits forever on a worker that already finished.
+# node that lands with an empty commit or a graph that waits forever on a worker
+# that already finished.
+#
+# The throwaway repo has no forge, so no node PR can be merged anywhere: the
+# graph settles those nodes itself and the per-node BRANCH — not a shared base —
+# is where the work has to be found.
 #
 # Usage:
 #   scripts/e2e-graph-smoke.sh [--fixture calculator|calculator-split]
@@ -48,7 +52,7 @@ ORCA_REPO_ID=""
 GRAPH_REPO_ARG=""
 cleanup() {
   # driver-local puts node workspaces beside the repo, on purpose (nesting them
-  # inside would put extra checkouts in the tree the merge node tests over).
+  # inside would put extra checkouts in the tree each node tests over).
   rm -rf "$TMP/../.ship-graph" 2>/dev/null
   if [ -n "$ORCA_REPO_ID" ]; then
     orca worktree list --repo "id:$ORCA_REPO_ID" --json 2>/dev/null \
@@ -205,23 +209,20 @@ NODES="$(awk -F'\t' '{ print $1 }' "$GDIR/nodes.tsv" 2>/dev/null)"
 NODE_N="$(printf '%s\n' "$NODES" | sed '/^$/d' | wc -l | tr -d ' ')"
 [ "$NODE_N" -ge 1 ] && ok "graph built $NODE_N node(s) from tasks.md" || bad "graph built no nodes"
 
-# Every node integrated. This is the whole point: not "ran", but "landed, sealed,
-# merged and marked done".
-NOT_DONE="$(awk -F'\t' '$6 != "done" { print $1 " (" $6 ")" }' "$GDIR/nodes.tsv" | tr '\n' ' ')"
-[ -z "$NOT_DONE" ] && ok "every node reached done" || bad "nodes not integrated: $NOT_DONE"
-
-INTEG="$(awk -F'\t' '$1 == "integration_status" { print $2 }' "$GDIR/meta.tsv" 2>/dev/null)"
-[ "$INTEG" = "green" ] && ok "integration status: green" || bad "integration status: ${INTEG:-unset}"
+# Every node finished. This is the whole point: not "ran", but "landed, sealed
+# and settled".
+NOT_MERGED="$(awk -F'\t' '$6 != "merged" { print $1 " (" $6 ")" }' "$GDIR/nodes.tsv" | tr '\n' ' ')"
+[ -z "$NOT_MERGED" ] && ok "every node reached merged" || bad "nodes not finished: $NOT_MERGED"
 
 # The bug this test exists for: a node can look green while its branch carries no
-# commit, so the merge integrates nothing.
+# commit, so its PR would be empty.
 sealed_ok=1
 for n in $NODES; do
   [ -n "$n" ] || continue
   br="$(awk -F'\t' -v id="$n" '$1 == id { print $8 }' "$GDIR/nodes.tsv")"
   [ -n "$br" ] || { bad "node $n never recorded a branch"; sealed_ok=0; continue; }
   c="$(git rev-list --count "main..$br" 2>/dev/null || echo 0)"
-  [ "${c:-0}" -ge 1 ] || { bad "node $n branch $br has no commit — the merge integrated nothing"; sealed_ok=0; }
+  [ "${c:-0}" -ge 1 ] || { bad "node $n branch $br has no commit — its PR would be empty"; sealed_ok=0; }
 done
 [ "$sealed_ok" -eq 1 ] && ok "every node's workspace was sealed into a real commit"
 
@@ -240,17 +241,32 @@ for n in $NODES; do
     || bad "node $n homolog-approved.txt = '${am:-missing}' (expected 'deferred')"
 done
 
-# The integrated result must exist and actually work on the base branch.
-SRC="$(git ls-files 'src/*' | grep -vE '\.(test|spec)\.' || true)"
-TST="$(git ls-files 'src/*' 'test/*' '__tests__/*' | grep -E '\.(test|spec)\.' || true)"
-[ -n "$SRC" ] && ok "source on the base branch: $(echo "$SRC" | tr '\n' ' ')" || bad "no source merged into the base branch"
-[ -n "$TST" ] && ok "tests on the base branch: $(echo "$TST" | tr '\n' ' ')" || bad "no tests merged into the base branch"
+# The result lives on each node's own branch — nothing merges here, because
+# there is no forge to merge it. Checking one branch out is how the work is read.
+SRC=""
+TST=""
+for n in $NODES; do
+  [ -n "$n" ] || continue
+  br="$(awk -F'\t' -v id="$n" '$1 == id { print $8 }' "$GDIR/nodes.tsv")"
+  [ -n "$br" ] || continue
+  SRC="$SRC $(git ls-tree -r --name-only "$br" | grep -E '^(src|lib)/' | grep -vE '\.(test|spec)\.' || true)"
+  TST="$TST $(git ls-tree -r --name-only "$br" | grep -E '\.(test|spec)\.' || true)"
+done
+[ -n "${SRC// /}" ] && ok "source on the node branches:$SRC" || bad "no source on any node branch"
+[ -n "${TST// /}" ] && ok "tests on the node branches:$TST" || bad "no tests on any node branch"
 
-if node --test >/tmp/ship-graph-e2e-test.log 2>&1; then
-  ok "integrated suite passes (node --test)"
+# Run one node's branch on its own: with no merge there is no combined tree to
+# test, and a node that cannot pass alone never should have landed.
+FIRST_BR="$(awk -F'\t' 'NR == 1 { print $8 }' "$GDIR/nodes.tsv")"
+if [ -n "$FIRST_BR" ] && git worktree add -q "$TMP/verify" "$FIRST_BR" 2>/dev/null; then
+  if ( cd "$TMP/verify" && node --test ) >/tmp/ship-graph-e2e-test.log 2>&1; then
+    ok "node branch $FIRST_BR passes its own suite (node --test)"
+  else
+    bad "node branch $FIRST_BR FAILED its own suite"
+    sed 's/^/    /' /tmp/ship-graph-e2e-test.log | tail -25
+  fi
 else
-  bad "integrated suite FAILED"
-  sed 's/^/    /' /tmp/ship-graph-e2e-test.log | tail -25
+  bad "could not check out a node branch to verify"
 fi
 
 echo
