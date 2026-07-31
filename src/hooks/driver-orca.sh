@@ -21,9 +21,12 @@ set -euo pipefail
 #      the whole difference between working and legacy_read_only.
 #   2. `orchestration worker-start --task <t> --run <r> --agent claude` creates
 #      the Orca-managed worktree, launches the agent, registers the dispatch and
-#      delivers the lifecycle preamble + TASK block as accepted input — one call
-#      replacing the four this driver used to make, and removing the paste-then-
-#      press-Enter dance that used to leave workers idle with an unsent brief.
+#      is DOCUMENTED to deliver the lifecycle preamble + TASK block as accepted
+#      input — one call replacing four. Measured 2026-07-30 across five workers
+#      started in one burst: it delivered all five briefs and submitted none of
+#      them. Every worker sat idle at its prompt with the whole brief pasted and
+#      unsent. So the delivery is a claim, never a guarantee, and dispatch does
+#      not get to believe it — see confirm_working below.
 #   3. Because the worktree is created THROUGH Orca, it is registered with the
 #      app and shows up in its UI. A plain `git worktree` beside the repo (what
 #      driver-local makes) never does.
@@ -154,6 +157,96 @@ ensure_run() {
   printf '%s' "$run"
 }
 
+# --- proving the worker is actually working ---------------------------------
+#
+# No dispatch may report ok=1 on a runtime's promise. The only acceptable
+# evidence is the worker's own pane moving.
+#
+# Measured live against two panes, one working and one holding an unsent brief:
+# an agent TUI that is processing redraws its status line every second, so a tail
+# read twice a few seconds apart HASHES DIFFERENTLY (1482124910 → 2576027581).
+# One idle at its prompt hashes identically (1653924144 → 1653924144). That is
+# the whole detector: no spinner word, no locale, no runtime version in it.
+BUSY_SAMPLE_S="${SHIP_ORCA_BUSY_SAMPLE_S:-4}"
+
+read_tail() {
+  orca terminal read --terminal "$1" --limit 40 2>/dev/null || true
+}
+
+terminal_working() {
+  local a b
+  a="$(read_tail "$1" | cksum)"
+  sleep "$BUSY_SAMPLE_S"
+  b="$(read_tail "$1" | cksum)"
+  [ "$a" != "$b" ]
+}
+
+# Text sitting in the INPUT BOX is the signature of a delivered-but-unsubmitted
+# brief. Only the box counts, and it is the region between the last two rules at
+# the bottom of the pane — a submitted brief is still echoed in the scrollback
+# above, so matching the whole tail would read every started worker as stuck.
+#
+# Activity alone is not proof either, which is why this gate exists: measured
+# live, a pane still receiving a long paste redraws on every chunk, so the tail
+# changes while nothing has been submitted at all.
+prompt_holds_text() {
+  read_tail "$1" | awk '
+    { line[NR] = $0; if ($0 ~ /^[[:space:]]*─────/) { prev = last; last = NR } }
+    END {
+      if (!last || !prev) exit 1
+      for (i = prev + 1; i < last; i++) {
+        s = line[i]
+        sub(/^[[:space:]]*/, "", s); sub(/^[❯>][[:space:]]*/, "", s)
+        gsub(/[[:space:]]/, "", s)
+        if (length(s) > 0) exit 0
+      }
+      exit 1
+    }'
+}
+
+# Returns only once the pane is observed working. Both failure modes are
+# repaired here, and they need different repairs: a brief that arrived but was
+# never submitted needs a bare Enter, and one that never arrived needs pasting
+# first. A multi-line paste never submits itself — the trailing newline of
+# `--enter` is consumed as part of the paste — so the submit is always its own
+# keystroke, after the text is visible.
+# How many times this dispatch had to repair a delivery the runtime reported as
+# accepted. Reported back so a graph run shows how often the promise was empty
+# instead of hiding it.
+REPAIRS=0
+
+confirm_working() {
+  local handle="$1" text="$2" attempt=0 tries=0
+
+  # Sending before the TUI is up drops the brief into a booting terminal.
+  while [ "$tries" -lt 45 ]; do
+    read_tail "$handle" | grep -qE 'bypass permissions|Claude Code|❯' && break
+    tries=$((tries + 1))
+    sleep 2
+  done
+
+  # An unsent brief is checked BEFORE activity, never after: a pane taking a long
+  # paste is busy redrawing and would otherwise pass as working with the whole
+  # brief still sitting unsubmitted — measured, and exactly the bug being fixed.
+  while [ "$attempt" -lt 6 ]; do
+    attempt=$((attempt + 1))
+    if ! prompt_holds_text "$handle" && terminal_working "$handle"; then
+      return 0
+    fi
+    REPAIRS=$((REPAIRS + 1))
+    if prompt_holds_text "$handle"; then
+      orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
+    else
+      orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || true
+      sleep "$BUSY_SAMPLE_S"
+      orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
+    fi
+    sleep "$BUSY_SAMPLE_S"
+  done
+
+  ! prompt_holds_text "$handle" && terminal_working "$handle"
+}
+
 verb_dispatch() {
   local task="${REST[0]:-}" prompt="${REST[1]:-}"
   [ -n "$task" ] || { echo "driver-orca.sh dispatch: <task> is required" >&2; exit 1; }
@@ -224,6 +317,11 @@ verb_dispatch() {
   [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
   [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_)"
 
+  # The brief as the runtime built it, so a re-delivery sends the same lifecycle
+  # preamble the worker was supposed to get — not a bare prompt line.
+  local preamble
+  preamble="$(orca orchestration dispatch-show --task "$rtask" --preamble 2>/dev/null || true)"
+
   local shown path branch
   shown="$(orca worktree show --worktree "id:$wt_id" --json 2>/dev/null)"
   path="$(printf '%s' "$shown" | json_val path)"
@@ -239,13 +337,28 @@ verb_dispatch() {
     printf 'branch=%s\n' "$branch"
   } > "$STATE/driver-orca-$task.txt"
 
+  # The state file is written FIRST so a worker that never starts is still
+  # stoppable: an unconfirmed dispatch left the workspace and the agent behind,
+  # and a driver that exits without recording them strands both.
+  if ! confirm_working "$handle" "${preamble:-$prompt}"; then
+    printf 'ok=0\n'
+    printf 'handle=%s\n' "$handle"
+    printf 'worktree=%s\n' "$path"
+    printf 'reason=the worker never started processing its brief — its pane has not moved after four delivery attempts\n'
+    echo "driver-orca.sh dispatch: $task was never confirmed working (handle $handle, workspace $path)." >&2
+    echo "  Do NOT claim this node. Inspect the pane, then either re-run this dispatch or: driver-orca.sh stop $task --state \"$STATE\"" >&2
+    exit 1
+  fi
+
   printf 'ok=1\n'
   printf 'handle=%s\n' "$handle"
   printf 'worktree=%s\n' "$path"
   printf 'branch=%s\n' "$branch"
   printf 'runtime_task=%s\n' "$rtask"
   printf 'dispatch=%s\n' "$dispatch_id"
-  printf 'note=Worker started and its brief accepted by the runtime; the workspace is Orca-managed and visible in the app.\n'
+  printf 'confirmed=working\n'
+  [ "$REPAIRS" -gt 0 ] && printf 'repaired=%s\n' "$REPAIRS"
+  printf 'note=Worker observed processing its brief in an Orca-managed workspace, visible in the app.\n'
 }
 
 verb_collect() {
