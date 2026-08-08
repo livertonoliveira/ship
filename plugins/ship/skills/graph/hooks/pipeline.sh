@@ -20,7 +20,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1117,6 +1117,60 @@ next_common_after() {
   next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
 }
 
+# The `## Deps` gate. Runs twice: before the planner (the spec's own block) and
+# again after the plan validates (ids the planner discovered the spec had
+# missed). Two points because the two sources become available at two moments,
+# and the cheap stop is the early one — planning and implementing against a base
+# that lacks the dependency is the cost being avoided.
+#
+# Resolving the state needs a Linear token or the forge, so the skill fetches it
+# into deps-state.tsv and every decision from it is made here. `deps-ack.txt`
+# never resets on resume: a re-asked question the user already answered is how a
+# loop restarts itself.
+next_deps_gate() {
+  local scratch="$1" run="$2" store="$3" answer="$4" plan="${5:-}"
+  local -a pargs=()
+  [ -n "$plan" ] && [ -f "$plan" ] && pargs=(--plan "$plan")
+
+  local ids unresolved pending
+  ids="$(bash "$HOOK_DIR/deps-gate.sh" ids "$scratch" ${pargs[@]+"${pargs[@]}"})"
+  [ -n "$ids" ] || return 0
+
+  unresolved="$(bash "$HOOK_DIR/deps-gate.sh" unresolved "$scratch" ${pargs[@]+"${pargs[@]}"})"
+  if [ -n "$unresolved" ]; then
+    next_body_add "This task declares blocking dependencies. Resolve each one's state yourself (no sub-agent):"
+    if [ "$store" = "linear" ]; then
+      next_body_add "- Linear MCP get_issue per id: state.type 'completed' → merged; anything else → pending."
+    else
+      next_body_add "- ship/changes/<feature>/tasks.md marks the id done (\`- [x]\`) → merged; else \`gh pr list --search <id> --state merged\` returns a PR → merged; else pending."
+    fi
+    next_body_add "- Append one line per id to $scratch/deps-state.tsv, tab-separated: <id><TAB>merged|pending. Cannot tell → pending."
+    next_body_add "Ids to resolve: $(printf '%s' "$unresolved" | tr '\n' ' ')"
+    next_common_after
+    next_emit "deps" "work" "$run" "resolving this task's declared dependencies"
+  fi
+
+  pending="$(bash "$HOOK_DIR/deps-gate.sh" pending "$scratch" ${pargs[@]+"${pargs[@]}"})"
+  [ -n "$pending" ] || return 0
+  local listed
+  listed="$(printf '%s' "$pending" | tr '\n' ' ')"
+
+  case "$answer" in
+    deps-continue)
+      bash "$HOOK_DIR/deps-gate.sh" ack "$scratch" ${pargs[@]+"${pargs[@]}"} >/dev/null
+      return 0 ;;
+    abort)
+      next_body_add "Blocking dependencies unmet ($listed) and the user chose to abort. Report and stop."
+      next_emit "deps" "stop" "$run" "aborted on unmet dependencies" ;;
+  esac
+
+  next_body_add "Unmet blocking dependencies: $listed"
+  next_body_add "Their work is not in this base. Implementing on top of it means building against — or re-implementing — scope that is still in flight, and this task's diff would carry it."
+  next_body_add "Present this to the user in the artifact language."
+  next_body_add "Options: proceed anyway (this task absorbs the missing scope) | abort. Re-run next with --answer deps-continue | --answer abort."
+  next_emit "deps" "ask" "$run" "unmet blocking dependencies: $listed"
+}
+
 # The derived half of the plan, generated once per run before the planner is
 # first dispatched and reused on every replan — it is a pure function of spec.md,
 # so regenerating it could only produce the same file or mask a spec edit.
@@ -1257,6 +1311,9 @@ cmd_next() {
     next_emit "context" "work" "$RUN" "${resumed}task context not yet staged"
   fi
 
+  # --- blocking dependencies (spec's own ## Deps) -----------------------------
+  next_deps_gate "$SCRATCH" "$RUN" "$STORE" "$ANSWER"
+
   # --- plan decision + dispatch + validation -----------------------------------
   local class
   class="$(head -1 "$SCRATCH/diff-class.txt" 2>/dev/null | awk '{print $1}')"
@@ -1342,6 +1399,8 @@ cmd_next() {
         next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
       fi
     fi
+    # The planner reads the repo, so it finds blocking ids the spec never listed.
+    next_deps_gate "$SCRATCH" "$RUN" "$STORE" "$ANSWER" "$SCRATCH/plan.md"
   fi
 
   # --- develop ------------------------------------------------------------------
