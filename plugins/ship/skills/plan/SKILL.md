@@ -113,13 +113,14 @@ Write `.context/ship-run/<task-id>/plan.md`, exact format:
 
 ## Map Divergences
 - src/modules/billing/billing.service.ts → src/services/billing.service.ts — moved
+- DEP ABC-123 — the enum value AC-04 needs lands there; absent in this base
 
 ## Order
 - M1, M3 (independent — any order)
 - M2 after M1
 ```
 
-`## Map Divergences` appears only when step 2 ran map-validation mode. Standalone, no scratch dir → print the plan instead of writing it.
+A divergence whose cause is another task's unlanded work starts with `DEP <id> — <why>` (bare id, the pipeline gates on it); every other line is free prose `ship:develop` absorbs in its confrontation pass. `## Map Divergences` appears only when step 2 ran map-validation mode. Standalone, no scratch dir → print the plan instead of writing it.
 
 ## 7. Report
 
