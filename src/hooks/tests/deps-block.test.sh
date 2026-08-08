@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Pins the `## Deps` contract emitted by /ship:spec before the work graph
-# consumes it. The whole point of the block is that it is machine-parseable —
-# so the test asserts the extraction over a fixture, not just that the words
-# appear in the SKILL.
+# Pins the `## Deps` contract emitted by /ship:spec before the work graph and
+# the ship:run deps gate consume it. The whole point of the block is that it is
+# machine-parseable — so the test asserts the extraction over a fixture, not
+# just that the words appear in the SKILL.
 
 set -euo pipefail
 
@@ -25,21 +25,11 @@ log_fail() {
 }
 
 # The canonical extraction: every bare line under `## Deps`, until the next
-# heading, minus the `none` sentinel. graph.sh and /ship:graph must agree with it.
+# heading, minus the `none` sentinel. It lives in deps-gate.sh — graph.sh,
+# /ship:graph and the ship:run gate all agree with it because they all call it.
 extract_deps() {
   local file="$1" task="$2"
-  awk -v task="$task" '
-    $0 ~ "^###+[[:space:]]+" task "([[:space:]]|$)" { intask = 1; indeps = 0; next }
-    intask && /^###+[[:space:]]/ { intask = 0; indeps = 0 }
-    intask && /^##[[:space:]]+Deps[[:space:]]*$/ { indeps = 1; next }
-    intask && /^#/ { indeps = 0 }
-    indeps {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-      gsub(/`/, "")
-      if ($0 == "" || tolower($0) == "none") next
-      print
-    }
-  ' "$file"
+  bash "$REPO_ROOT/src/hooks/deps-gate.sh" extract --spec "$file" --task "$task"
 }
 
 make_fixture() {
