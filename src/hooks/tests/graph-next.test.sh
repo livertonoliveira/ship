@@ -321,6 +321,25 @@ test_a_failure_by_decision_is_never_retried() {
   fi
 }
 
+test_init_refuses_a_dependency_cycle() {
+  local name="init refuses a dependency cycle before any workspace exists, naming the cycle"
+  local dir out rc=0
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  printf '[\n { "id": "A-1", "title": "a", "deps": ["C-1"], "files": ["a"] },\n { "id": "B-1", "title": "b", "deps": ["A-1"], "files": ["b"] },\n { "id": "C-1", "title": "c", "deps": ["B-1"], "files": ["c"] },\n { "id": "D-1", "title": "d", "deps": [], "files": ["d"] }\n]\n' > "$dir/cyc.json"
+  out="$(cd "$dir" && bash "$GRAPH" init --feature cyc --from cyc.json --driver manual --base-branch main 2>&1)" || rc=$?
+  local left
+  left="$(ls "$dir/.context/ship-graph/cyc" 2>/dev/null | wc -l | tr -d ' ')"
+  rm -rf "$dir"
+  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'dependency cycle' \
+    && printf '%s' "$out" | grep -qE 'A-1 -> C-1 -> B-1 -> A-1|C-1 -> B-1 -> A-1 -> C-1|B-1 -> A-1 -> C-1 -> B-1' \
+    && [ "$left" = "0" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' left=$left)"
+  fi
+}
+
 test_progress_resets_the_stall_counter() {
   local name="a node that resumes phase progress clears its stall counter"
   local dir out
@@ -966,7 +985,12 @@ test_dependency_cycle_is_a_deadlock_ask() {
   { "id": "TASK-B", "title": "B", "deps": ["TASK-A"], "files": ["b.ts"] }
 ]
 EOF
+    # init refuses this shape now, so the cycle is planted after the fact — the
+    # one way the mid-run guard can still be reached.
+    sed -i.bak 's/TASK-B/TASK-Z/' nodes.json 2>/dev/null || true
+    printf '[{ "id": "TASK-A", "title": "A", "deps": [], "files": ["a.ts"] }, { "id": "TASK-B", "title": "B", "deps": ["TASK-A"], "files": ["b.ts"] }]\n' > nodes.json
     bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main >/dev/null
+    awk -F'\t' -v OFS='\t' '$1 == "TASK-A" { $4 = "TASK-B" } { print }' .context/ship-graph/f/nodes.tsv > .context/ship-graph/f/.n && mv .context/ship-graph/f/.n .context/ship-graph/f/nodes.tsv
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -1433,6 +1457,7 @@ test_poll_reports_progress_without_landing
 test_stalled_node_is_resumed_retried_then_reported
 test_never_started_node_is_redispatched_within_the_cap
 test_a_failure_by_decision_is_never_retried
+test_init_refuses_a_dependency_cycle
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker
