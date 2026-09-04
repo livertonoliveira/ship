@@ -781,6 +781,38 @@ cmd_init() {
     IFS="$old_ifs"
   done < <(awk -F'\t' '{ print $1, $4 }' "$staged")
 
+  # A cycle is the one shape no schedule can ever satisfy, and it used to
+  # surface hours in as a mid-run "deadlock" ask. Found here, before a single
+  # workspace exists, with the cycle spelled out.
+  local cycle
+  cycle="$(awk -F'\t' '
+    { n = $1; ids[++N] = n; deps[n] = $4 }
+    function dfs(u,   k, arr, v, i, j, out, found) {
+      if (done) return
+      color[u] = 1; stack[++sp] = u
+      k = split(deps[u], arr, ",")
+      for (i = 1; i <= k; i++) {
+        v = arr[i]; gsub(/^ +| +$/, "", v)
+        if (v == "") continue
+        if (color[v] == 1) {
+          out = ""; found = 0
+          for (j = 1; j <= sp; j++) {
+            if (stack[j] == v) found = 1
+            if (found) out = out (out == "" ? "" : " -> ") stack[j]
+          }
+          print out " -> " v
+          done = 1
+          return
+        }
+        if (color[v] == 0) dfs(v)
+        if (done) return
+      }
+      color[u] = 2; sp--
+    }
+    END { for (i = 1; i <= N; i++) if (color[ids[i]] == 0) dfs(ids[i]) }
+  ' "$staged")"
+  [ -z "$cycle" ] || { rm -f "$staged"; die "init: dependency cycle — no order can satisfy it: $cycle"; }
+
   mv "$staged" "$dir/nodes.tsv"
 
   meta_set "$dir" feature "$feature"
