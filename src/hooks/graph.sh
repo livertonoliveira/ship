@@ -27,7 +27,7 @@ usage() {
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
   echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
   echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
-  echo "            [--admission stream|batch] [--merge-policy human|graph]" >&2
+  echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -162,6 +162,39 @@ admission_of() {
 # nothing is merged over a conflict: DIRTY still needs a person.
 merge_policy_of() {
   case "$(meta_get "$1" merge_policy)" in graph) printf 'graph' ;; *) printf 'human' ;; esac
+}
+
+# How many times a node may be claimed before a failure is final. Each claim
+# counts, so 2 means one automatic retry in a fresh workspace. Failures that
+# were a person's decision (abort, fail, a PR closed on the forge) are never
+# retried automatically — they carry a hold marker.
+max_attempts_of() {
+  local n
+  n="$(meta_get "$1" max_attempts)"
+  case "$n" in ''|*[!0-9]*) n=2 ;; esac
+  [ "$n" -ge 1 ] || n=1
+  printf '%s' "$n"
+}
+
+hold_node() {
+  printf '%s\n' "$3" > "$1/hold-$2.txt"
+}
+
+# Puts a node back on the frontier for a FRESH dispatch. The worker behind it is
+# gone and the driver contract only ever creates a new workspace; the old one is
+# kept on disk and its path logged, so partial work stays reachable by hand.
+retry_node() {
+  local dir="$1" id="$2" why="$3" wt
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && log_line "$dir" "$id previous workspace kept at $wt"
+  node_set "$dir" "$id" 6 pending
+  node_set "$dir" "$id" 7 ""
+  node_set "$dir" "$id" 8 ""
+  node_set "$dir" "$id" 10 ""
+  # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
+  # the stall cap on its first poll of the new run.
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt"
+  log_line "$dir" "$id → pending ($why; attempt $(node_field "$dir" "$id" 9) kept)"
 }
 
 # --- PR state ----------------------------------------------------------------
@@ -414,6 +447,7 @@ render_json() {
     printf '  "max_in_flight": %s,\n' "$(meta_get "$dir" max_in_flight)"
     printf '  "admission": "%s",\n' "$(json_escape "$(admission_of "$dir")")"
     printf '  "merge_policy": "%s",\n' "$(merge_policy_of "$dir")"
+    printf '  "max_attempts": %s,\n' "$(max_attempts_of "$dir")"
     printf '  "nodes": [\n'
     local first=1 id repo title deps files status wt branch attempts blocked
     while IFS="$US" read -r id repo title deps files status wt branch attempts blocked; do
@@ -797,7 +831,7 @@ set_usage() {
 # targets it, so changing it mid-run would leave the conflict edges reading
 # against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
@@ -806,19 +840,24 @@ cmd_set() {
       --node-pr) node_pr="$2"; shift 2 ;;
       --admission) admission="$2"; shift 2 ;;
       --merge-policy) merge_policy="$2"; shift 2 ;;
+      --max-attempts) max_attempts="$2"; shift 2 ;;
       -h|--help) set_usage; exit 0 ;;
       *) set_usage; exit 1 ;;
     esac
   done
   [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
-    || [ -n "$merge_policy" ] \
-    || die "set: give --driver, --max-in-flight, --node-pr, --admission and/or --merge-policy"
+    || [ -n "$merge_policy" ] || [ -n "$max_attempts" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy and/or --max-attempts"
 
   if [ -n "$admission" ]; then
     case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
   fi
   if [ -n "$merge_policy" ]; then
     case "$merge_policy" in human|graph) ;; *) die "set: --merge-policy must be human or graph: $merge_policy" ;; esac
+  fi
+  if [ -n "$max_attempts" ]; then
+    case "$max_attempts" in ''|*[!0-9]*) die "set: --max-attempts must be a positive integer: $max_attempts" ;; esac
+    [ "$max_attempts" -ge 1 ] || die "set: --max-attempts must be >= 1"
   fi
 
   local dir
@@ -835,6 +874,12 @@ cmd_set() {
     meta_set "$dir" merge_policy "$merge_policy"
     log_line "$dir" "merge_policy → $merge_policy"
     printf 'merge_policy=%s\n' "$merge_policy"
+    changed=1
+  fi
+  if [ -n "$max_attempts" ]; then
+    meta_set "$dir" max_attempts "$max_attempts"
+    log_line "$dir" "max_attempts → $max_attempts"
+    printf 'max_attempts=%s\n' "$max_attempts"
     changed=1
   fi
 
@@ -1147,6 +1192,7 @@ settle_landed() {
       CLOSED)
         node_set "$dir" "$id" 6 failed
         node_set "$dir" "$id" 10 ""
+        hold_node "$dir" "$id" "PR #$number closed on the forge without merging"
         log_line "$dir" "$id → failed: PR #$number was closed without being merged"
         printf 'pr_closed=%s\n' "$id"
         SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
@@ -1270,10 +1316,21 @@ cmd_poll() {
     printf '%s\n' "$stalls" > "$dir/stall-$id.txt"
     if [ "$stalls" -ge "$stall_max" ]; then
       if [ -f "$dir/why-$id.txt" ]; then
-        log_line "$dir" "$id STALLED — no pipeline ever ran in its workspace across $stalls polls (worker never started)"
-        printf 'stalled=%s\n' "$id"
-        printf 'never_started=%s\n' "$id"
-        stalled=$((stalled + 1))
+        # Never started is not "stuck": the dispatch did not take. A fresh
+        # dispatch is the fix, and the graph can issue one itself by returning
+        # the node to the frontier — bounded by the attempt cap.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+        if [ "$(node_field "$dir" "$id" 9)" -lt "$(max_attempts_of "$dir")" ]; then
+          retry_node "$dir" "$id" "worker never started across $stalls polls — re-dispatching"
+          printf 'retried=%s\n' "$id"
+        else
+          node_set "$dir" "$id" 6 failed
+          node_set "$dir" "$id" 10 ""
+          hold_node "$dir" "$id" "worker never started on $(node_field "$dir" "$id" 9) attempt(s)"
+          rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt"
+          log_line "$dir" "$id → failed: worker never started on $(node_field "$dir" "$id" 9) attempt(s) (attempt cap reached)"
+          printf 'failed=%s\n' "$id"
+        fi
       elif [ ! -f "$dir/resumed-$id.txt" ]; then
         # A worker that stopped advancing has, every time it was measured, ended
         # its turn: a wait it never returned from, a question it thinks is still
@@ -1370,6 +1427,8 @@ cmd_fail() {
   node_exists "$dir" "$id" || die "unknown node: $id"
   node_set "$dir" "$id" 6 failed
   node_set "$dir" "$id" 10 ""
+  # A failure a person asked for is never retried behind their back.
+  hold_node "$dir" "$id" "failed by the operator: $reason"
   log_line "$dir" "$id → failed: $reason"
   render_json "$dir"
   printf 'failed=%s\n' "$id"
@@ -1472,18 +1531,9 @@ cmd_reset() {
     [ "$cur" = "failed" ] || die "reset: $id is '$cur', not 'failed' — only a failed node can be reset (stop a live one with: graph.sh abort)"
   done
 
-  local n=0 wt
+  local n=0
   for id in $ids; do
-    wt="$(node_field "$dir" "$id" 7)"
-    [ -n "$wt" ] && log_line "$dir" "$id previous workspace kept at $wt"
-    node_set "$dir" "$id" 6 pending
-    node_set "$dir" "$id" 7 ""
-    node_set "$dir" "$id" 8 ""
-    node_set "$dir" "$id" 10 ""
-    # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
-    # the stall cap on its first poll of the new run.
-    rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt"
-    log_line "$dir" "$id failed → pending (reset; attempt $(node_field "$dir" "$id" 9) kept)"
+    retry_node "$dir" "$id" "reset by the operator"
     printf 'reset=%s\n' "$id"
     n=$((n + 1))
   done
@@ -1630,6 +1680,7 @@ cmd_abort() {
     [ -n "$id" ] || continue
     bash "$HOOK_DIR/driver-$driver.sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
     node_set "$dir" "$id" 6 failed
+    hold_node "$dir" "$id" "$reason"
     log_line "$dir" "$id → failed: $reason (worker stopped)"
     printf 'stopped=%s\n' "$id"
     stopped=$((stopped + 1))
@@ -1734,6 +1785,17 @@ cmd_next() {
   [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "next: meta names driver '$driver' but $HOOK_DIR/driver-$driver.sh does not exist — fix it with: graph.sh set --driver <name>"
 
   local DRIVER_SH="$HOOK_DIR/driver-$driver.sh"
+
+  # A node that failed on its own (stalled, never started, its pipeline gave
+  # up) gets a fresh dispatch while it has attempts left. One that failed by a
+  # person's decision carries a hold marker and waits for reset.
+  local rid
+  while IFS= read -r rid; do
+    [ -n "$rid" ] || continue
+    [ -f "$dir/hold-$rid.txt" ] && continue
+    [ "$(node_field "$dir" "$rid" 9)" -lt "$(max_attempts_of "$dir")" ] || continue
+    retry_node "$dir" "$rid" "automatic retry $(( $(node_field "$dir" "$rid" 9) + 1 )) of $(max_attempts_of "$dir")"
+  done < <(nodes_with_status "$dir" failed)
 
   local inflight landed failed total merged_n
   inflight="$(count_status "$dir" in_flight)"
@@ -1917,11 +1979,11 @@ cmd_next() {
   # everything that could finish. This is the one decision that is genuinely
   # the operator's — retry the failed ones (reset) or accept the partial result.
   if [ "$failed" -gt 0 ]; then
-    next_body_add "Every node that could run has: $merged_n merged, $failed failed, $((total - merged_n - failed)) held behind a failed dependency."
-    next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its workspace is kept."
-    next_body_add "Present the batch homolog for the merged nodes (.context/ship-run/<task>/homolog-report.md in each workspace) and the failed list, in the artifact language."
-    next_body_add "To retry the failed ones: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) — each gets a fresh workspace — then bash \"$HOOK_DIR/graph.sh\" next. Otherwise the run ends here."
-    next_emit "done" "ask" "0" "" "graph finished with failures — $merged_n merged, $failed failed of $total"
+    next_body_add "Every node that could run has: $merged_n merged, $failed failed after $(max_attempts_of "$dir") attempt(s) or by decision, $((total - merged_n - failed)) held behind a failed dependency."
+    next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its last workspace is kept."
+    next_body_add "Present the batch homolog for the merged nodes (.context/ship-run/<task>/homolog-report.md in each workspace) and the failed list with reasons, in the artifact language. Then STOP."
+    next_body_add "Mention once: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) puts a failed node back on the frontier with a fresh workspace, and bash \"$HOOK_DIR/graph.sh\" next continues the run."
+    next_emit "done" "done" "0" "" "graph finished — $merged_n merged, $failed failed of $total"
   fi
 
   # --- deadlock --------------------------------------------------------------

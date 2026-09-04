@@ -163,7 +163,7 @@ test_an_open_pr_keeps_the_node_landed() {
 }
 
 test_a_closed_pr_fails_the_node() {
-  local name="a PR closed without merging fails the node instead of hanging the graph"
+  local name="a PR closed without merging fails the node with a hold — a forge decision is never retried"
   local dir out json
   dir="$(mktemp -d)"
   new_repo "$dir"
@@ -172,10 +172,13 @@ test_a_closed_pr_fails_the_node() {
   make_gh "$dir" CLOSED
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  local held
+  held="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
   rm -rf "$dir"
 
   if printf '%s' "$out" | grep -q '^pr_closed=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "failed"'; then
+    && printf '%s' "$json" | grep -q '"status": "failed"' \
+    && [ -n "$held" ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"

@@ -215,29 +215,109 @@ test_poll_reports_progress_without_landing() {
   fi
 }
 
-test_stalled_node_surfaces_instead_of_waiting_forever() {
-  local name="a node with no phase progress across 3 polls surfaces as ask, never an endless wait"
-  local dir out
+test_stalled_node_is_resumed_retried_then_reported() {
+  local name="a node with no phase progress is resumed, then retried in a fresh workspace, then reported failed — never an endless wait, never a question"
+  local dir out_after_resume out_after_fail out_final attempts log
   dir="$(mktemp -d)"
   setup_repo "$dir"
   (
     cd "$dir"
-    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
-    # The exact shape of the Orca failure: workspace up, prompt never submitted,
-    # so the pipeline never dispatches a phase and nothing ever changes.
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
+    # The first poll after a claim reads the dispatch-log row as progress, so
+    # the stall count starts on the second: resume on the 4th poll, fail three
+    # quiet polls after that.
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" next > next1.txt
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" next > next2.txt
+    # The retry: a second claim in a fresh workspace, quiet again.
+    git worktree add -q wt2-TASK-001 -b ship/TASK-001-r2 main
+    bash "$GRAPH" claim TASK-001 --worktree "wt2-TASK-001" --branch ship/TASK-001-r2 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt2-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" next > next3.txt
   )
-  out="$(cd "$dir" && bash "$GRAPH" next)"
+  out_after_resume="$(cat "$dir/next1.txt")"
+  out_after_fail="$(cat "$dir/next2.txt")"
+  out_final="$(cat "$dir/next3.txt")"
+  attempts="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"attempts": 2' || true)"
+  log="$dir/.context/ship-graph/f/graph-log.md"
+  local resumed retried
+  resumed="$(grep -c 'worker resumed once' "$log" || true)"
+  retried="$(grep -c 'automatic retry 2 of 2' "$log" || true)"
   rm -rf "$dir"
 
-  if [ "$(field "$out" action)" = "ask" ] && printf '%s' "$out" | grep -q 'TASK-001'; then
+  if [ "$(field "$out_after_resume" action)" = "wait" ] \
+    && [ "$(field "$out_after_fail" action)" = "dispatch" ] && printf '%s' "$out_after_fail" | grep -q 'TASK-001' \
+    && [ "$(field "$out_final" state)" = "done" ] && [ "$(field "$out_final" action)" = "done" ] \
+    && printf '%s' "$out_final" | grep -q 'Failed: TASK-001' \
+    && [ "$resumed" = "2" ] && [ "$retried" = "1" ] && [ "$attempts" = "1" ]; then
     log_pass "$name"
   else
-    log_fail "$name (action='$(field "$out" action)')"
+    log_fail "$name (after-resume=$(field "$out_after_resume" action) after-fail=$(field "$out_after_fail" action) final=$(field "$out_final" state)/$(field "$out_final" action) resumed=$resumed retried=$retried attempts2=$attempts)"
+  fi
+}
+
+test_never_started_node_is_redispatched_within_the_cap() {
+  local name="a worker that never started is returned to the frontier for a fresh dispatch, then failed once the cap is reached"
+  local dir out1 out2
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    # No dispatch-log.md at all: the pipeline never ran a single phase.
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll > poll3.txt
+    bash "$GRAPH" next > next1.txt
+    git worktree add -q wt2-TASK-001 -b ship/TASK-001-r2 main
+    bash "$GRAPH" claim TASK-001 --worktree "wt2-TASK-001" --branch ship/TASK-001-r2 >/dev/null
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll > poll6.txt
+  )
+  out1="$(cat "$dir/poll3.txt")"
+  out2="$(cat "$dir/poll6.txt")"
+  local dispatch_again held
+  dispatch_again="$(field "$(cat "$dir/next1.txt")" action)"
+  held="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out1" | grep -q '^retried=TASK-001$' && [ "$dispatch_again" = "dispatch" ] \
+    && printf '%s' "$out2" | grep -q '^failed=TASK-001$' \
+    && printf '%s' "$held" | grep -q 'never started'; then
+    log_pass "$name"
+  else
+    log_fail "$name (poll3='$out1' next=$dispatch_again poll6='$out2' hold='$held')"
+  fi
+}
+
+test_a_failure_by_decision_is_never_retried() {
+  local name="abort and fail leave a hold — the graph never retries a failure a person decided"
+  local dir out held_abort held_fail
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" abort >/dev/null
+  )
+  held_abort="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  (cd "$dir" && bash "$GRAPH" reset TASK-001 >/dev/null && bash "$GRAPH" fail TASK-001 --reason "wrong scope" >/dev/null)
+  held_fail="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ -n "$held_abort" ] && [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
+    && printf '%s' "$held_fail" | grep -q 'wrong scope'; then
+    log_pass "$name"
+  else
+    log_fail "$name (hold_abort='$held_abort' next=$(field "$out" state)/$(field "$out" action) hold_fail='$held_fail')"
   fi
 }
 
@@ -621,7 +701,7 @@ test_a_failed_node_does_not_freeze_the_run() {
 }
 
 test_a_run_ending_with_failures_reports_them_once() {
-  local name="when nothing can run and some nodes failed, next ends the run with the failed list — not a deadlock"
+  local name="when nothing can run and some nodes failed past their attempts, next ends the run with the failed list — not a question"
   local dir out
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -634,7 +714,7 @@ test_a_run_ending_with_failures_reports_them_once() {
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
-  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "ask" ] \
+  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
     && printf '%s' "$out" | grep -q 'Failed: TASK-001' \
     && printf '%s' "$out" | grep -q 'reset'; then
     log_pass "$name"
@@ -911,7 +991,7 @@ test_failed_root_ends_the_run_with_its_dependents_held() {
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
 
-  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "ask" ] \
+  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
     && printf '%s' "$out" | grep -q '3 held behind a failed dependency'; then
     log_pass "$name"
   else
@@ -1350,7 +1430,9 @@ test_a_nodes_question_reaches_the_coordinator
 test_answer_refuses_a_node_with_no_pending_question
 test_poll_seals_uncommitted_work_into_the_branch
 test_poll_reports_progress_without_landing
-test_stalled_node_surfaces_instead_of_waiting_forever
+test_stalled_node_is_resumed_retried_then_reported
+test_never_started_node_is_redispatched_within_the_cap
+test_a_failure_by_decision_is_never_retried
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker
