@@ -43,7 +43,7 @@ setup_repo() {
       printf '\n## Pipeline Profile\n- profile: standard\n'
       printf '\n## Test Scope\n- unit: disabled\n- integration: disabled\n- e2e: disabled\n'
       printf '\n## Pipeline Phases\n- test: disabled\n- homolog: disabled\n'
-      printf '\n## Gate Behavior\n- on_fail: fix\n- on_warn: fix\n'
+      printf '\n## Gate Behavior\n- on_fail: %s\n- on_warn: %s\n' "${ON_FAIL:-fix}" "${ON_FAIL:-fix}"
       printf '\n- Test Framework: none\n- Typecheck: %s/tc.sh\n' "$dir"
     } > ship/config.md
     printf '.context/\n' > .gitignore
@@ -124,6 +124,7 @@ mock_fix_agent() {
   local dir="$1" scratch="$2"
   FIX_DISPATCHES=$((FIX_DISPATCHES + 1))
   BATCH_ITEMS="$(grep -c '^### R' "$scratch/remediation.md" 2>/dev/null || echo 0)"
+  [ -n "${ROUND_HOOK:-}" ] && eval "$ROUND_HOOK"
   case "${FIX_MODE:-full}" in
     full)
       touch "$dir/.tc-fixed"
@@ -296,7 +297,54 @@ test_a_fix_that_changes_nothing_still_terminates() {
   rm -rf "$dir"
 }
 
+# --- graph node: the gate decides itself ---------------------------------------
+
+# Same fixture, but the node belongs to a work graph (graph-node.txt) and the
+# config would ask a human (on_fail: ask). Nobody is there to answer inside a
+# graph, so the residue is decided from the artifacts: fix while a round still
+# changes the picture, defer once it stops — and never a question.
+test_graph_node_defers_a_residue_that_stopped_moving() {
+  local name="a graph node whose remediation changed nothing defers on its own — never an ask"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
+  local scratch="$dir/.context/ship-run/G1"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  SEED_FINDING=1 FIX_MODE=noop CONFIRM_VERDICT=unresolved
+  drive "$dir" G1 || true
+  if [ "$LAST_STATE" = "done" ] && [ ! -f "$scratch/ask.md" ] \
+    && grep -q 'deferred' "$scratch/gate-resolved.txt" \
+    && grep -q 'gate FAIL: fix — first remediation round' "$scratch/graph-decisions.md" \
+    && grep -q 'gate FAIL: defer' "$scratch/graph-decisions.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (last=$LAST_STATE/$LAST_ACTION fix=$FIX_DISPATCHES gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(cat "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+test_graph_node_fixes_again_while_the_residue_moves() {
+  local name="a graph node whose round resolved part of the residue gets another round, then proceeds green"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
+  local scratch="$dir/.context/ship-run/G2"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  # Round 1 fixes the typecheck but the confirmation leaves the finding open;
+  # round 2 resolves it. Two fix dispatches, no question, gate ends PASS.
+  SEED_FINDING=1 FIX_MODE=full CONFIRM_VERDICT=unresolved
+  ROUND_HOOK='if [ "$FIX_DISPATCHES" -ge 2 ]; then CONFIRM_VERDICT=resolved; fi'
+  drive "$dir" G2 || true
+  ROUND_HOOK=""
+  if [ "$FIX_DISPATCHES" = "2" ] && [ "$LAST_STATE" = "done" ] && [ ! -f "$scratch/ask.md" ] \
+    && [ "$(head -1 "$scratch/gate-resolved.txt")" = "PASS" ] \
+    && grep -q 'one more' "$scratch/graph-decisions.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (fix=$FIX_DISPATCHES last=$LAST_STATE/$LAST_ACTION gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(cat "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
 test_one_batch_one_fix_one_confirmation
+test_graph_node_defers_a_residue_that_stopped_moving
+test_graph_node_fixes_again_while_the_residue_moves
 test_static_failure_reaches_the_gate_not_its_own_loop
 test_confirmation_rewrites_rows_and_the_gate_re_decides
 test_residue_asks_instead_of_looping
