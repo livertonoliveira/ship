@@ -1935,23 +1935,10 @@ cmd_next() {
   fi
 
   # --- wait ------------------------------------------------------------------
-  # A node that stopped advancing is handled inside poll (resumed once through
-  # the driver, then failed); the one case that still needs a hand is a worker
-  # that never started at all, because re-issuing the dispatch is the fix and
-  # only the executor can carry out a driver's instruction= line.
+  # A node that stopped advancing is handled inside poll: resumed once through
+  # the driver, then failed; one whose worker never started is returned to the
+  # frontier there. Nothing about a quiet node is left for a person here.
   if [ "$inflight" -gt 0 ]; then
-    local never="" sid
-    while IFS= read -r sid; do
-      [ -n "$sid" ] || continue
-      [ -f "$dir/stall-$sid.txt" ] && [ -f "$dir/why-$sid.txt" ] || continue
-      [ "$(cat "$dir/stall-$sid.txt")" -ge 3 ] && never="$never $sid"
-    done < <(nodes_with_status "$dir" in_flight)
-    if [ -n "${never# }" ]; then
-      next_body_add "Node(s)${never} have NO .context/ship-run/<task>/dispatch-log.md at all — their pipeline never ran a single phase, so the worker was never started. The workspace and branch exist; nothing is running in them."
-      next_body_add "The usual cause is the driver's \`instruction=\` line from dispatch not being carried out. Re-issue it: bash \"$DRIVER_SH\" dispatch <task> \"/ship:run <task>\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\" and then DO what its instruction= line says."
-      next_body_add "If the driver cannot start workers in this environment at all, switch runtimes without losing the run: bash \"$HOOK_DIR/graph.sh\" abort, then bash \"$HOOK_DIR/graph.sh\" set --driver <name>."
-      next_emit "ask" "ask" "$inflight" "" "worker never started:${never}"
-    fi
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"   → blocks until a worker reports or the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" conflicts"
