@@ -81,8 +81,8 @@ test_dispatch_says_nothing_is_running_yet() {
   rm -rf "$root"
 }
 
-test_never_started_node_is_named_as_such() {
-  local root repo out wt i
+test_never_started_node_is_redispatched() {
+  local root repo out log wt i
   root="$(new_sandbox)"; repo="$root/repo"
   (
     cd "$repo"
@@ -94,14 +94,16 @@ test_never_started_node_is_named_as_such() {
     for i in 1 2 3; do bash "$GRAPH" poll >/dev/null; done
   )
   out="$(cd "$repo" && bash "$GRAPH" next)"
-  # A workspace with no dispatch-log.md at all never ran a phase. Reporting that
-  # as a generic stall sends the operator to read a file that does not exist.
-  if printf '%s' "$out" | grep -q 'state=ask' \
-     && printf '%s' "$out" | grep -q 'worker never started' \
-     && printf '%s' "$out" | grep -q 'never ran a single phase'; then
-    log_pass "a node whose worker never started is diagnosed, not reported as a generic stall"
+  log="$repo/.context/ship-graph/f/graph-log.md"
+  # A workspace with no dispatch-log.md at all never ran a phase. That is not a
+  # stall to diagnose for a person: the dispatch did not take, so the node goes
+  # back to the frontier and next issues a fresh one — named as such in the log.
+  if printf '%s' "$out" | grep -q 'action=dispatch' \
+     && [ "$(printf '%s' "$out" | grep -c 'CARRY IT OUT NOW')" -eq 2 ] \
+     && grep -q 'worker never started across 3 polls — re-dispatching' "$log"; then
+    log_pass "a node whose worker never started is re-dispatched, not reported as a stall for a person"
   else
-    log_fail "a node whose worker never started is diagnosed, not reported as a generic stall"
+    log_fail "a node whose worker never started is re-dispatched, not reported as a stall for a person"
   fi
   rm -rf "$root"
 }
@@ -116,10 +118,10 @@ test_poll_flags_never_started_separately() {
     bash "$GRAPH" claim N1 --worktree "$wt" --branch ship/N1 >/dev/null
     for i in 1 2 3; do bash "$GRAPH" poll; done
   )"
-  if printf '%s' "$out" | grep -q '^never_started=N1$'; then
-    log_pass "poll emits never_started= for a workspace no pipeline ever ran in"
+  if printf '%s' "$out" | grep -q '^retried=N1$'; then
+    log_pass "poll returns a node no pipeline ever ran in to the frontier (retried=)"
   else
-    log_fail "poll emits never_started= for a workspace no pipeline ever ran in"
+    log_fail "poll returns a node no pipeline ever ran in to the frontier (retried=)"
   fi
   rm -rf "$root"
 }
@@ -409,7 +411,7 @@ test_unready_driver_is_skipped() {
 
 test_next_orders_the_driver_start_instruction
 test_dispatch_says_nothing_is_running_yet
-test_never_started_node_is_named_as_such
+test_never_started_node_is_redispatched
 test_poll_flags_never_started_separately
 test_retry_reuses_an_orphaned_branch
 test_non_worktree_directory_fails_loudly
