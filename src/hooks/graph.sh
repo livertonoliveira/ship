@@ -1369,18 +1369,13 @@ cmd_reset() {
 
 # --- conflicts ---------------------------------------------------------------
 
-cmd_conflicts() {
-  local feature=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --feature) feature="$2"; shift 2 ;;
-      -h|--help) usage; exit 0 ;;
-      *) usage; exit 1 ;;
-    esac
-  done
-  local dir base
-  dir="$(graph_dir "$(resolve_feature "$feature")")"
-  require_graph "$dir"
+# Recomputes every conflict edge from the real state. Called by `conflicts`
+# and by `next` itself: an edge recorded against a holder that has since merged
+# is stale, and a `next` that trusted it reported "deadlock" over a graph whose
+# frontier was free — measured live, one missed `conflicts` call was enough.
+# Prints refreshed=<n> and blocked=<n>.
+refresh_conflicts() {
+  local dir="$1" base
   base="$(meta_get "$dir" base_branch)"
 
   # Real footprint beats declared footprint. If develop touched more than the
@@ -1420,9 +1415,24 @@ cmd_conflicts() {
     [ -n "$hit" ] && blocked_count=$((blocked_count + 1))
   done < <(nodes_with_status "$dir" pending; nodes_with_status "$dir" ready)
 
-  render_json "$dir"
   printf 'refreshed=%s\n' "$refreshed"
   printf 'blocked=%s\n' "$blocked_count"
+}
+
+cmd_conflicts() {
+  local feature=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  refresh_conflicts "$dir"
+  render_json "$dir"
 }
 
 # --- iter --------------------------------------------------------------------
@@ -1622,6 +1632,10 @@ cmd_next() {
     next_body_add "Report to the user with \`bash \"$HOOK_DIR/graph.sh\" status\` and ask which one: retry them — bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all), which puts them back on the frontier with a fresh workspace and unfreezes admission — fix by hand and re-run \`bash \"$HOOK_DIR/graph.sh\" next\`, or abandon the run."
     next_emit "ask" "ask" "$inflight" "" "run frozen by failed node(s)"
   fi
+
+  # Stale edges make false deadlocks. Refreshed here, not only on an explicit
+  # `conflicts` call the executor may skip.
+  refresh_conflicts "$dir" >/dev/null
 
   # --- frontier --------------------------------------------------------------
   local slots=$((max_in_flight - inflight))

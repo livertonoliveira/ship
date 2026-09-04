@@ -870,6 +870,37 @@ test_unknown_dep_is_rejected_at_init() {
   fi
 }
 
+test_next_refreshes_stale_conflict_edges_itself() {
+  local name="next clears a conflict edge whose holder already merged — no separate conflicts call needed"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+    # 002 and 004 overlap on src/api; 002 takes the slot, 004 is recorded as blocked by it.
+    bash "$GRAPH" next >/dev/null
+    make_workspace "$dir" TASK-002 src/api/routes.ts
+    bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+    printf 'deferred\n' > "wt-TASK-002/.context/ship-run/TASK-002/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+  )
+  # TASK-002 is merged (no forge) and TASK-004 still carries blocked_by_conflict=TASK-002
+  # in the state file. A next that trusted it would find nothing to dispatch.
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-004'; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
+  fi
+}
+
 test_reinit_reports_resume_instead_of_inviting_fresh() {
   local name="a second init on a live graph exits 3 with RESUME, never an error suggesting --fresh"
   local dir out rc=0
@@ -1196,6 +1227,7 @@ test_reset_all_clears_every_failed_node_and_keeps_attempts
 test_reset_refuses_a_node_that_is_not_failed
 test_reset_is_all_or_nothing
 test_unknown_dep_is_rejected_at_init
+test_next_refreshes_stale_conflict_edges_itself
 test_reinit_reports_resume_instead_of_inviting_fresh
 test_fresh_still_discards_when_asked
 test_counters_survive_a_resumed_graph
