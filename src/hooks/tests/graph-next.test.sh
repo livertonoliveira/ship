@@ -502,8 +502,8 @@ test_guard_catches_a_driver_missing_stop() {
 }
 
 test_poll_writes_progress_to_the_log() {
-  local name="poll records progress and stalls in graph-log.md, not just on stdout"
-  local dir working stalled
+  local name="poll records progress in graph-log.md, resumes a quiet node once, then fails it"
+  local dir working resumed failed_line status out4 out7
   dir="$(mktemp -d)"
   setup_repo "$dir"
   (
@@ -515,18 +515,185 @@ test_poll_writes_progress_to_the_log() {
     bash "$GRAPH" poll >/dev/null
     bash "$GRAPH" poll >/dev/null
     bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll > poll4.txt
     bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll > poll7.txt
   )
+  out4="$(cat "$dir/poll4.txt")"
+  out7="$(cat "$dir/poll7.txt")"
   working="$(grep -c 'working —' "$dir/.context/ship-graph/f/graph-log.md" 2>/dev/null || echo 0)"
-  stalled="$(grep -c 'STALLED' "$dir/.context/ship-graph/f/graph-log.md" 2>/dev/null || echo 0)"
+  resumed="$(grep -c 'worker resumed once' "$dir/.context/ship-graph/f/graph-log.md" 2>/dev/null || echo 0)"
+  failed_line="$(grep -c 'failed: no phase progress' "$dir/.context/ship-graph/f/graph-log.md" 2>/dev/null || echo 0)"
+  status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
   rm -rf "$dir"
 
-  # Without this the only progress signal lives inside the orchestrator's turn,
-  # and from outside a working run is indistinguishable from a stuck one.
-  if [ "$working" -ge 1 ] && [ "$stalled" -ge 1 ]; then
+  # A quiet node is nudged through the driver exactly once — its answer or its
+  # next step is on disk and the worker just stopped looking — and only a node
+  # that stays quiet after that is failed, with the run continuing without it.
+  if [ "$working" -ge 1 ] && [ "$resumed" = "1" ] && [ "$failed_line" = "1" ] \
+    && printf '%s' "$out4" | grep -q '^resumed=TASK-001$' \
+    && printf '%s' "$out7" | grep -q '^failed=TASK-001$' \
+    && [ "$status" = "failed" ]; then
     log_pass "$name"
   else
-    log_fail "$name (working=$working stalled=$stalled)"
+    log_fail "$name (working=$working resumed=$resumed failed=$failed_line status=$status)"
+  fi
+}
+
+test_answer_wakes_the_worker_through_the_driver() {
+  local name="answer writes the file AND resumes the worker through the driver — the file alone wakes nobody"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'state=gate\nquestion=q\ndetail:\nd\n' > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+  )
+  out="$(cd "$dir" && bash "$GRAPH" answer TASK-001 defer 2>&1)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^resumed=' \
+    && printf '%s' "$out" | grep -q '^instruction=Tell the agent working on TASK-001' \
+    && printf '%s' "$out" | grep -q 'answer.txt'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_batch_admission_holds_a_freed_slot() {
+  local name="admission=batch keeps a freed slot empty until every in-flight node has closed"
+  local dir out_batch out_stream
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" next >/dev/null
+    make_workspace "$dir" TASK-002 src/api/routes.ts
+    bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" set --admission batch >/dev/null
+  )
+  out_batch="$(cd "$dir" && bash "$GRAPH" next)"
+  (cd "$dir" && bash "$GRAPH" set --admission stream >/dev/null)
+  out_stream="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+  # One slot is free either way; only stream fills it while TASK-002 is in flight.
+  if [ "$(field "$out_batch" action)" = "wait" ] && [ -z "$(field "$out_batch" frontier)" ] \
+    && [ "$(field "$out_stream" action)" = "dispatch" ] && [ -n "$(field "$out_stream" frontier)" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (batch=$(field "$out_batch" action)/'$(field "$out_batch" frontier)' stream=$(field "$out_stream" action)/'$(field "$out_stream" frontier)')"
+  fi
+}
+
+test_a_failed_node_does_not_freeze_the_run() {
+  local name="a failed node holds only its dependents — the rest of the frontier keeps dispatching"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" next >/dev/null
+    make_workspace "$dir" TASK-002 src/api/routes.ts
+    bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" fail TASK-002 --reason "broken" >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-003'; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
+  fi
+}
+
+test_a_run_ending_with_failures_reports_them_once() {
+  local name="when nothing can run and some nodes failed, next ends the run with the failed list — not a deadlock"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 4 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" fail TASK-001 --reason "plan invalid" >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "ask" ] \
+    && printf '%s' "$out" | grep -q 'Failed: TASK-001' \
+    && printf '%s' "$out" | grep -q 'reset'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) action=$(field "$out" action))"
+  fi
+}
+
+test_poll_fails_a_node_from_its_own_verdict() {
+  local name="poll fails a node whose pipeline left node-failed.txt — without waiting for the stall cap"
+  local dir out status reason
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'plan failed validation after retries\n' > "wt-TASK-001/.context/ship-run/TASK-001/node-failed.txt"
+  )
+  out="$(cd "$dir" && bash "$GRAPH" poll)"
+  status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
+  reason="$(grep -c 'plan failed validation after retries' "$dir/.context/ship-graph/f/graph-log.md" || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^failed=TASK-001$' && [ "$status" = "failed" ] && [ "$reason" -ge 1 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' status=$status)"
+  fi
+}
+
+test_next_refreshes_stale_conflict_edges_itself() {
+  local name="next clears a conflict edge whose holder already merged — no separate conflicts call needed"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+    # 002 and 004 overlap on src/api; 002 takes the slot, 004 is recorded as blocked by it.
+    bash "$GRAPH" next >/dev/null
+    make_workspace "$dir" TASK-002 src/api/routes.ts
+    bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+    printf 'deferred\n' > "wt-TASK-002/.context/ship-run/TASK-002/homolog-approved.txt"
+    bash "$GRAPH" poll >/dev/null
+  )
+  # TASK-002 is merged (no forge) and TASK-004 still carries blocked_by_conflict=TASK-002
+  # in the state file. A next that trusted it would find nothing to dispatch.
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-004'; then
+    log_pass "$name"
+  else
+    log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
   fi
 }
 
@@ -870,37 +1037,6 @@ test_unknown_dep_is_rejected_at_init() {
   fi
 }
 
-test_next_refreshes_stale_conflict_edges_itself() {
-  local name="next clears a conflict edge whose holder already merged — no separate conflicts call needed"
-  local dir out
-  dir="$(mktemp -d)"
-  setup_repo "$dir"
-  (
-    cd "$dir"
-    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --node-pr off >/dev/null
-    make_workspace "$dir" TASK-001 src/db/schema.ts
-    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
-    printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
-    # 002 and 004 overlap on src/api; 002 takes the slot, 004 is recorded as blocked by it.
-    bash "$GRAPH" next >/dev/null
-    make_workspace "$dir" TASK-002 src/api/routes.ts
-    bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
-    bash "$GRAPH" conflicts >/dev/null
-    printf 'deferred\n' > "wt-TASK-002/.context/ship-run/TASK-002/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
-  )
-  # TASK-002 is merged (no forge) and TASK-004 still carries blocked_by_conflict=TASK-002
-  # in the state file. A next that trusted it would find nothing to dispatch.
-  out="$(cd "$dir" && bash "$GRAPH" next)"
-  rm -rf "$dir"
-  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-004'; then
-    log_pass "$name"
-  else
-    log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
-  fi
-}
-
 test_reinit_reports_resume_instead_of_inviting_fresh() {
   local name="a second init on a live graph exits 3 with RESUME, never an error suggesting --fresh"
   local dir out rc=0
@@ -975,7 +1111,7 @@ test_counters_survive_a_resumed_graph() {
 }
 
 test_manual_driver_answers_all_four_verbs() {
-  local name="driver-manual answers all four verbs without a runtime"
+  local name="driver-manual answers every verb of the contract without a runtime"
   local dir ok=1 out
   dir="$(mktemp -d)"
   # Captured, not piped: `grep -q` exits on the first match and SIGPIPEs the
@@ -1175,7 +1311,7 @@ test_isolation_guard_catches_a_runtime_call_in_graph_sh() {
 }
 
 test_isolation_guard_catches_a_driver_missing_a_verb() {
-  local name="the guard fails when a driver stops implementing one of the four verbs"
+  local name="the guard fails when a driver stops implementing one of the contract verbs"
   local root rc=0
   root="$(mktemp -d)"
   mkdir -p "$root/src/hooks" "$root/src/skills/graph" "$root/scripts"
@@ -1227,6 +1363,11 @@ test_reset_all_clears_every_failed_node_and_keeps_attempts
 test_reset_refuses_a_node_that_is_not_failed
 test_reset_is_all_or_nothing
 test_unknown_dep_is_rejected_at_init
+test_answer_wakes_the_worker_through_the_driver
+test_batch_admission_holds_a_freed_slot
+test_a_failed_node_does_not_freeze_the_run
+test_a_run_ending_with_failures_reports_them_once
+test_poll_fails_a_node_from_its_own_verdict
 test_next_refreshes_stale_conflict_edges_itself
 test_reinit_reports_resume_instead_of_inviting_fresh
 test_fresh_still_discards_when_asked

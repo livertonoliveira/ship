@@ -18,15 +18,15 @@ set -euo pipefail
 # dependent is admitted only once its dependency's PR is MERGED there.
 #
 # This script never names a workspace runtime. Everything runtime-specific goes
-# through driver-<name>.sh's five verbs (dispatch/collect/wait/ask/stop), so swapping
-# runtimes is swapping a file. scripts/check-graph-driver-isolation.sh enforces it.
+# through driver-<name>.sh's verbs (dispatch/collect/wait/ask/resume/stop/probe), so
+# swapping runtimes is swapping a file. scripts/check-graph-driver-isolation.sh enforces it.
 # ---------------------------------------------------------------------------
 
 usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
   echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
-  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
+  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -141,6 +141,17 @@ meta_set() {
 # behaviour their next claim should get.
 node_pr_on() {
   [ "$(meta_get "$1" node_pr)" != "off" ]
+}
+
+# How a freed slot is refilled. `stream` (default) dispatches the next node the
+# moment a slot opens; `batch` waits until EVERY in-flight node has closed
+# before opening the next set. Batch is what an operator asked for by hand on a
+# live run ("resolve all of them before opening two more") and then had to
+# re-state in every wake-up prompt because the graph had no place to keep it.
+admission_of() {
+  local a
+  a="$(meta_get "$1" admission)"
+  case "$a" in batch) printf 'batch' ;; *) printf 'stream' ;; esac
 }
 
 # --- PR state ----------------------------------------------------------------
@@ -376,6 +387,7 @@ render_json() {
     printf '  "driver": "%s",\n' "$(json_escape "$(meta_get "$dir" driver)")"
     printf '  "base_branch": "%s",\n' "$(json_escape "$(meta_get "$dir" base_branch)")"
     printf '  "max_in_flight": %s,\n' "$(meta_get "$dir" max_in_flight)"
+    printf '  "admission": "%s",\n' "$(json_escape "$(admission_of "$dir")")"
     printf '  "nodes": [\n'
     local first=1 id repo title deps files status wt branch attempts blocked
     while IFS="$US" read -r id repo title deps files status wt branch attempts blocked; do
@@ -743,7 +755,7 @@ cmd_init() {
 # --- set ---------------------------------------------------------------------
 
 set_usage() {
-  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
+  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch]" >&2
   echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
 }
 
@@ -759,22 +771,35 @@ set_usage() {
 # targets it, so changing it mid-run would leave the conflict edges reading
 # against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" node_pr="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
       --driver) driver="$2"; shift 2 ;;
       --max-in-flight) max_in_flight="$2"; shift 2 ;;
       --node-pr) node_pr="$2"; shift 2 ;;
+      --admission) admission="$2"; shift 2 ;;
       -h|--help) set_usage; exit 0 ;;
       *) set_usage; exit 1 ;;
     esac
   done
-  [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || die "set: give --driver, --max-in-flight and/or --node-pr"
+  [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr and/or --admission"
+
+  if [ -n "$admission" ]; then
+    case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
+  fi
 
   local dir
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
+
+  if [ -n "$admission" ]; then
+    meta_set "$dir" admission "$admission"
+    log_line "$dir" "admission → $admission"
+    printf 'admission=%s\n' "$admission"
+    changed=1
+  fi
 
   # Read at claim time, so flipping it mid-run only reaches nodes not yet
   # claimed — the ones already carrying a pr-mode marker keep the contract they
@@ -1135,9 +1160,25 @@ cmd_poll() {
     if [ -f "$wt/.context/ship-run/$id/homolog-approved.txt" ]; then
       seal_workspace "$dir" "$id"
       transition "$dir" "$id" "in_flight" landed
-      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt"
+      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
       printf 'landed=%s\n' "$id"
       landed=$((landed + 1))
+      continue
+    fi
+
+    # The pipeline's own verdict that this node cannot proceed (a plan that
+    # failed validation on every replan, an aborted dependency gate). Read from
+    # the artifact, like completion: the worker does not get to report it, and
+    # the graph does not wait three polls to notice it.
+    if [ -f "$wt/.context/ship-run/$id/node-failed.txt" ]; then
+      local nf_reason
+      nf_reason="$(head -1 "$wt/.context/ship-run/$id/node-failed.txt")"
+      bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+      node_set "$dir" "$id" 6 failed
+      node_set "$dir" "$id" 10 ""
+      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+      log_line "$dir" "$id → failed: ${nf_reason:-its pipeline stopped} (reported by the node's own pipeline)"
+      printf 'failed=%s\n' "$id"
       continue
     fi
 
@@ -1173,11 +1214,29 @@ cmd_poll() {
         log_line "$dir" "$id STALLED — no pipeline ever ran in its workspace across $stalls polls (worker never started)"
         printf 'stalled=%s\n' "$id"
         printf 'never_started=%s\n' "$id"
+        stalled=$((stalled + 1))
+      elif [ ! -f "$dir/resumed-$id.txt" ]; then
+        # A worker that stopped advancing has, every time it was measured, ended
+        # its turn: a wait it never returned from, a question it thinks is still
+        # open. One nudge through the driver restarts it from its own state file
+        # — its counters and ledger are on disk, so nothing is redone. Once.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" resume "$id" \
+          "No phase progress observed — re-run pipeline.sh next $id and continue from its state." \
+          --state "$dir" >/dev/null 2>&1 || true
+        printf 'resumed\n' > "$dir/resumed-$id.txt"
+        printf '0\n' > "$dir/stall-$id.txt"
+        log_line "$dir" "$id quiet for $stalls polls — worker resumed once through the driver"
+        printf 'resumed=%s\n' "$id"
       else
-        log_line "$dir" "$id STALLED — no phase progress across $stalls polls"
-        printf 'stalled=%s\n' "$id"
+        # Resumed once already and still not moving: the node is failed, its
+        # workspace kept, and the run goes on without it. Reported at done.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+        node_set "$dir" "$id" 6 failed
+        node_set "$dir" "$id" 10 ""
+        rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+        log_line "$dir" "$id → failed: no phase progress across $stalls polls after a resume (workspace kept: $wt)"
+        printf 'failed=%s\n' "$id"
       fi
-      stalled=$((stalled + 1))
     else
       log_line "$dir" "$id quiet ($stalls/$stall_max polls with no phase progress)"
       printf 'quiet=%s\n' "$id"
@@ -1291,8 +1350,17 @@ cmd_answer() {
   # clear it — otherwise the answer arrives and the cap kills the node anyway.
   rm -f "$dir/stall-$id.txt"
   log_line "$dir" "$id answered: $answer"
+  # The file alone wakes nobody: the worker ended its turn when it asked. Measured
+  # live, three nodes sat on an answered question for 15+ minutes each until a
+  # human typed into their panes. The driver is the only thing that can reach it.
+  local resumed
+  resumed="$(bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" resume "$id" \
+    "The coordinator answered your question ($answer) — it is in $scratch/answer.txt. Re-run pipeline.sh next $id and continue." \
+    --state "$dir" 2>/dev/null || true)"
   printf 'answered=%s\n' "$id"
   printf 'answer=%s\n' "$answer"
+  printf 'resumed=%s\n' "$(printf '%s' "$resumed" | sed -n 's/^resumed=//p' | head -1)"
+  printf '%s\n' "$resumed" | grep '^instruction=' || true
   printf 'note=The node consumes it on its next pipeline.sh next and resumes.\n'
 }
 
@@ -1626,12 +1694,11 @@ cmd_next() {
     merged_n="$(count_status "$dir" merged)"
   fi
 
-  # --- a failed node freezes admission ---------------------------------------
-  if [ "$failed" -gt 0 ] && [ "$inflight" -eq 0 ]; then
-    next_body_add "Failed node(s): $(nodes_with_status "$dir" failed | tr '\n' ' ')."
-    next_body_add "Report to the user with \`bash \"$HOOK_DIR/graph.sh\" status\` and ask which one: retry them — bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all), which puts them back on the frontier with a fresh workspace and unfreezes admission — fix by hand and re-run \`bash \"$HOOK_DIR/graph.sh\" next\`, or abandon the run."
-    next_emit "ask" "ask" "$inflight" "" "run frozen by failed node(s)"
-  fi
+  # A failed node no longer freezes the run. Its dependents are held by the
+  # dependency edge itself (they need it MERGED), and everything else keeps
+  # going; the failures are reported at the end, where `reset` can retry them.
+  # Freezing was measured as the opposite of what an unattended run needs: one
+  # bad node parked eighty good ones behind a question nobody was there to answer.
 
   # Stale edges make false deadlocks. Refreshed here, not only on an explicit
   # `conflicts` call the executor may skip.
@@ -1639,8 +1706,10 @@ cmd_next() {
 
   # --- frontier --------------------------------------------------------------
   local slots=$((max_in_flight - inflight))
+  # Batch admission: a freed slot stays empty until the whole set has closed.
+  [ "$(admission_of "$dir")" = "batch" ] && [ "$inflight" -gt 0 ] && slots=0
   local frontier="" cand cand_files picked_files=""
-  if [ "$slots" -gt 0 ] && [ "$failed" -eq 0 ]; then
+  if [ "$slots" -gt 0 ]; then
     while IFS= read -r cand; do
       [ -n "$cand" ] || continue
       [ "$slots" -gt 0 ] || break
@@ -1706,40 +1775,29 @@ cmd_next() {
       next_body_add "- $qid asks: $(grep -m1 '^question=' "$qask" | sed 's/^question=//') — full text in $qask"
     done < <(nodes_with_status "$dir" in_flight)
     if [ -n "${asked# }" ]; then
-      next_body_add "Read each ask.md above and present its question to the user in the artifact language. These come from a node's own pipeline; do not answer them yourself."
-      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that unblocks the node and it resumes on its next poll."
+      next_body_add "Read each ask.md above. Inside a graph the node's pipeline decides its own gates, so a question that still reaches here is one it could not decide from its artifacts: present it to the user in the artifact language."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that writes the answer and wakes the worker through the driver."
       next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
     fi
   fi
 
   # --- wait ------------------------------------------------------------------
+  # A node that stopped advancing is handled inside poll (resumed once through
+  # the driver, then failed); the one case that still needs a hand is a worker
+  # that never started at all, because re-issuing the dispatch is the fix and
+  # only the executor can carry out a driver's instruction= line.
   if [ "$inflight" -gt 0 ]; then
-    local stalled=""
-    local sid
+    local never="" sid
     while IFS= read -r sid; do
       [ -n "$sid" ] || continue
-      [ -f "$dir/stall-$sid.txt" ] || continue
-      [ "$(cat "$dir/stall-$sid.txt")" -ge 3 ] && stalled="$stalled $sid"
+      [ -f "$dir/stall-$sid.txt" ] && [ -f "$dir/why-$sid.txt" ] || continue
+      [ "$(cat "$dir/stall-$sid.txt")" -ge 3 ] && never="$never $sid"
     done < <(nodes_with_status "$dir" in_flight)
-    if [ -n "${stalled# }" ]; then
-      local never=""
-      for sid in $stalled; do
-        [ -f "$dir/why-$sid.txt" ] && never="$never $sid"
-      done
-      if [ -n "${never# }" ]; then
-        # Distinguished on purpose: "never started" has a different cause and a
-        # different fix from "started and got stuck", and telling the operator to
-        # go read a dispatch-log.md that does not exist wastes the one round the
-        # stall cap bought.
-        next_body_add "Node(s)${never} have NO .context/ship-run/<task>/dispatch-log.md at all — their pipeline never ran a single phase, so the worker was never started. The workspace and branch exist; nothing is running in them."
-        next_body_add "The usual cause is the driver's \`instruction=\` line from dispatch not being carried out. Re-issue it: bash \"$DRIVER_SH\" dispatch <task> \"/ship:run <task>\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\" and then DO what its instruction= line says."
-        next_body_add "If the driver cannot start workers in this environment at all, switch runtimes without losing the run: bash \"$HOOK_DIR/graph.sh\" abort, then bash \"$HOOK_DIR/graph.sh\" set --driver <name>."
-        next_emit "ask" "ask" "$inflight" "" "worker never started:${never}"
-      fi
-      next_body_add "Node(s)${stalled} have shown no phase progress across 3 consecutive polls — their pipeline is stuck or finished without leaving its completion marker."
-      next_body_add "Open each one's workspace, read .context/ship-run/<task>/dispatch-log.md to see the last phase it reached, and present that to the user."
-      next_body_add "Then either re-drive it (\`bash \"$HOOK_DIR/pipeline.sh\" next <task>\` inside its workspace) or drop it: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>"
-      next_emit "ask" "ask" "$inflight" "" "stalled node(s):${stalled}"
+    if [ -n "${never# }" ]; then
+      next_body_add "Node(s)${never} have NO .context/ship-run/<task>/dispatch-log.md at all — their pipeline never ran a single phase, so the worker was never started. The workspace and branch exist; nothing is running in them."
+      next_body_add "The usual cause is the driver's \`instruction=\` line from dispatch not being carried out. Re-issue it: bash \"$DRIVER_SH\" dispatch <task> \"/ship:run <task>\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\" and then DO what its instruction= line says."
+      next_body_add "If the driver cannot start workers in this environment at all, switch runtimes without losing the run: bash \"$HOOK_DIR/graph.sh\" abort, then bash \"$HOOK_DIR/graph.sh\" set --driver <name>."
+      next_emit "ask" "ask" "$inflight" "" "worker never started:${never}"
     fi
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"   → blocks until a worker reports or the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
@@ -1789,6 +1847,17 @@ cmd_next() {
       next_body_add "Then inform: node PRs were off, so each node's branch is still unmerged — run /ship:pr per branch when ready. NEVER auto-invoke /ship:pr."
     fi
     next_emit "done" "done" "0" "" "graph complete — $merged_n/$total nodes"
+  fi
+
+  # Nothing left that can run, and some of it failed: the run is over for
+  # everything that could finish. This is the one decision that is genuinely
+  # the operator's — retry the failed ones (reset) or accept the partial result.
+  if [ "$failed" -gt 0 ]; then
+    next_body_add "Every node that could run has: $merged_n merged, $failed failed, $((total - merged_n - failed)) held behind a failed dependency."
+    next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its workspace is kept."
+    next_body_add "Present the batch homolog for the merged nodes (.context/ship-run/<task>/homolog-report.md in each workspace) and the failed list, in the artifact language."
+    next_body_add "To retry the failed ones: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) — each gets a fresh workspace — then bash \"$HOOK_DIR/graph.sh\" next. Otherwise the run ends here."
+    next_emit "done" "ask" "0" "" "graph finished with failures — $merged_n merged, $failed failed of $total"
   fi
 
   # --- deadlock --------------------------------------------------------------
