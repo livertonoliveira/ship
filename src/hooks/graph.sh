@@ -26,7 +26,8 @@ usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
   echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
-  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch]" >&2
+  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
+  echo "            [--admission stream|batch] [--merge-policy human|graph]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -154,6 +155,15 @@ admission_of() {
   case "$a" in batch) printf 'batch' ;; *) printf 'stream' ;; esac
 }
 
+# Who merges a node PR that /ship:pr could not arm for auto-merge. `human`
+# (default) hands it to the operator. `graph` merges it from here once the forge
+# reports it CLEAN — the same thing GitHub's auto-merge would have done, for a
+# repository that has that feature off. Nothing is merged while checks run, and
+# nothing is merged over a conflict: DIRTY still needs a person.
+merge_policy_of() {
+  case "$(meta_get "$1" merge_policy)" in graph) printf 'graph' ;; *) printf 'human' ;; esac
+}
+
 # --- PR state ----------------------------------------------------------------
 
 # The forge client is resolved through a variable so a test can point it at a
@@ -182,16 +192,31 @@ pr_status_get() {
 }
 
 pr_status_set() {
-  local dir="$1" id="$2" number="$3" state="$4" url="$5" armed="${6:-no}" f tmp
+  local dir="$1" id="$2" number="$3" state="$4" url="$5" armed="${6:-no}" mstate="${7:-}" f tmp
   f="$(pr_status_file "$dir")"
   tmp="$dir/.pr-status.tmp"
   touch "$f"
-  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" -v a="$armed" '
-    $1 == id { print id, n, s, u, a; done = 1; next }
+  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" -v a="$armed" -v m="$mstate" '
+    $1 == id { print id, n, s, u, a, m; done = 1; next }
     { print }
-    END { if (!done) print id, n, s, u, a }
+    END { if (!done) print id, n, s, u, a, m }
   ' "$f" > "$tmp"
   mv "$tmp" "$f"
+}
+
+# The forge's own verdict on whether the PR can merge right now: CLEAN, BLOCKED
+# (checks running or a review required), BEHIND, DIRTY (conflicts), UNKNOWN.
+pr_merge_state() {
+  local dir="$1" id="$2" branch out
+  branch="$(node_field "$dir" "$id" 8)"
+  out="$("$GH" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
+  json_field "$out" mergeStateStatus
+}
+
+pr_try_merge() {
+  local dir="$1" id="$2" branch
+  branch="$(node_field "$dir" "$id" 8)"
+  "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id.log" 2>&1
 }
 
 json_field() {
@@ -388,6 +413,7 @@ render_json() {
     printf '  "base_branch": "%s",\n' "$(json_escape "$(meta_get "$dir" base_branch)")"
     printf '  "max_in_flight": %s,\n' "$(meta_get "$dir" max_in_flight)"
     printf '  "admission": "%s",\n' "$(json_escape "$(admission_of "$dir")")"
+    printf '  "merge_policy": "%s",\n' "$(merge_policy_of "$dir")"
     printf '  "nodes": [\n'
     local first=1 id repo title deps files status wt branch attempts blocked
     while IFS="$US" read -r id repo title deps files status wt branch attempts blocked; do
@@ -771,7 +797,7 @@ set_usage() {
 # targets it, so changing it mid-run would leave the conflict edges reading
 # against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" node_pr="" admission="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
@@ -779,15 +805,20 @@ cmd_set() {
       --max-in-flight) max_in_flight="$2"; shift 2 ;;
       --node-pr) node_pr="$2"; shift 2 ;;
       --admission) admission="$2"; shift 2 ;;
+      --merge-policy) merge_policy="$2"; shift 2 ;;
       -h|--help) set_usage; exit 0 ;;
       *) set_usage; exit 1 ;;
     esac
   done
   [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
-    || die "set: give --driver, --max-in-flight, --node-pr and/or --admission"
+    || [ -n "$merge_policy" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr, --admission and/or --merge-policy"
 
   if [ -n "$admission" ]; then
     case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
+  fi
+  if [ -n "$merge_policy" ]; then
+    case "$merge_policy" in human|graph) ;; *) die "set: --merge-policy must be human or graph: $merge_policy" ;; esac
   fi
 
   local dir
@@ -798,6 +829,12 @@ cmd_set() {
     meta_set "$dir" admission "$admission"
     log_line "$dir" "admission → $admission"
     printf 'admission=%s\n' "$admission"
+    changed=1
+  fi
+  if [ -n "$merge_policy" ]; then
+    meta_set "$dir" merge_policy "$merge_policy"
+    log_line "$dir" "merge_policy → $merge_policy"
+    printf 'merge_policy=%s\n' "$merge_policy"
     changed=1
   fi
 
@@ -1120,6 +1157,28 @@ settle_landed() {
         SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
         ;;
       *)
+        if [ "$armed" != "yes" ] && [ "$(merge_policy_of "$dir")" = "graph" ]; then
+          local mstate
+          mstate="$(pr_merge_state "$dir" "$id")"
+          pr_status_set "$dir" "$id" "$number" "$state" "$url" "$armed" "$mstate"
+          case "$mstate" in
+            CLEAN)
+              if pr_try_merge "$dir" "$id"; then
+                pr_status_set "$dir" "$id" "$number" "MERGED" "$url" "$armed" "$mstate"
+                transition "$dir" "$id" landed merged
+                meta_set "$dir" last_merged "$id"
+                log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN) — its dependents are free"
+                printf 'merged=%s\n' "$id"
+                SETTLE_MERGED=$((SETTLE_MERGED + 1))
+                continue
+              fi
+              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed — see pr-$id.log"
+              ;;
+            DIRTY)
+              log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
+              ;;
+          esac
+        fi
         printf 'awaiting_merge=%s\n' "$id"
         SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
         ;;
@@ -1815,7 +1874,7 @@ cmd_next() {
   # that are NOT armed (auto-merge could not be enabled — branch protection
   # missing, etc.) or whose forge state this script cannot make sense of.
   if [ "$landed" -gt 0 ]; then
-    local lid lstate lurl lnum larmed unarmed=""
+    local lid lstate lurl lnum larmed lmstate unarmed=""
     next_body_add "These nodes finished and their PR targets $(meta_get "$dir" base_branch):"
     while IFS= read -r lid; do
       [ -n "$lid" ] || continue
@@ -1823,16 +1882,21 @@ cmd_next() {
       lnum="$(pr_status_get "$dir" "$lid" 2)"
       lurl="$(pr_status_get "$dir" "$lid" 4)"
       larmed="$(pr_status_get "$dir" "$lid" 5)"
-      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}"
-      [ "$larmed" = "yes" ] || unarmed="$unarmed $lid"
+      lmstate="$(pr_status_get "$dir" "$lid" 6)"
+      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}${lmstate:+ merge-state=$lmstate}"
+      [ "$larmed" = "yes" ] && continue
+      # Under merge-policy=graph an unarmed PR is the graph's to merge once the
+      # forge says CLEAN; only a conflict (DIRTY) still needs a person.
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ]; then continue; fi
+      unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
-      next_body_add "Node(s)${unarmed} have no auto-merge armed on their PR — present them to the user for review and merge, in the artifact language. Ship never merges a PR itself."
+      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, or conflicts against the base) — present them to the user for review and merge, in the artifact language."
       next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
       next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
       next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
     else
-      next_body_add "All landed PRs have auto-merge armed — nothing for a human to do; they merge themselves once the forge's required checks pass."
+      next_body_add "Every landed PR merges without a person: auto-merge is armed, or merge-policy=graph merges it once the forge reports it CLEAN."
       next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → reads the real PR state from the forge and releases the dependents once one lands"
       next_body_add "After it returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
       next_emit "landed" "wait" "$inflight" "" "$landed node(s) auto-merging on the forge"
