@@ -16,11 +16,11 @@ set -euo pipefail
 # each node's own test run collects over — the runner would pick up their test
 # files too.
 #
-# Verbs: dispatch | collect | wait | ask | stop | probe  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | resume | stop | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-local.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
+  echo "usage: driver-local.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -179,6 +179,26 @@ verb_ask() {
   return 0
 }
 
+# The worker was a synchronous Agent that has already returned, so resuming it
+# means launching another one over the same workspace: it re-enters the
+# pipeline's state machine, which reads the answer file and continues.
+verb_resume() {
+  local task="${REST[0]:-}" message="${REST[1]:-}"
+  [ -n "$task" ] || { echo "driver-local.sh resume: <task> is required" >&2; exit 1; }
+  require_state
+  local wt
+  wt="$(kv_get "$STATE/driver-local-$task.txt" worktree)"
+  printf 'resumed=0\n'
+  printf 'instruction=REQUIRED — launch one Agent (subagent_type=general-purpose, model sonnet) with the prompt: "cd %s and run /ship:run %s to completion. %s Report its final state= line." Let it finish in this turn.\n' \
+    "${wt:-<workspace of $task>}" "$task" "${message:-}"
+}
+
+kv_get() {
+  local file="$1" key="$2"
+  [ -f "$file" ] || return 0
+  sed -n "s/^$key=//p" "$file" | head -1
+}
+
 # Agents run inside the orchestrator's own turn, so by the time anything could
 # call stop they have already returned — there is no process to signal. The
 # workspace is left in place deliberately: it holds the node's work.
@@ -218,6 +238,7 @@ case "$VERB" in
   collect)  verb_collect ;;
   wait)     verb_wait ;;
   ask)      verb_ask ;;
+  resume)   verb_resume ;;
   stop)     verb_stop ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;

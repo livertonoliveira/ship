@@ -37,11 +37,11 @@ set -euo pipefail
 # homolog-approved.txt (docs/graph-mode-orca-findings.md §B). worker_done only
 # ends the wait window early.
 #
-# Verbs: dispatch | collect | wait | ask | stop | probe  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | resume | stop | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
+  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -294,10 +294,20 @@ verb_dispatch() {
   #   send --type worker_done --run <r>  → accepted.
   # Workers were burning turns retrying a call that could never succeed. The Run
   # id only exists here, so this is the only place that can hand it over.
+  #
+  # The runtime's own preamble tells the worker to raise every question through
+  # `orchestration ask`, which blocks on a reply the coordinator never reads: the
+  # graph's wait window listens for worker_done and escalation only, and every
+  # decision the pipeline needs travels through the scratch dir (ask.md /
+  # answer.txt, delivered by `resume`). Measured live: three nodes each spent
+  # 10-minute timeouts re-asking a channel nobody answered while their answer
+  # sat on disk. The spec is the one place this driver can override that rule.
   local spec
   spec="$prompt
 
-When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only."
+When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only.
+
+Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else."
 
   local created rtask
   created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null)"
@@ -507,6 +517,35 @@ verb_ask() {
   return 0
 }
 
+# Wakes a worker that ended its turn waiting on the coordinator. The pipeline's
+# answer is already on disk; what the worker lacks is a reason to look — this
+# types one into its pane. Measured live: without it, workers polled a channel
+# that never delivered, and the coordinator unblocked them by hand three times.
+verb_resume() {
+  local task="${REST[0]:-}" message="${REST[1]:-}"
+  [ -n "$task" ] || { echo "driver-orca.sh resume: <task> is required" >&2; exit 1; }
+  require_state
+  require_cli
+
+  local f="$STATE/driver-orca-$task.txt" handle
+  handle="$(kv_get "$f" handle)"
+  [ -n "$handle" ] || { echo "driver-orca.sh resume: no terminal handle recorded for $task" >&2; exit 1; }
+
+  local text="${message:-The coordinator answered — re-run pipeline.sh next $task and continue.}"
+  # One line, then a separate Enter: a paste never submits itself (the trailing
+  # newline of --enter is eaten as part of the paste — measured in dispatch).
+  orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || {
+    printf 'resumed=0\n'
+    printf 'handle=%s\n' "$handle"
+    printf 'reason=terminal send failed — the pane may be gone; re-list it or stop the node\n'
+    exit 1
+  }
+  sleep 1
+  orca terminal send --terminal "$handle" --text "" --enter >/dev/null 2>&1 || true
+  printf 'resumed=1\n'
+  printf 'handle=%s\n' "$handle"
+}
+
 # Closes the worker's terminal and leaves the workspace on disk. A killed
 # orchestrator cannot signal anything — traps do not run on SIGKILL — so without
 # this an abandoned run leaves agents working and billing indefinitely, invisible
@@ -583,6 +622,7 @@ case "$VERB" in
   collect)  verb_collect ;;
   wait)     verb_wait ;;
   ask)      verb_ask ;;
+  resume)   verb_resume ;;
   stop)     verb_stop ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;
