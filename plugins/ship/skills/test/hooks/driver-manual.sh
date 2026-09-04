@@ -10,11 +10,15 @@ set -euo pipefail
 # without losing track of the frontier, and it is what makes graph.sh testable
 # in CI, where no workspace runtime is installed.
 #
-# Five verbs, same contract in every driver:
+# Seven verbs, same contract in every driver:
 #   dispatch <task> <prompt> [--repo <r>] [--state <dir>] [--base <ref>]
 #   collect  <task> [--state <dir>]
 #   wait     [--state <dir>] [--timeout-ms <n>]
 #   ask      <question> [--task <t>] [--state <dir>]
+#   resume   <task> <message> [--state <dir>] — wake a worker that is waiting on
+#            the coordinator (an answer landed, or it stopped advancing). The
+#            graph writes the answer to a file; this is the only thing that
+#            tells the worker to go and read it.
 #   stop     <task> [--state <dir>]
 #   probe    — can this driver run here, and how strongly does it want the job?
 # Output is key=value lines on stdout; graph.sh and the orchestrator read those.
@@ -28,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|stop|probe> [args...]" >&2
+  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
 }
 
 STATE=""
@@ -104,6 +108,14 @@ verb_ask() {
 
 # Always available and always last: it needs nothing, and it costs a human a
 # workspace per node. Anything that can actually spawn one should outrank it.
+verb_resume() {
+  local task="${REST[0]:-}" message="${REST[1]:-}"
+  [ -n "$task" ] || { echo "driver-manual.sh resume: <task> is required" >&2; exit 1; }
+  printf 'resumed=0\n'
+  printf 'manual=1\n'
+  printf 'instruction=Tell the agent working on %s: %s\n' "$task" "${message:-re-run pipeline.sh next $task}"
+}
+
 verb_probe() {
   printf 'ready=1\n'
   printf 'priority=90\n'
@@ -133,6 +145,7 @@ case "$VERB" in
   collect)  verb_collect ;;
   wait)     verb_wait ;;
   ask)      verb_ask ;;
+  resume)   verb_resume ;;
   stop)     verb_stop ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;

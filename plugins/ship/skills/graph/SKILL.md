@@ -27,7 +27,7 @@ Each node is a full `/ship:run` in its own workspace. Nothing inside a task chan
 
 The input is a whole feature, never a single issue — a graph of one node is just `/ship:run`. Resolve it to a project and to a feature name, in this order:
 
-- `linear.app/**/project/**` URL → `list_projects` / `get_project` and take the project's **name**. Never derive the feature from the URL itself: its trailing id makes two copy-pastes of the same project look like two features.
+- `linear.app/**/project/**` URL → one `get_project` call with the URL's last path segment as `query` (it is the project's slug) and take the project's **name**. Never `list_projects`, never derive the feature from the URL: its trailing id makes two copy-pastes of the same project look like two features.
 - Bare text → the project name (Linear) or the `ship/changes/<dir>` folder (local).
 
 Pass that name to `init` as-is — `graph.sh` slugifies it (`Autenticação V2` → `autenticacao-v2`) and echoes back `feature=<slug>`, which is the graph's identity from then on.
@@ -36,7 +36,7 @@ Pass that name to `init` as-is — `graph.sh` slugifies it (`Autenticação V2` 
 
 This is the only judgment step. One JSON array; each object is `{ "id", "repo", "title", "deps": [...], "files": [...] }`. `deps` are blocking task IDs, `files` the declared `## Files` paths (the footprint the conflict edge starts from).
 
-- **Linear:** `list_issues` for that project, then `get_issue` per task. `id` = issue identifier, `deps` = the `## Deps` block plus any native **blocked by** relation, `files` = `## Files` paths, `repo` = the `repo:<name>` label if present.
+- **Linear:** one `list_issues` (`project` = the name, `limit` 250, `fields` id,title,status,labels,projectMilestone) for the roster — its descriptions are truncated, so then `get_issue` for every issue **in parallel, all in the same turn**, never one per turn and never through a fork or sub-agent (a fork inherits these instructions and has run the whole graph on its own). Issues already in a completed state are not nodes: drop them and any `deps` entry naming them. `id` = issue identifier, `deps` = the `## Deps` block plus any native **blocked by** relation (task ids only, never a milestone name), `files` = `## Files` paths, `repo` = the `repo:<name>` label if present.
 - **Local:** `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" nodes --from-tasks ship/changes/<feature>/tasks.md > nodes.json` — deterministic, no reading required.
 
 ## 3. Initialize
@@ -47,7 +47,7 @@ Pass `--repo` when the caller gave one, or when the driver needs a repo the coor
 
 Exit 3 with a `RESUME` report means a graph for this feature is already live — go straight to the loop; the run continues where it stopped. `--fresh` is the opposite: it discards that graph along with its in-flight claims and PR state, so pass it only when the user explicitly asks to start over.
 
-Changing the driver or the slot count on a live graph is `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" set [--driver <d>] [--max-in-flight N]` — never a re-init, and never `--fresh`. A driver that turns out not to work here is found only after init, and starting over is the wrong answer to it. Nodes still held by the old driver must be released first (`abort`).
+Changing the driver, the slot count or the admission policy on a live graph is `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" set [--driver <d>] [--max-in-flight N] [--admission stream|batch]` — never a re-init, and never `--fresh`. `batch` refills slots only once every in-flight node has closed; `stream` (default) refills each slot as it frees. A driver that turns out not to work here is found only after init, and starting over is the wrong answer to it. Nodes still held by the old driver must be released first (`abort`).
 
 Default `--max-in-flight 2`: each node is a whole pipeline (sequential develop plus a verify fan-out), so three in flight is already around a dozen concurrent agents. Raise it only when the machine has proven it can take it.
 
@@ -58,7 +58,7 @@ Default `--max-in-flight 2`: each node is a whole pipeline (sequential develop p
 2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
    - `dispatch` → make EVERY listed call now, in this same turn, in the order printed. `dispatch` prepares the workspace, `collect` resolves its path and branch, `claim` hands both back. A driver that cannot start the worker itself returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in, and the graph waits on a worker that never existed. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
    - `wait` → run the listed calls in order. `graph.sh poll` is what decides completion — it reads each workspace's own artifacts and each open PR's real state on the forge. Never land, merge or fail a node from what a worker said.
-   - `ask` → relay the question to the user in the artifact language, STOP; act on their answer, then go to step 1.
+   - `ask` → the one kind of decision the graph cannot take from its artifacts (a PR nobody armed, a worker that never started, a run ending with failed nodes). Present it to the user in the artifact language, STOP; act on their answer, then go to step 1.
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
 
@@ -71,7 +71,8 @@ To stop a run, `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" abort`: it stops each 
 - Never start a task the instruction did not list, never skip one it did, never reorder — the state machine already decided. A task missing from the frontier is blocked by a dependency or a conflict edge, not forgotten.
 - Never edit `nodes.tsv`, `meta.tsv` or `graph.json` by hand — they are the graph's state, and `graph.sh` is the only writer.
 - `claim` writes `homolog-mode=defer` into the task's workspace, so no node stops for its own acceptance prompt. Every report is presented in one batch at `done`.
-- Completion is observed, never reported: `poll` lands a node when its pipeline leaves `homolog-approved.txt` on disk, and seals the workspace into a commit (`/ship:run` writes files but never commits, so the branch would otherwise be empty). A node whose phases stop advancing surfaces as `ask` instead of being waited on forever.
+- Completion is observed, never reported: `poll` lands a node when its pipeline leaves `homolog-approved.txt` on disk, and seals the workspace into a commit (`/ship:run` writes files but never commits, so the branch would otherwise be empty). A node whose phases stop advancing is resumed once through the driver, then failed; a node whose pipeline reports its own failure is failed at once. A failed node holds only its dependents — the run goes on, and every failure is reported at `done`, where `reset` retries it.
+- Inside a node, gates decide themselves: the pipeline fixes while a remediation round still changes the residue, defers once it stops, and treats the declared deps as already satisfied (admission guaranteed it). Each decision is written to the node's `graph-decisions.md`. `answer` writes the reply and wakes the worker through the driver — never type into a worker yourself.
 - The gate is whether the PR actually landed: `poll` reads each landed node's real state on the forge, and only a PR **merged** there releases the nodes that depend on it. The graph never merges, never pushes a base and never runs the suite itself — a PR closed without merging fails its node instead of stalling the graph.
 - One issue, one PR: each node opens its own against the base — the repo's real trunk — from inside its workspace, syncing onto it first with the full context of the change it just implemented (`/ship:pr` step 5). `pipeline.sh next` emits that step on a green gate; a red gate stops the node before it. Never open or merge one by hand; `--node-pr off` turns the whole behaviour off, and then nothing merges anywhere.
 - Language: user-facing output in the config's `Artifact language`; code, commits, branch names stay English (${CLAUDE_SKILL_DIR}/patterns/language.md).

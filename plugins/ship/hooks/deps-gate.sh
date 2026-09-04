@@ -93,12 +93,19 @@ extract_plan_deps() {
 # A malformed id is dropped rather than failing the run: the gate exists to stop
 # work on a real unmet dependency, and turning a typo into a hard stop would
 # make the planner's optional channel a way to brick the pipeline.
+#
+# The shape rule is deliberately stricter than "no punctuation": a task id has a
+# separator (TASK-001, MOB-3013, task_auth). A bare word like `M2` is a
+# milestone name, and one that reached here as a dep stopped a graph node on
+# "unmet blocking dependencies: M2" — a gate on something that is not a task.
 sanitize_ids() {
   local id self="${1:-}"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     case "$id" in
       *[!a-zA-Z0-9_-]*) continue ;;
+      *[-_]*) ;;
+      *) continue ;;
     esac
     [ "$id" = "$self" ] && continue
     printf '%s\n' "$id"

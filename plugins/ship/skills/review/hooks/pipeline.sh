@@ -5,6 +5,7 @@ set -euo pipefail
 usage() {
   echo "usage: pipeline.sh <subcommand> [args...]" >&2
   echo "  next            <task-id> [--mode check|fresh|resume] [--answer <token>] [--config <path>]" >&2
+  echo "  wait-answer     <task-id> [--timeout <seconds>]   (graph node: block until the coordinator answers)" >&2
   echo "  init            <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
   echo "  dispatch        <scratch-dir> <phase> <tool> <name> <model>" >&2
   echo "  complete        <scratch-dir> <run-number> <phase>..." >&2
@@ -1094,14 +1095,20 @@ next_emit() {
   # the stall cap kills it — the run's answer sitting in a workspace no one
   # opened. Post the question where `graph.sh next` collects it instead, and let
   # the coordinator reply with `graph.sh answer`.
+  #
+  # The worker must not end its turn here: measured live, a worker told to
+  # "stop this turn" had no way back in, and every node improvised a different
+  # wait (a background until-loop, a runtime channel nobody read, a /loop). One
+  # bounded wait in bash, re-run while it reports nothing, is the whole protocol.
   if [ "$action" = "ask" ] && [ -n "${SCRATCH:-}" ] && [ -f "$SCRATCH/graph-node.txt" ]; then
     {
       printf 'state=%s\n' "$state"
       printf 'question=%s\n' "$log"
       printf 'detail:\n%s\n' "$NEXT_BODY"
     } > "$SCRATCH/ask.md"
-    action="wait"
-    NEXT_BODY="Question posted to $SCRATCH/ask.md — the graph coordinator collects it and replies with graph.sh answer. Stop this turn; do not ask the user and do not decide it yourself.
+    action="work"
+    NEXT_BODY="Question posted to $SCRATCH/ask.md for the graph coordinator. Do NOT ask the user, do NOT decide it yourself, and do NOT use any other channel to ask.
+Wait for the answer: bash \"$HOOK_DIR/pipeline.sh\" wait-answer ${TASK_ID:-<task-id>} — it blocks up to 9 minutes and prints answered=1 or answered=0. While it prints answered=0, run it again. When it prints answered=1, run: bash \"$HOOK_DIR/pipeline.sh\" next ${TASK_ID:-<task-id>}
 "
   fi
   printf 'state=%s\naction=%s\nrun=%s\nlog=%s\ninstruction:\n%s\n' "$state" "$action" "$run" "$log" "$NEXT_BODY"
@@ -1111,6 +1118,89 @@ next_emit() {
 next_body_add() {
   NEXT_BODY="${NEXT_BODY}$1
 "
+}
+
+# Every decision a graph node takes for itself, in one file the coordinator
+# and the batch homolog can read. Prose in a log is not a decision; this is.
+graph_decision() {
+  local scratch="$1" gate="$2" choice="$3" why="$4"
+  printf -- '- %s — %s: %s — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$gate" "$choice" "$why" >> "$scratch/graph-decisions.md"
+}
+
+# What the coordinator was asked, every time, on every live run, and answered
+# the same way every time: fix while the remediation is still changing the
+# picture, defer once it stops. Measured across seven nodes — four gate
+# questions, four identical decisions, and one of them held the graph for six
+# hours because the human it waited on was asleep.
+#
+# The signal is the residue signature: the ids the confirmation pass left
+# unresolved plus the deterministic failures still on disk. A round that changes
+# it earned another, up to the cap; one that did not is spent, and the findings
+# go to the batch homolog as pending — registered, not hidden.
+graph_gate_choice() {
+  local scratch="$1" decision="$2" sig prev final
+  [ "$decision" = "FAIL" ] && final="defer" || final="pass"
+
+  if [ ! -f "$scratch/remediation-done.txt" ]; then
+    graph_decision "$scratch" "gate $decision" "fix" "first remediation round"
+    printf 'fix'
+    return 0
+  fi
+
+  sig="$(grep '^unresolved_ids=' "$scratch/remediation-verdict.txt" 2>/dev/null | cut -d= -f2)"
+  sig="$sig|$(cat "$scratch/static-exits.txt" 2>/dev/null | tr '\n' ' ')"
+  sig="$sig|$(cksum "$scratch/test-failures.md" 2>/dev/null | awk '{ print $1 }')"
+  prev="$(cat "$scratch/remediation-signature.txt" 2>/dev/null || true)"
+  printf '%s\n' "$sig" > "$scratch/remediation-signature.txt"
+
+  if [ "$sig" = "$prev" ]; then
+    graph_decision "$scratch" "gate $decision" "$final" "the last remediation round changed nothing — residue registered as pending"
+    printf '%s' "$final"
+    return 0
+  fi
+  local rc=0
+  set +e
+  ( cmd_iter "$scratch" graph-remediation-rounds --max 2 ) >/dev/null
+  rc=$?
+  set -e
+  if [ "$rc" -eq 2 ]; then
+    graph_decision "$scratch" "gate $decision" "$final" "remediation cap reached — residue registered as pending"
+    printf '%s' "$final"
+    return 0
+  fi
+  graph_decision "$scratch" "gate $decision" "fix" "the last round changed the residue — one more"
+  printf 'fix'
+}
+
+# The graph-node half of the ask channel. graph.sh answer writes answer.txt and
+# wakes the worker through the driver; the worker blocks here in the meantime,
+# bounded so a tool call never hangs past what a runtime allows.
+cmd_wait_answer() {
+  local task="" timeout=540 waited=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --timeout) timeout="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$task" ]; then task="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$task" ] || { usage; exit 1; }
+  case "$timeout" in ''|*[!0-9]*) echo "pipeline.sh wait-answer: --timeout must be a number of seconds" >&2; exit 1 ;; esac
+  local scratch=".context/ship-run/$task"
+  while [ "$waited" -lt "$timeout" ]; do
+    if [ -f "$scratch/answer.txt" ]; then
+      printf 'answered=1\n'
+      printf 'answer=%s\n' "$(head -1 "$scratch/answer.txt")"
+      printf 'next=bash "%s/pipeline.sh" next %s\n' "$HOOK_DIR" "$task"
+      return 0
+    fi
+    [ -f "$scratch/ask.md" ] || { printf 'answered=0\nnote=no question is pending for %s — run pipeline.sh next %s\n' "$task" "$task"; return 0; }
+    sleep 5
+    waited=$((waited + 5))
+  done
+  printf 'answered=0\n'
+  printf 'note=still waiting after %ss — run wait-answer again\n' "$timeout"
 }
 
 next_common_after() {
@@ -1154,6 +1244,17 @@ next_deps_gate() {
   [ -n "$pending" ] || return 0
   local listed
   listed="$(printf '%s' "$pending" | tr '\n' ' ')"
+
+  # Inside a work graph the dependency edge is enforced structurally: a node is
+  # dispatched only once every declared dependency's PR is merged on the forge.
+  # Anything this gate still finds pending is therefore not a task the graph
+  # knows — measured live, a milestone name that leaked into ## Deps — and
+  # stopping eighty nodes' coordinator for it is the wrong answer. Acked, logged.
+  if [ -f "$scratch/graph-node.txt" ]; then
+    bash "$HOOK_DIR/deps-gate.sh" ack "$scratch" ${pargs[@]+"${pargs[@]}"} >/dev/null
+    graph_decision "$scratch" "deps" "continue" "not graph nodes, admission already guaranteed the declared deps: $listed"
+    return 0
+  fi
 
   case "$answer" in
     deps-continue)
@@ -1387,6 +1488,15 @@ cmd_next() {
         local pvi_rc=$?
         set -e
         if [ "$pvi_rc" -eq 2 ]; then
+          # A graph node has nobody to fix the spec for it mid-run. Its verdict
+          # goes on disk for graph.sh poll to read, the run continues without
+          # it, and it is reported — with this error — at the end.
+          if [ -f "$SCRATCH/graph-node.txt" ]; then
+            printf 'plan failed validation after retries: %s\n' "$(head -1 "$SCRATCH/plan-validate-error.txt" 2>/dev/null | tr -d '\r')" > "$SCRATCH/node-failed.txt"
+            graph_decision "$SCRATCH" "plan" "fail-node" "$(head -1 "$SCRATCH/plan-validate-error.txt" 2>/dev/null)"
+            next_body_add "plan.md failed validation on every replan ($SCRATCH/plan-validate-error.txt). This node is marked failed for the graph coordinator; stop here and take no further action on this task."
+            next_emit "plan" "stop" "$RUN" "plan failed validation after retries — node failed"
+          fi
           next_body_add "plan.md failed validation on every replan. The last error is in $SCRATCH/plan-validate-error.txt — present it to the user in the artifact language."
           next_body_add "A defect that survives replans is usually in the spec, not the plan: most often one scenario id reused across two behaviorally distinct scenarios, which no plan can satisfy. Check the spec's scenario ids first."
           next_body_add "Then: fix the spec and re-run next, or abort with --answer abort."
@@ -1702,8 +1812,12 @@ cmd_next() {
     if [ "$g_decision" = "PASS" ]; then
       printf 'PASS\n' > "$SCRATCH/gate-resolved.txt"
     else
-      local choice="$ANSWER"
+      local choice="$ANSWER" auto_fix=0
       [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
+      if [ -z "$choice" ] && [ -f "$SCRATCH/graph-node.txt" ]; then
+        choice="$(graph_gate_choice "$SCRATCH" "$g_decision")"
+        [ "$choice" = "fix" ] && auto_fix=1
+      fi
       case "$choice" in
         fix)
           # One automatic remediation round per pipeline. remediation.md is the
@@ -1713,7 +1827,7 @@ cmd_next() {
           # the set cannot grow — so there is no loop to cap, no identity ledger
           # to keep and no churn to guard against. Residue after that round is a
           # human decision, not another automatic attempt.
-          if [ -f "$SCRATCH/remediation-done.txt" ] && [ "$ANSWER" != "fix" ]; then
+          if [ -f "$SCRATCH/remediation-done.txt" ] && [ "$ANSWER" != "fix" ] && [ "$auto_fix" -ne 1 ]; then
             local residue
             residue="$(grep '^unresolved_ids=' "$SCRATCH/remediation-verdict.txt" 2>/dev/null | cut -d= -f2)"
             next_body_add "Gate decision: $g_decision after the remediation round. Items still open: ${residue:-see phase-status.md}. Present them in the artifact language (lazy-load per $HOOK_DIR/../patterns/lazy-load-findings.md; register tracking per storage mode)."
@@ -1826,6 +1940,8 @@ shift
 case "$SUBCOMMAND" in
   next)
     cmd_next "$@" ;;
+  wait-answer)
+    cmd_wait_answer "$@" ;;
   init)
     cmd_init "$@" ;;
   dispatch)
