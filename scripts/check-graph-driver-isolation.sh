@@ -26,7 +26,7 @@ HOOKS_DIR="${REPO_ROOT}/src/hooks"
 # Workspace runtimes a driver may talk to. Deliberately not a list of every
 # binary on earth — these are the ones a graph would plausibly reach for.
 RUNTIME_PATTERN='\b(orca|orca-ide|codex|conductor|tmux|docker|kubectl|devcontainer)\b'
-VERBS=(dispatch collect wait ask stop probe)
+VERBS=(dispatch collect wait ask resume stop probe)
 
 VIOLATIONS=0
 
@@ -93,7 +93,7 @@ else
   echo "FAILED — ${VIOLATIONS} violation(s)."
   echo ""
   echo "graph.sh must reach the workspace runtime only through driver-<name>.sh's"
-  echo "five verbs (dispatch/collect/wait/ask/stop). Runtime-specific code belongs in a"
+  echo "verbs (dispatch/collect/wait/ask/resume/stop/probe). Runtime-specific code belongs in a"
   echo "driver; if a driver cannot express what you need, extend the verb contract"
   echo "for every driver rather than special-casing one runtime in the scheduler."
   exit 1
