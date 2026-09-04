@@ -898,8 +898,8 @@ EOF
   fi
 }
 
-test_failed_node_freezes_admission() {
-  local name="a failed node freezes admission instead of dispatching the rest"
+test_failed_root_ends_the_run_with_its_dependents_held() {
+  local name="a failed root ends the run with the failed list — its dependents stay held, nothing else is dispatched"
   local dir out
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -911,10 +911,11 @@ test_failed_node_freezes_admission() {
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
 
-  if [ "$(field "$out" action)" = "ask" ]; then
+  if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "ask" ] \
+    && printf '%s' "$out" | grep -q '3 held behind a failed dependency'; then
     log_pass "$name"
   else
-    log_fail "$name (action='$(field "$out" action)')"
+    log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
   fi
 }
 
@@ -1357,7 +1358,7 @@ test_dependents_unlock_after_the_pr_merges
 test_next_is_idempotent
 test_all_done_emits_done
 test_dependency_cycle_is_a_deadlock_ask
-test_failed_node_freezes_admission
+test_failed_root_ends_the_run_with_its_dependents_held
 test_reset_returns_a_failed_node_to_the_frontier
 test_reset_all_clears_every_failed_node_and_keeps_attempts
 test_reset_refuses_a_node_that_is_not_failed
