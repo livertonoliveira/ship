@@ -237,8 +237,8 @@ test_invalid_plan_replans_before_asking() {
   rm -rf "$dir"
 }
 
-test_graph_node_posts_its_question_instead_of_asking() {
-  local name="in a graph node an ask becomes a question file plus a wait — there is no user in that loop to ask"
+test_graph_node_fails_itself_on_an_unplannable_spec() {
+  local name="in a graph node a plan that fails every replan fails the node on disk — no question, no user"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -253,14 +253,50 @@ test_graph_node_posts_its_question_instead_of_asking() {
   echo 'garbage' > "$scratch/plan.md"; next "$dir" TASK-1 >/dev/null
   echo 'garbage' > "$scratch/plan.md"; out="$(next "$dir" TASK-1)"
 
-  if [ "$(field "$out" action)" = "wait" ] \
-    && [ -f "$scratch/ask.md" ] \
-    && grep -q '^question=' "$scratch/ask.md"; then
+  if [ "$(field "$out" action)" = "stop" ] \
+    && [ -f "$scratch/node-failed.txt" ] \
+    && grep -q 'plan failed validation' "$scratch/node-failed.txt" \
+    && [ ! -f "$scratch/ask.md" ] \
+    && grep -q 'fail-node' "$scratch/graph-decisions.md"; then
     log_pass "$name"
   else
     log_fail "$name (action=$(field "$out" action))"
   fi
   rm -rf "$dir"
+}
+
+test_wait_answer_reports_the_answer_when_it_lands() {
+  local name="wait-answer blocks on the coordinator's answer file and hands back the next call"
+  local dir out; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  local scratch="$dir/.context/ship-run/TASK-1"
+  mkdir -p "$scratch"
+  printf 'state=gate\nquestion=q\ndetail:\nd\n' > "$scratch/ask.md"
+  ( sleep 6; printf 'defer\n' > "$scratch/answer.txt" ) &
+  out="$(cd "$dir" && bash "$PIPELINE" wait-answer TASK-1 --timeout 30)"
+  wait
+  rm -rf "$dir"
+  if [ "$(field "$out" answered)" = "1" ] && [ "$(field "$out" answer)" = "defer" ] \
+    && printf '%s' "$out" | grep -q '^next=.*pipeline.sh" next TASK-1'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_wait_answer_returns_at_once_with_nothing_pending() {
+  local name="wait-answer with no pending question returns immediately instead of blocking a worker for nothing"
+  local dir out; dir="$(mktemp -d)"
+  mkdir -p "$dir/.context/ship-run/TASK-1"
+  out="$(cd "$dir" && bash "$PIPELINE" wait-answer TASK-1 --timeout 30)"
+  rm -rf "$dir"
+  if [ "$(field "$out" answered)" = "0" ] && printf '%s' "$out" | grep -q 'no question is pending'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
 }
 
 test_graph_node_consumes_the_coordinators_answer() {
@@ -846,7 +882,9 @@ test_first_call_asks_for_context_staging
 test_greenfield_multi_module_runs_planner
 test_invalid_plan_replans_before_asking
 test_invalid_plan_abort_stops
-test_graph_node_posts_its_question_instead_of_asking
+test_graph_node_fails_itself_on_an_unplannable_spec
+test_wait_answer_reports_the_answer_when_it_lands
+test_wait_answer_returns_at_once_with_nothing_pending
 test_graph_node_consumes_the_coordinators_answer
 test_validated_plan_goes_straight_to_develop
 test_stale_confrontation_artifacts_are_ignored
