@@ -97,6 +97,31 @@ json_id() {
   grep -oE "\"$1[0-9a-zA-Z_-]+\"" | head -1 | tr -d '"'
 }
 
+# One repo of the runtime's, by whatever name the caller had for it.
+#
+# `repo list` answers with an id, a path and a displayName per repo. The graph's
+# nodes.json carries whichever of those the coordinator could get: SKILL.md
+# step 2 says `repo` is the `repo:<name>` Linear label, and that label holds a
+# display name — while worker-start's selector only accepts the id. So a project
+# whose issues carry a repo: label built a graph that could not dispatch a single
+# node, and the only sign of it was an exit code. Matching all three closes that
+# gap: the label works, the id works, a path works.
+repo_id_for() {
+  orca repo list --json 2>/dev/null | awk -v want="$1" '
+    # One field per line, so a record is accumulated and matched at its closing
+    # brace — the key order in the response is not part of this contract.
+    # The envelope opens with its own request "id", which the first repo record
+    # overwrites before any brace closes.
+    /"id"[[:space:]]*:/          { v=$0; sub(/.*"id"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); id=v }
+    /"path"[[:space:]]*:/        { v=$0; sub(/.*"path"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); path=v }
+    /"displayName"[[:space:]]*:/ { v=$0; sub(/.*"displayName"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); name=v }
+    /}/ {
+      if (id != "" && (id == want || path == want || name == want)) { print id; exit }
+      path=""; name=""
+    }
+  '
+}
+
 # A graph only carries an explicit repo when it spans several. For the single-repo
 # case `--repo` arrives empty, and worker-start then infers the repo from the
 # CALLING terminal — which is the coordinator's checkout, not necessarily the one
@@ -106,25 +131,35 @@ json_id() {
 # The git COMMON dir, not the toplevel: inside a worktree the toplevel is the
 # worktree's own path and would match no registered repo.
 resolve_repo() {
-  [ -z "$REPO" ] || return 0
-  local common root
-  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  [ -n "$common" ] || return 0
-  root="$(dirname "$common")"
-  REPO="$(orca repo list --json 2>/dev/null | awk -v want="$root" '
-    # Always the LAST id seen before the path, never the first: every response
-    # opens with a per-call request-envelope "id", and holding onto that one
-    # returns a fresh random uuid for whichever repo happens to be listed first.
-    /"id"[[:space:]]*:/ {
-      line = $0
-      sub(/.*"id"[[:space:]]*:[[:space:]]*"/, "", line); sub(/".*/, "", line); id = line
-    }
-    /"path"[[:space:]]*:/ {
-      line = $0
-      sub(/.*"path"[[:space:]]*:[[:space:]]*"/, "", line); sub(/".*/, "", line)
-      if (line == want && id != "") { print id; exit }
-    }
-  ')"
+  local want="$REPO" id
+  if [ -z "$want" ]; then
+    local common
+    common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    [ -n "$common" ] || return 0
+    want="$(dirname "$common")"
+  fi
+
+  id="$(repo_id_for "$want" || true)"
+  if [ -n "$id" ]; then
+    REPO="$id"
+    return 0
+  fi
+
+  # Inferred from the working tree and matching nothing is not an error: the
+  # graph may be driven from outside any registered repo, and worker-start still
+  # has the calling terminal to fall back on.
+  [ -n "$REPO" ] || return 0
+
+  # An explicit value that resolves to nothing is a graph that cannot dispatch a
+  # single node, and saying so here costs one call — against a whole run spent
+  # discovering it a workspace at a time.
+  {
+    echo "driver-orca.sh: --repo '$REPO' matches no repo registered with the runtime"
+    echo "  give its id, its path, or its display name. Known now:"
+    orca repo list --json 2>/dev/null \
+      | sed -n 's/.*"displayName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/    \1/p'
+  } >&2
+  exit 1
 }
 
 kv_get() {
@@ -310,8 +345,8 @@ When you report completion, your orchestration send MUST carry --run $run in add
 Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else."
 
   local created rtask
-  created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null)"
-  rtask="$(printf '%s' "$created" | json_id task_)"
+  created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null || true)"
+  rtask="$(printf '%s' "$created" | json_id task_ || true)"
   if [ -z "$rtask" ]; then
     echo "driver-orca.sh dispatch: the runtime refused to create a task for $task on run $run" >&2
     # Its own words beat a generic "no task id": `consumer_fenced` names a Run
@@ -348,11 +383,11 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     [ -n "$REPO" ] && wt_args+=(--repo "id:$REPO")
     [ -n "$BASE" ] && wt_args+=(--base-branch "$BASE")
     local wt
-    wt="$(orca "${wt_args[@]}" 2>/dev/null)"
-    wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
+    wt="$(orca "${wt_args[@]}" 2>/dev/null || true)"
+    wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"' || true)"
     [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: no worktree id in the create response" >&2; exit 1; }
-    term="$(orca terminal create --worktree "id:$wt_id" --title "$task" --command "$SHIP_WORKER_COMMAND" --json 2>/dev/null)"
-    handle="$(printf '%s' "$term" | json_id term_)"
+    term="$(orca terminal create --worktree "id:$wt_id" --title "$task" --command "$SHIP_WORKER_COMMAND" --json 2>/dev/null || true)"
+    handle="$(printf '%s' "$term" | json_id term_ || true)"
     [ -n "$handle" ] || { echo "driver-orca.sh dispatch: terminal create returned no handle" >&2; exit 1; }
     orca terminal wait --terminal "$handle" --for tui-idle --timeout-ms 120000 >/dev/null 2>&1 || true
     start_args+=(--terminal "$handle" --worktree "id:$wt_id")
@@ -362,25 +397,36 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
 
   local started dispatch_id rc=0
   started="$(orca "${start_args[@]}" 2>/dev/null)" || rc=$?
-  dispatch_id="$(printf '%s' "$started" | json_id ctx_)"
 
-  # A FAILED worker-start still answers with a dispatch id, so the id alone
-  # proves nothing. It exits non-zero and names the stage it died in; measured
-  # live, a bad --base-branch dies in worktree_create with everything else
-  # looking normal. Reading only the id let that pass, and the driver then died
-  # silently on the empty worktree selector two lines later.
+  # The rc check comes BEFORE any parse of the response, and every parse below
+  # ends in `|| true`. Both matter, and the reason is the failure this ordering
+  # was written after: a worker-start that dies hard answers with an empty body,
+  # `json_id` is a pipeline whose grep then matches nothing, and under
+  # `set -o pipefail` a BARE assignment from that pipeline fails — so `set -e`
+  # killed the driver with nothing on either stream, three lines above the block
+  # written to report exactly this. Measured live: three dispatch attempts, one
+  # of them with 2>&1 and an explicit echo of $?, produced `EXIT:1` and not one
+  # word about the repo the runtime could not resolve.
+  #
+  # A FAILED worker-start may still answer with a dispatch id, so the id alone
+  # proves nothing either: it exits non-zero and names the stage it died in;
+  # measured, a bad --base-branch dies in worktree_create with everything else
+  # looking normal.
   if [ "$rc" -ne 0 ] || printf '%s' "$started" | grep -q '"failedStage"'; then
     echo "driver-orca.sh dispatch: the runtime refused to start $task" >&2
     printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1 >&2
+    printf '%s' "$started" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1 >&2
     printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1 >&2
+    printf '%s' "$started" | grep -q . || echo "  the call answered nothing at all — rerun it without 2>/dev/null to see the runtime's own error" >&2
     exit 1
   fi
+  dispatch_id="$(printf '%s' "$started" | json_id ctx_ || true)"
   [ -n "$dispatch_id" ] || { echo "driver-orca.sh dispatch: worker-start returned no dispatch id" >&2; exit 1; }
 
   # worker-start reports what it created under result.effects; the worktree id is
   # the only <repo-id>::<path> value in the response.
-  [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"')"
-  [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_)"
+  [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"' || true)"
+  [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_ || true)"
   # Named explicitly, because the alternative is what actually happened: an empty
   # selector makes the next call fail, and a failing command substitution under
   # `set -e` exits the driver with no output on either stream at all.
