@@ -49,6 +49,14 @@ module_scenarios() {
   printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -E '^@SC-[0-9]+' || true
 }
 
+# A dependency may carry a qualifier after the module id saying WHY it depends:
+# `Depends on: M1 (uses summary.js)`. It is the same shape slot_header_re already
+# tolerates for scenario ids, and for the same reason: the planner writes the
+# reason because the reason is useful, and refusing it fails a plan that is
+# correct. Measured 2026-09-06 — MOB-3114 burned one of its two attempts on
+# `M1 (uses summary.js)` while M1 existed two modules above; the replan happened
+# to write the bare id and passed. A coin flip per node, and with --max-attempts
+# 2 two bad draws kill a node and everything downstream of it.
 module_depends_on() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Depends on")"
@@ -56,7 +64,11 @@ module_depends_on() {
   if [ "$raw" = "none" ]; then
     return 0
   fi
-  printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
+  printf '%s\n' "$raw" \
+    | tr ',' '\n' \
+    | sed -E 's/[[:space:]]*\(.*$//' \
+    | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
+    | grep -v '^$' || true
 }
 
 # A slot header may carry a qualifier between the scenario id and the first
