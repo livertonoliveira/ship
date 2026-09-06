@@ -546,7 +546,7 @@ test_a_replayed_signal_is_not_reported_twice() {
   # The first worker_done is real. The identical one behind it is the replay,
   # and reporting it again is what turned the wait into a busy loop.
   if printf '%s' "$first" | grep -q '^signal=worker_done$' \
-     && printf '%s' "$second" | grep -q '^replayed=1$' \
+     && printf '%s' "$second" | grep -q '^timeout=1$' \
      && ! printf '%s' "$second" | grep -q '^signal=worker_done$'; then
     log_pass "a replayed delivery is not reported as a second worker finishing"
   else
@@ -565,7 +565,7 @@ test_wait_owes_the_caller_its_window() {
   # graph.sh paces its stall checks on this call. A `wait` that answers in 50ms
   # turns a three-minute window into a three-second one, whatever the reason.
   if [ "$elapsed" -ge 3 ] && printf '%s' "$out" | grep -q '^timeout=1$' \
-     && printf '%s' "$out" | grep -q '^slept='; then
+     && printf '%s' "$out" | grep -q '^waited='; then
     log_pass "a wait with nothing to report still spends the window it was given"
   else
     log_fail "a wait with nothing to report still spends the window it was given (elapsed=${elapsed}s out='$out')"
@@ -586,6 +586,86 @@ test_a_failed_check_is_named_not_swallowed() {
     log_fail "a check the runtime refused is named, not reported as a quiet window (out='$out')"
   fi
   rm -rf "$root"
+}
+
+# --- waiting for the thing, not for someone to mention it --------------------
+#
+# Measured on a live node: homolog-approved.txt hit the disk at 03:19:56Z and
+# the coordinator landed the node at 03:23:33Z — 3m37s of a wait window spent
+# listening to a channel that had nothing on it yet. pipeline.sh writes that
+# file in bash the instant the run ends; worker_done is a message the worker
+# LLM sends when it gets round to it, so the artifact is always first.
+
+test_an_existing_artifact_ends_the_wait_at_once() {
+  local root out began ended
+  root="$(new_case)"
+  : > "$root/done.txt"
+  began="$(date +%s)"
+  out="$(ORCA_FAKE_CHECK=empty run_wait "$root" --timeout-ms 20000 --until-file "$root/done.txt")"
+  ended="$(date +%s)"
+  # Already finished before the call: it must not buy another whole window.
+  if printf '%s' "$out" | grep -q '^signal=artifact$' \
+     && printf '%s' "$out" | grep -q "^artifact=$root/done.txt$" \
+     && [ "$(( ended - began ))" -lt 5 ]; then
+    log_pass "an artifact already on disk ends the wait immediately, without another window"
+  else
+    log_fail "an artifact already on disk ends the wait immediately (elapsed=$(( ended - began ))s out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_an_artifact_appearing_mid_window_cuts_it_short() {
+  local root out began elapsed
+  root="$(new_case)"
+  # Appears while the driver is blocked, the way a node finishing does.
+  ( sleep 3; : > "$root/done.txt" ) &
+  began="$(date +%s)"
+  out="$(ORCA_FAKE_CHECK=empty run_wait "$root" --timeout-ms 60000 --until-file "$root/done.txt")"
+  elapsed=$(( $(date +%s) - began ))
+  wait
+  # Well inside the 60s window, and nowhere near instant either — the driver is
+  # really blocking, it is just checking the disk between slices.
+  if printf '%s' "$out" | grep -q '^signal=artifact$' && [ "$elapsed" -lt 40 ] && [ "$elapsed" -ge 3 ]; then
+    log_pass "an artifact appearing mid-window ends the wait in seconds, not at the timeout"
+  else
+    log_fail "an artifact appearing mid-window ends the wait in seconds (elapsed=${elapsed}s out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_watched_file_that_never_appears_still_spends_the_window() {
+  local root out began elapsed
+  root="$(new_case)"
+  began="$(date +%s)"
+  out="$(ORCA_FAKE_CHECK=empty run_wait "$root" --timeout-ms 4000 --until-file "$root/never.txt")"
+  elapsed=$(( $(date +%s) - began ))
+  # The slices must not turn the wait back into a busy loop: graph.sh paces its
+  # stall checks on this call, and a wait that answers early for no reason is
+  # the bug this whole file exists to keep fixed.
+  if printf '%s' "$out" | grep -q '^timeout=1$' && [ "$elapsed" -ge 4 ]; then
+    log_pass "a watched file that never appears still costs the whole window"
+  else
+    log_fail "a watched file that never appears still costs the whole window (elapsed=${elapsed}s out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_every_driver_accepts_the_until_file_flag() {
+  local dir d ok=1 out
+  dir="$(mktemp -d)"
+  # A driver that does not block has nothing to do with the flag, but must not
+  # take it for a positional argument either.
+  for d in manual local; do
+    out="$(bash "$SCRIPT_DIR/../driver-$d.sh" wait --state "$dir" --until-file "$dir/x" 2>&1)" || ok=0
+    printf '%s' "$out" | grep -q '^signal=\|^timeout=1$' || ok=0
+  done
+  rm -rf "$dir"
+  if [ "$ok" -eq 1 ]; then
+    log_pass "every driver accepts --until-file, so one argv calls all of them"
+  else
+    log_fail "every driver accepts --until-file"
+  fi
+  rm -rf "$dir"
 }
 
 test_a_run_is_created_before_anything_else
@@ -615,6 +695,10 @@ test_wait_acks_the_previous_delivery
 test_a_replayed_signal_is_not_reported_twice
 test_wait_owes_the_caller_its_window
 test_a_failed_check_is_named_not_swallowed
+test_an_existing_artifact_ends_the_wait_at_once
+test_an_artifact_appearing_mid_window_cuts_it_short
+test_a_watched_file_that_never_appears_still_spends_the_window
+test_every_driver_accepts_the_until_file_flag
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
