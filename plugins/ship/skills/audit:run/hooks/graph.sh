@@ -2023,7 +2023,21 @@ cmd_next() {
   # the driver, then failed; one whose worker never started is returned to the
   # frontier there. Nothing about a quiet node is left for a person here.
   if [ "$inflight" -gt 0 ]; then
-    next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"   → blocks until a worker reports or the wait window closes; a timeout is a checkpoint, not a failure"
+    # The graph names what it is waiting FOR; the driver only knows how to
+    # block. pipeline.sh writes each of these in bash the moment it happens,
+    # while the runtime's worker_done is a message the worker sends when it gets
+    # round to it — measured 3m37s apart on a live node, a whole wait window
+    # spent listening to a channel that had nothing on it yet.
+    local wid wwt until_args=""
+    while IFS= read -r wid; do
+      [ -n "$wid" ] || continue
+      wwt="$(node_field "$dir" "$wid" 7)"
+      [ -n "$wwt" ] || continue
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/homolog-approved.txt\""
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/node-failed.txt\""
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\""
+    done < <(nodes_with_status "$dir" in_flight)
+    next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"$until_args   → blocks until a node finishes, fails or asks, until a worker reports, or until the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" conflicts"
     next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."

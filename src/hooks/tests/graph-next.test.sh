@@ -1586,6 +1586,33 @@ test_stall_after_is_a_live_knob() {
   fi
 }
 
+test_wait_names_the_artifacts_it_is_waiting_for() {
+  local name="the wait instruction names each in-flight node's completion, failure and question files"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" next > next.txt
+  )
+  out="$(cat "$dir/next.txt")"
+  rm -rf "$dir"
+  # The graph is the one that knows what "done" looks like; the driver only
+  # knows how to block. Without these the window is spent listening to a
+  # channel the worker writes to when it gets round to it — measured 3m37s
+  # after the artifact was already on disk.
+  if printf '%s' "$out" | grep -q -- '--until-file .*/homolog-approved.txt' \
+    && printf '%s' "$out" | grep -q -- '--until-file .*/node-failed.txt' \
+    && printf '%s' "$out" | grep -q -- '--until-file .*/ask.md'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
 test_claim_marks_the_workspace_as_having_a_coordinator
 test_a_nodes_question_reaches_the_coordinator
 test_answer_refuses_a_node_with_no_pending_question
@@ -1598,6 +1625,7 @@ test_the_quiet_log_line_names_the_seconds
 test_work_in_the_tree_counts_as_progress
 test_a_resume_buys_a_whole_new_window
 test_stall_after_is_a_live_knob
+test_wait_names_the_artifacts_it_is_waiting_for
 test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
 test_progress_resets_the_stall_counter
