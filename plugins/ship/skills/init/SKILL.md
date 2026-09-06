@@ -50,7 +50,7 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 - Package Manager: [detected]
 - Test Framework: [detected]
 - Typecheck: [detected command or "none"]
-- Lint: [detected command or "none"]
+- Lint: [detected command or "none"; `{files}` in it receives only the files develop touched]
 
 ## Project Type
 [backend | frontend | fullstack | monorepo]

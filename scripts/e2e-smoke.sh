@@ -83,7 +83,7 @@ fi
 
 # A real, dependency-free lint rule the generated code satisfies: no debug
 # logging and no `var` in source. Green on correct output, so it exercises the
-# static-command injection into develop without making the gate flaky.
+# pipeline's static gate without making it flaky.
 cat > lint.sh <<'LINT'
 #!/usr/bin/env bash
 hits="$(grep -rnE '(^|[^.[:alnum:]_])var[[:space:]]|console\.log' src 2>/dev/null || true)"

@@ -28,52 +28,8 @@ setup_pkg_repo() {
   printf '{"scripts":{"typecheck":"true","lint":"true"}}\n' > "$dir/package.json"
 }
 
-test_print_static_resolves_from_package_json() {
-  local name="--print-static resolves both commands from package.json without running them"
-  local d; d="$(mktemp -d)"
-  setup_pkg_repo "$d"
-  local out rc=0
-  out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --print-static)" || rc=$?
-  if [ "$rc" -eq 0 ] \
-    && printf '%s' "$out" | grep -qx 'typecheck=npm run typecheck' \
-    && printf '%s' "$out" | grep -qx 'lint=npm run lint' \
-    && [ ! -f "$d/scratch/phase-status-static.md" ]; then
-    log_pass "$name"
-  else
-    log_fail "$name (rc=$rc out=$out)"
-  fi
-  rm -rf "$d"
-}
 
-test_print_static_prefers_explicit_config() {
-  local name="--print-static prefers an explicit config field over the package.json probe"
-  local d; d="$(mktemp -d)"
-  setup_pkg_repo "$d"
-  printf -- '- Typecheck: mypy .\n' >> "$d/config.md"
-  local out
-  out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --print-static)"
-  if printf '%s' "$out" | grep -qx 'typecheck=mypy .'; then
-    log_pass "$name"
-  else
-    log_fail "$name (out=$out)"
-  fi
-  rm -rf "$d"
-}
 
-test_print_static_exits_2_when_nothing_resolves() {
-  local name="--print-static exits 2 when neither check resolves"
-  local d; d="$(mktemp -d)"
-  mkdir -p "$d/scratch"
-  printf '# Config\n' > "$d/config.md"
-  local rc=0
-  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --print-static >/dev/null 2>&1) || rc=$?
-  if [ "$rc" -eq 2 ]; then
-    log_pass "$name"
-  else
-    log_fail "$name (rc=$rc)"
-  fi
-  rm -rf "$d"
-}
 
 test_static_only_records_individual_exits() {
   local name="--static-only records the real per-check exit codes"
@@ -134,10 +90,69 @@ test_unrecognized_test_framework_fails_with_actionable_message() {
   rm -rf "$d"
 }
 
-test_print_static_resolves_from_package_json
-test_print_static_prefers_explicit_config
-test_print_static_exits_2_when_nothing_resolves
+# Lint scoping: develop-touched-files.txt is the verified footprint, and the
+# whole-project lint used to be the slowest step of a run.
+test_lint_placeholder_receives_only_existing_touched_files() {
+  local name="a Lint command with {files} receives the touched files that still exist, nothing else"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: ./lint.sh {files}\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/lint.sh"
+  chmod +x "$d/lint.sh"
+  mkdir -p "$d/src"
+  : > "$d/src/a.ts"; : > "$d/src/b c.ts"
+  printf 'src/a.ts\nsrc/gone.ts\nsrc/b c.ts\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "src/a.ts|src/b c.ts|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
+test_eslint_package_script_is_scoped_to_touched_files() {
+  local name="a package.json eslint script keeps its flags, drops its globs and lints only touched files of a matching extension"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf '{"scripts":{"lint":"eslint \\"{src,test}/**/*.ts\\" --fix --max-warnings 0"}}\n' > "$d/package.json"
+  mkdir -p "$d/node_modules/.bin" "$d/src"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/node_modules/.bin/eslint"
+  chmod +x "$d/node_modules/.bin/eslint"
+  : > "$d/src/a.ts"; : > "$d/src/b.js"; : > "$d/README.md"
+  printf 'src/a.ts\nsrc/b.js\nREADME.md\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "--fix|--max-warnings|0|src/a.ts|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
+test_lint_runs_unscoped_without_a_footprint() {
+  local name="no develop footprint: the configured Lint command runs exactly as written"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: ./lint.sh --all\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/lint.sh"
+  chmod +x "$d/lint.sh"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "--all|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
 test_static_only_records_individual_exits
+test_lint_placeholder_receives_only_existing_touched_files
+test_eslint_package_script_is_scoped_to_touched_files
+test_lint_runs_unscoped_without_a_footprint
 test_full_run_carries_forward_a_red_typecheck
 test_unrecognized_test_framework_fails_with_actionable_message
 

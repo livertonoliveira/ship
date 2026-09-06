@@ -3,8 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only|--print-static]" >&2
-  echo "  --print-static  resolve typecheck/lint and print them without running" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only]" >&2
 }
 
 field_from() {
@@ -54,9 +53,116 @@ resolve_static_checks() {
 
   LINT_CMD="$(field_from "$scratch/stack.md" 'Lint')"
   is_resolved "$LINT_CMD" || LINT_CMD="$(field_from "$config" 'Lint')"
+  LINT_FROM_PKG=0
   if ! is_resolved "$LINT_CMD" && pkg_script_exists lint; then
     LINT_CMD="$runner run lint"
+    LINT_FROM_PKG=1
   fi
+  scope_lint_cmd "$scratch"
+}
+
+pkg_script_value() {
+  local script="$1"
+  [ -f package.json ] || return 0
+  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json \
+    | grep -m1 -E "\"${script}\"[[:space:]]*:" \
+    | sed -E "s/.*\"${script}\"[[:space:]]*:[[:space:]]*\"((\\\\.|[^\"\\\\])*)\".*/\\1/" \
+    | sed 's/\\"/"/g'
+}
+
+# eslint flags that consume the next token — kept together so the target
+# stripper below never mistakes a flag's value for a path.
+eslint_flag_takes_value() {
+  case "$1" in
+    --ext|-c|--config|--env|--global|--parser|--parser-options|--resolve-plugins-relative-to| \
+    --rulesdir|--plugin|--rule|--ignore-path|--ignore-pattern|--stdin-filename|-f|--format| \
+    -o|--output-file|--max-warnings|--cache-location|--cache-strategy|--fix-type|--flag| \
+    --concurrency|--report-unused-disable-directives-severity) return 0 ;;
+  esac
+  return 1
+}
+
+# Collects the file extensions an eslint target/`--ext` token restricts the run
+# to (`src/**/*.ts`, `*.{ts,tsx}`, `--ext .ts,.tsx`) into EXTS, space-separated.
+eslint_collect_exts() {
+  local tok="$1" e
+  case "$tok" in
+    *'*.{'*'}'*) e="${tok##*\*.\{}"; e="${e%%\}*}"; EXTS="$EXTS ${e//,/ }" ;;
+    *'*.'*)      e="${tok##*\*.}"; case "$e" in *[/\*\{\}]*) ;; *) EXTS="$EXTS $e" ;; esac ;;
+    .*|*,*)      EXTS="$EXTS ${tok//,/ }" ;;
+  esac
+}
+
+# Whole-project lint was the slowest step of a run: a type-aware eslint over a
+# few thousand files costs minutes and gigabytes to check the ten files develop
+# touched. develop-touched-files.txt is the verified footprint, so the lint is
+# scoped to it. Two ways in: a `{files}` placeholder in the configured Lint
+# command (stack-agnostic, explicit), or a package.json `lint` script that is a
+# plain eslint invocation, whose targets are swapped for the touched files. Any
+# other shape runs unchanged.
+scope_lint_cmd() {
+  local scratch="$1" touched="$scratch/develop-touched-files.txt" f
+  is_resolved "$LINT_CMD" || return 0
+  [ -s "$touched" ] || return 0
+  local -a files=()
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] && files+=("$f")
+  done < "$touched"
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  case "$LINT_CMD" in
+    *'{files}'*)
+      local q; q="$(printf '%q ' "${files[@]}")"
+      LINT_CMD="${LINT_CMD//\{files\}/${q% }}"
+      return 0 ;;
+  esac
+
+  [ "$LINT_FROM_PKG" -eq 1 ] || return 0
+  [ -x node_modules/.bin/eslint ] || return 0
+  local script; script="$(pkg_script_value lint)"
+  case "$script" in
+    ''|*'&&'*|*'||'*|*'|'*|*';'*|*'$'*|*'`'*|*'>'*|*'<'*) return 0 ;;
+  esac
+  local -a toks=()
+  set -f
+  eval "toks=($script)" 2>/dev/null || { set +f; return 0; }
+  set +f
+  [ "${toks[0]:-}" = "npx" ] && toks=("${toks[@]:1}")
+  [ "${toks[0]:-}" = "eslint" ] || return 0
+
+  local -a args=()
+  local i=1 n="${#toks[@]}" tok
+  EXTS=""
+  while [ "$i" -lt "$n" ]; do
+    tok="${toks[$i]}"
+    case "$tok" in
+      --ext=*) eslint_collect_exts "${tok#--ext=}"; args+=("$tok") ;;
+      -*)
+        args+=("$tok")
+        if eslint_flag_takes_value "$tok" && [ $((i + 1)) -lt "$n" ]; then
+          i=$((i + 1))
+          [ "$tok" = "--ext" ] && eslint_collect_exts "${toks[$i]}"
+          args+=("${toks[$i]}")
+        fi ;;
+      *) eslint_collect_exts "$tok" ;;
+    esac
+    i=$((i + 1))
+  done
+
+  if [ -n "$EXTS" ]; then
+    local -a kept=() ; local e ext
+    for f in "${files[@]}"; do
+      ext="${f##*.}"
+      for e in $EXTS; do
+        [ "${e#.}" = "$ext" ] && { kept+=("$f"); break; }
+      done
+    done
+    [ "${#kept[@]}" -gt 0 ] || return 0
+    files=("${kept[@]}")
+  fi
+
+  LINT_CMD="$(printf '%q ' node_modules/.bin/eslint "${args[@]}" "${files[@]}")"
+  LINT_CMD="${LINT_CMD% }"
 }
 
 start_static_check() {
@@ -305,13 +411,12 @@ write_static_report() {
 }
 
 main() {
-  local scratch="" config="ship/config.md" static_only=0 print_static=0
+  local scratch="" config="ship/config.md" static_only=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --config) config="$2"; shift 2 ;;
       --static-only) static_only=1; shift ;;
-      --print-static) print_static=1; shift ;;
       -h|--help) usage; exit 0 ;;
       -*) usage; exit 1 ;;
       *)
@@ -327,6 +432,7 @@ main() {
 
   TYPECHECK_CMD=""
   LINT_CMD=""
+  LINT_FROM_PKG=0
   TYPECHECK_EXIT=0
   LINT_EXIT=0
   TYPECHECK_OUT=""
@@ -337,23 +443,6 @@ main() {
   TEST_ENTRIES=""
   LAYER_CMD_WORDS=()
   LAYER_USES_PKG_SCRIPT=0
-
-  # --print-static: resolve the two commands and print them, running nothing. The
-  # implementer is handed these in its dispatch args so it checks exactly what the
-  # pipeline checks — it used to read only `ship/config.md → Typecheck` and skip
-  # when that field was absent, while this resolution also probes stack.md and
-  # package.json, so develop silently skipped checks the gate then failed on.
-  if [ "$print_static" -eq 1 ]; then
-    PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
-    is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
-    resolve_static_checks "$scratch" "$config"
-    is_resolved "$TYPECHECK_CMD" && printf 'typecheck=%s\n' "$TYPECHECK_CMD"
-    is_resolved "$LINT_CMD" && printf 'lint=%s\n' "$LINT_CMD"
-    if ! is_resolved "$TYPECHECK_CMD" && ! is_resolved "$LINT_CMD"; then
-      exit 2
-    fi
-    exit 0
-  fi
 
   # --static-only: the pre-verify static gate. Runs typecheck+lint only, needs no
   # test runner. Exit 2 when neither check resolves (repos without them).
