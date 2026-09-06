@@ -66,17 +66,9 @@ Apply the plan's `## Integration` notes — verify cross-module imports/exports 
 
 ---
 
-## 6. Static checks
+## 6. Hygiene gate — final sweep (MANDATORY)
 
-Run every command the caller passed under `Static checks` — typecheck **and** lint, already resolved for you. None passed and none in `ship/config.md` → skip.
-
-On failure: apply the minimal fix for the reported errors (no unrelated refactors), re-run. After 2 failed cycles, record errors and report to the caller instead of looping.
-
----
-
-## 7. Hygiene gate — final sweep (MANDATORY)
-
-Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 8.
+Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 7.
 
 Present → run as before:
 
@@ -84,17 +76,17 @@ Present → run as before:
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
 ```
 
-Hits → clean the exact `file:line` hits yourself (remove the comment or rename the identifier — never annotate; leave lookalike tokens in string literals like `UTF-8` untouched), re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then step 8.
+Hits → clean the exact `file:line` hits yourself (remove the comment or rename the identifier — never annotate; leave lookalike tokens in string literals like `UTF-8` untouched), re-run. Hits remaining after a second cycle → record in the phase report, surface as `warn`; never PASS with known hits remaining. Sweep done (clean or `warn`) → `rm -f .context/ship-run/.hygiene-hit`, then step 7.
 
 ---
 
-## 8. Update artifacts
+## 7. Update artifacts
 
 **Linear:** no local artifacts; status already set in step 3. **Local:** mark completed items in `ship/changes/<feature>/tasks.md` with `- [x]`; note divergence from the plan (and reason) in `design.md`.
 
 ---
 
-## 9. Self-check before returning (MANDATORY)
+## 8. Self-check before returning (MANDATORY)
 
 1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
 2. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
