@@ -27,11 +27,11 @@ usage() {
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
   echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
   echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
-  echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]" >&2
+  echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
-  echo "  poll      [--feature <f>] [--stall-max N]" >&2
+  echo "  poll      [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
   echo "  complete  <task> [--feature <f>]" >&2
   echo "  fail      <task> --reason <r> [--feature <f>]" >&2
   echo "  answer    <task> <answer> [--feature <f>]" >&2
@@ -176,6 +176,25 @@ max_attempts_of() {
   printf '%s' "$n"
 }
 
+# How long a node may go without touching anything before the stall cap may
+# fire. The cap used to count POLLS only, and the poll cadence is whatever the
+# driver's `wait` returns at — so a driver that answered instantly turned
+# "3 polls" into 45 seconds and killed nodes mid-develop. Polls AND seconds must
+# both run out now, and the seconds are the ones that mean something.
+stall_after_of() {
+  local n
+  n="$(meta_get "$1" stall_after)"
+  case "$n" in ''|*[!0-9]*) n=900 ;; esac
+  [ "$n" -ge 60 ] || n=60
+  printf '%s' "$n"
+}
+
+# A worker that has not written its first dispatch row is a different case: the
+# dispatch may simply not have taken. It still gets a floor, because a worker
+# reading its spec writes nothing either — measured: 80s from claim to the first
+# row on a healthy node, well past three polls.
+NEVER_STARTED_AFTER=300
+
 hold_node() {
   printf '%s\n' "$3" > "$1/hold-$2.txt"
 }
@@ -193,7 +212,7 @@ retry_node() {
   node_set "$dir" "$id" 10 ""
   # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
   # the stall cap on its first poll of the new run.
-  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt"
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt"
   log_line "$dir" "$id → pending ($why; attempt $(node_field "$dir" "$id" 9) kept)"
 }
 
@@ -740,7 +759,7 @@ cmd_init() {
   # signal surviving a reset, which is exactly what the observe-the-artifact
   # rule exists to prevent. Stall and progress counters are just as poisonous.
   if [ "$fresh" -eq 1 ]; then
-    rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt \
+    rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt "$dir"/progress-at-*.txt \
           "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/pr-*.log \
           "$dir/pr-status.tsv" "$dir/nodes.tsv" "$dir/meta.tsv"
   fi
@@ -848,6 +867,7 @@ cmd_init() {
 
 set_usage() {
   echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch]" >&2
+  echo "                    [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
   echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
 }
 
@@ -863,7 +883,7 @@ set_usage() {
 # targets it, so changing it mid-run would leave the conflict edges reading
 # against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" stall_after="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
@@ -873,13 +893,14 @@ cmd_set() {
       --admission) admission="$2"; shift 2 ;;
       --merge-policy) merge_policy="$2"; shift 2 ;;
       --max-attempts) max_attempts="$2"; shift 2 ;;
+      --stall-after) stall_after="$2"; shift 2 ;;
       -h|--help) set_usage; exit 0 ;;
       *) set_usage; exit 1 ;;
     esac
   done
   [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
-    || [ -n "$merge_policy" ] || [ -n "$max_attempts" ] \
-    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy and/or --max-attempts"
+    || [ -n "$merge_policy" ] || [ -n "$max_attempts" ] || [ -n "$stall_after" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy, --max-attempts and/or --stall-after"
 
   if [ -n "$admission" ]; then
     case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
@@ -890,6 +911,10 @@ cmd_set() {
   if [ -n "$max_attempts" ]; then
     case "$max_attempts" in ''|*[!0-9]*) die "set: --max-attempts must be a positive integer: $max_attempts" ;; esac
     [ "$max_attempts" -ge 1 ] || die "set: --max-attempts must be >= 1"
+  fi
+  if [ -n "$stall_after" ]; then
+    case "$stall_after" in ''|*[!0-9]*) die "set: --stall-after must be a positive integer (seconds): $stall_after" ;; esac
+    [ "$stall_after" -ge 60 ] || die "set: --stall-after must be >= 60 seconds"
   fi
 
   local dir
@@ -906,6 +931,12 @@ cmd_set() {
     meta_set "$dir" merge_policy "$merge_policy"
     log_line "$dir" "merge_policy → $merge_policy"
     printf 'merge_policy=%s\n' "$merge_policy"
+    changed=1
+  fi
+  if [ -n "$stall_after" ]; then
+    meta_set "$dir" stall_after "$stall_after"
+    log_line "$dir" "stall_after → ${stall_after}s"
+    printf 'stall_after=%s\n' "$stall_after"
     changed=1
   fi
   if [ -n "$max_attempts" ]; then
@@ -1133,11 +1164,13 @@ cmd_claim() {
     rm -f "$scratch/pr-mode.txt"
   fi
 
-  # Baseline the progress counter here, not on the first poll. Without it the
-  # first poll always reads as progress (no previous value to compare against)
-  # and the stall cap silently needs one extra round.
-  printf '%s\n' "$(awk 'END { print NR + 0 }' "$scratch/dispatch-log.md" 2>/dev/null || echo 0)" \
-    > "$dir/progress-$id.txt"
+  # Baseline the fingerprint and the quiet clock here, not on the first poll.
+  # Without the baseline the first poll always reads as progress (no previous
+  # value to compare against) and the stall cap silently needs one extra round.
+  # It must be the same function poll compares against: baselining a bare row
+  # count made every first poll differ from every fingerprint.
+  node_fingerprint "$wt" "$id" > "$dir/progress-$id.txt"
+  date +%s > "$dir/progress-at-$id.txt"
   rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt"
 
   render_json "$dir"
@@ -1171,7 +1204,7 @@ seal_workspace() {
 }
 
 poll_usage() {
-  echo "usage: graph.sh poll [--feature <f>] [--stall-max N]" >&2
+  echo "usage: graph.sh poll [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
 }
 
 SETTLE_MERGED=0
@@ -1264,31 +1297,56 @@ settle_landed() {
   done < <(nodes_with_status "$dir" landed)
 }
 
+# What "this worker is still working" actually looks like on disk.
+#
+# The row count of dispatch-log.md was the whole signal, and it only moves when a
+# phase is DISPATCHED. Measured live: a develop that ran 3m23s appended nothing,
+# and the post-gate sync-and-open-the-PR step appends nothing at all — so the two
+# longest stretches of a run read exactly like a dead worker, and both were
+# killed there. Every artifact the pipeline writes counts here, and so does the
+# working tree, which is the only thing moving while develop is implementing.
+node_fingerprint() {
+  local wt="$1" id="$2" run_dir="$1/.context/ship-run/$2"
+  printf '%s|%s|%s' \
+    "$(awk 'END { print NR + 0 }' "$run_dir/dispatch-log.md" 2>/dev/null || echo 0)" \
+    "$(find "$run_dir" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | cksum | awk '{print $1 "-" $2}')" \
+    "$( { git -C "$wt" status --porcelain 2>/dev/null; git -C "$wt" diff HEAD --numstat 2>/dev/null; } | cksum | awk '{print $1 "-" $2}')"
+}
+
 # The completion signal, independent of anything a worker chooses to report.
 #
 # A worker can forget to send a message; it cannot forget to have left
 # homolog-approved.txt on disk — pipeline.sh writes that itself, in bash, when
 # the run reaches done. So the graph observes the artifact instead of trusting a
-# handshake. Progress is dispatch-log.md's row count, which pipeline.sh appends
-# on every phase dispatch; a node whose row count has not moved for --stall-max
-# consecutive polls is surfaced rather than waited on forever.
+# handshake. Progress is node_fingerprint: every artifact the pipeline writes
+# plus the working tree it is writing them from. A node is surfaced only once it
+# has gone --stall-max consecutive polls AND --stall-after seconds without
+# touching any of it — polls alone measure the coordinator's turn latency, not
+# the worker's silence, and taking them for the same thing killed two healthy
+# nodes 45 seconds into a develop phase.
 cmd_poll() {
-  local feature="" stall_max=3
+  local feature="" stall_max=3 stall_after=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
       --stall-max) stall_max="$2"; shift 2 ;;
+      --stall-after) stall_after="$2"; shift 2 ;;
       -h|--help) poll_usage; exit 0 ;;
       *) poll_usage; exit 1 ;;
     esac
   done
   case "$stall_max" in ''|*[!0-9]*) die "poll: --stall-max must be a positive integer: $stall_max" ;; esac
+  if [ -n "$stall_after" ]; then
+    case "$stall_after" in ''|*[!0-9]*) die "poll: --stall-after must be a positive integer (seconds): $stall_after" ;; esac
+  fi
 
   local dir
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
+  [ -n "$stall_after" ] || stall_after="$(stall_after_of "$dir")"
 
-  local id wt rows prev stalls landed=0 stalled=0 working=0
+  local id wt fp rows prev stalls since quiet_for now landed=0 stalled=0 working=0
+  now="$(date +%s)"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
@@ -1297,7 +1355,7 @@ cmd_poll() {
     if [ -f "$wt/.context/ship-run/$id/homolog-approved.txt" ]; then
       seal_workspace "$dir" "$id"
       transition "$dir" "$id" "in_flight" landed
-      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+      rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
       printf 'landed=%s\n' "$id"
       landed=$((landed + 1))
       continue
@@ -1313,7 +1371,7 @@ cmd_poll() {
       bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
       node_set "$dir" "$id" 6 failed
       node_set "$dir" "$id" 10 ""
-      rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+      rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
       log_line "$dir" "$id → failed: ${nf_reason:-its pipeline stopped} (reported by the node's own pipeline)"
       printf 'failed=%s\n' "$id"
       continue
@@ -1330,23 +1388,42 @@ cmd_poll() {
       rm -f "$dir/why-$id.txt"
     fi
 
-    rows="$(awk 'END { print NR + 0 }' "$wt/.context/ship-run/$id/dispatch-log.md" 2>/dev/null || echo 0)"
+    fp="$(node_fingerprint "$wt" "$id")"
     prev="$(cat "$dir/progress-$id.txt" 2>/dev/null || true)"
-    if [ "$rows" != "$prev" ]; then
-      printf '%s\n' "$rows" > "$dir/progress-$id.txt"
+    if [ "$fp" != "$prev" ]; then
+      printf '%s\n' "$fp" > "$dir/progress-$id.txt"
+      printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
       rm -f "$dir/stall-$id.txt"
       # Logged, not just printed: graph-log.md is the only place progress is
       # visible from outside the orchestrator's turn, and a silent poll is
       # indistinguishable from a stuck run for whoever is watching.
+      rows="$(awk 'END { print NR + 0 }' "$wt/.context/ship-run/$id/dispatch-log.md" 2>/dev/null || echo 0)"
       log_line "$dir" "$id working — $((rows > 3 ? rows - 3 : 0)) phase(s) dispatched"
       printf 'working=%s\n' "$id"
       working=$((working + 1))
       continue
     fi
 
+    # Quiet since when, in seconds — not in polls. The poll count alone is a
+    # measure of how fast the coordinator can take a turn, not of how long the
+    # worker has been silent, and the two came apart badly enough to kill two
+    # healthy nodes in 45 seconds.
+    since="$(cat "$dir/progress-at-$id.txt" 2>/dev/null || true)"
+    case "$since" in ''|*[!0-9]*) since="$now"; printf '%s\n' "$now" > "$dir/progress-at-$id.txt" ;; esac
+    quiet_for=$(( now - since ))
+    [ "$quiet_for" -ge 0 ] || quiet_for=0
+
     stalls=$(( $(cat "$dir/stall-$id.txt" 2>/dev/null || echo 0) + 1 ))
     printf '%s\n' "$stalls" > "$dir/stall-$id.txt"
-    if [ "$stalls" -ge "$stall_max" ]; then
+    # A never-started node gets the shorter of the two windows: re-dispatching it
+    # is cheap and it has nothing to lose, but it still gets a floor — a worker
+    # reading its spec writes nothing either, and 80s from claim to the first row
+    # is normal on a healthy node.
+    local quiet_gate="$stall_after"
+    if [ -f "$dir/why-$id.txt" ] && [ "$quiet_gate" -gt "$NEVER_STARTED_AFTER" ]; then
+      quiet_gate="$NEVER_STARTED_AFTER"
+    fi
+    if [ "$stalls" -ge "$stall_max" ] && [ "$quiet_for" -ge "$quiet_gate" ]; then
       if [ -f "$dir/why-$id.txt" ]; then
         # Never started is not "stuck": the dispatch did not take. A fresh
         # dispatch is the fix, and the graph can issue one itself by returning
@@ -1359,7 +1436,7 @@ cmd_poll() {
           node_set "$dir" "$id" 6 failed
           node_set "$dir" "$id" 10 ""
           hold_node "$dir" "$id" "worker never started on $(node_field "$dir" "$id" 9) attempt(s)"
-          rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt"
+          rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt"
           log_line "$dir" "$id → failed: worker never started on $(node_field "$dir" "$id" 9) attempt(s) (attempt cap reached)"
           printf 'failed=%s\n' "$id"
         fi
@@ -1373,6 +1450,11 @@ cmd_poll() {
           --state "$dir" >/dev/null 2>&1 || true
         printf 'resumed\n' > "$dir/resumed-$id.txt"
         printf '0\n' > "$dir/stall-$id.txt"
+        # The nudge is only worth anything if the worker gets a whole window to
+        # answer it. Leaving the quiet clock where it was means the next three
+        # polls fail the node no matter what it does — which is the loop this
+        # whole change exists to break.
+        printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
         log_line "$dir" "$id quiet for $stalls polls — worker resumed once through the driver"
         printf 'resumed=%s\n' "$id"
       else
@@ -1381,12 +1463,12 @@ cmd_poll() {
         bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
         node_set "$dir" "$id" 6 failed
         node_set "$dir" "$id" 10 ""
-        rm -f "$dir/progress-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+        rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
         log_line "$dir" "$id → failed: no phase progress across $stalls polls after a resume (workspace kept: $wt)"
         printf 'failed=%s\n' "$id"
       fi
     else
-      log_line "$dir" "$id quiet ($stalls/$stall_max polls with no phase progress)"
+      log_line "$dir" "$id quiet (${quiet_for}s of ${quiet_gate}s with nothing written; $stalls/$stall_max polls)"
       printf 'quiet=%s\n' "$id"
     fi
   done < <(nodes_with_status "$dir" in_flight)
@@ -1496,9 +1578,11 @@ cmd_answer() {
   [ -f "$scratch/ask.md" ] || die "answer: $id has no pending question"
   printf '%s\n' "$answer" > "$scratch/answer.txt"
   rm -f "$scratch/ask.md"
-  # The stall counter has been ticking the whole time the node waited on this, so
-  # clear it — otherwise the answer arrives and the cap kills the node anyway.
+  # The stall counter and the quiet clock have both been running the whole time
+  # the node waited on this, so clear them — otherwise the answer arrives and the
+  # cap kills the node anyway.
   rm -f "$dir/stall-$id.txt"
+  date +%s > "$dir/progress-at-$id.txt"
   log_line "$dir" "$id answered: $answer"
   # The file alone wakes nobody: the worker ended its turn when it asked. Measured
   # live, three nodes sat on an answered question for 15+ minutes each until a
