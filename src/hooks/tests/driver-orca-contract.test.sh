@@ -88,7 +88,7 @@ case "$1 ${2:-}" in
   "worktree show")
     printf '{ "ok": true, "result": { "path": "/tmp/ws/N1", "branch": "refs/heads/ship/N1", "baseRef": "main" } }' ;;
   "repo list")
-    printf '{ "id": "envelope-uuid", "ok": true, "result": { "repos": [ { "id": "REPO-ID-HERE", "path": "REPO-PATH-HERE" } ] } }' ;;
+    printf '{\n "id": "envelope-uuid",\n "ok": true,\n "result": {\n  "repos": [\n   {\n    "id": "REPO-ID-HERE",\n    "path": "REPO-PATH-HERE",\n    "displayName": "the-repo"\n   }\n  ]\n }\n}\n' ;;
   "status "*|"status")
     printf '{ "ok": true, "result": { "runtime": { "reachable": true } } }' ;;
   *) printf '{ "ok": true, "result": {} }' ;;
@@ -375,12 +375,82 @@ test_repo_is_resolved_from_the_working_tree() {
 
 test_an_explicit_repo_wins() {
   local root line
-  root="$(new_case)"; run_dispatch "$root" --repo given-repo-id
+  root="$(new_case)"; run_dispatch "$root" --repo repo-from-cwd
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -q -- '--repo id:given-repo-id'; then
-    log_pass "a repo passed by the graph is used as given"
+  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd'; then
+    log_pass "a repo passed by the graph as an id is used as given"
   else
-    log_fail "a repo passed by the graph is used as given (got: $line)"
+    log_fail "a repo passed by the graph as an id is used as given (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
+# --- the repo the graph actually has -----------------------------------------
+#
+# SKILL.md step 2 builds each node's `repo` from the `repo:<name>` Linear label,
+# and that label holds a DISPLAY NAME. worker-start's selector only takes an id.
+# Measured live: a 17-node project whose issues carried repo:platform-agendx
+# built a graph that could not dispatch one node, and it took three destructive
+# --fresh re-inits to find out why.
+
+test_a_display_name_resolves_to_the_id() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root" --repo the-repo
+  line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
+  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd'; then
+    log_pass "a repo given by display name resolves to the runtime's id"
+  else
+    log_fail "a repo given by display name resolves to the runtime's id (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
+test_an_unknown_repo_is_refused_by_name() {
+  local root rc err
+  root="$(new_case)"; run_dispatch "$root" --repo not-a-repo
+  rc="$(cat "$root/rc.txt")"
+  err="$(cat "$root/err.txt")"
+  # Handing an unresolvable selector to the runtime buys one exit code per node.
+  # Saying which value failed, and what is registered, costs one call.
+  if [ "$rc" != "0" ] \
+     && printf '%s' "$err" | grep -q "matches no repo registered with the runtime" \
+     && printf '%s' "$err" | grep -q "the-repo" \
+     && ! grep -q '^orchestration worker-start ' "$root/argv.log"; then
+    log_pass "a repo that resolves to nothing is refused by name, before any workspace is made"
+  else
+    log_fail "a repo that resolves to nothing is refused by name (rc=$rc err='$err')"
+  fi
+  rm -rf "$root"
+}
+
+# --- the failure that could not report itself --------------------------------
+
+test_a_refused_worker_start_says_so() {
+  local root rc err
+  root="$(new_case)"
+  # A worker-start that dies hard: non-zero, nothing on stdout. json_id's grep
+  # then matched nothing, the bare assignment failed under pipefail, and set -e
+  # killed the driver before the block that reports this could run.
+  cat > "$root/bin/orca" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$(printf '%s' "$*" | tr '\n' ' ')" >> "$ORCA_FAKE_LOG"
+case "$1 ${2:-}" in
+  "orchestration run-create")  printf '{ "ok": true, "result": { "run": { "id": "run_x" } } }' ;;
+  "orchestration task-create") printf '{ "ok": true, "result": { "task": { "id": "task_x", "created_by_terminal_handle": "term_c" } } }' ;;
+  "orchestration worker-start") echo "boom" >&2; exit 1 ;;
+  "repo list") printf '{ "ok": true, "result": { "repos": [ { "id": "REPO-ID-HERE", "path": "REPO-PATH-HERE", "displayName": "the-repo" } ] } }' ;;
+  *) printf '{ "ok": true, "result": {} }' ;;
+esac
+exit 0
+FAKE
+  chmod +x "$root/bin/orca"
+  run_dispatch "$root" --repo repo-from-cwd
+  rc="$(cat "$root/rc.txt")"
+  err="$(cat "$root/err.txt")"
+  if [ "$rc" != "0" ] && printf '%s' "$err" | grep -q "the runtime refused to start N1"; then
+    log_pass "a worker-start that dies with an empty body is reported, not swallowed by set -e"
+  else
+    log_fail "a worker-start that dies with an empty body is reported (rc=$rc err='$err')"
   fi
   rm -rf "$root"
 }
@@ -535,6 +605,9 @@ test_the_worker_is_told_how_to_report_completion
 test_concurrent_dispatches_share_one_run
 test_repo_is_resolved_from_the_working_tree
 test_an_explicit_repo_wins
+test_a_display_name_resolves_to_the_id
+test_an_unknown_repo_is_refused_by_name
+test_a_refused_worker_start_says_so
 test_the_run_is_reused_across_dispatches
 test_a_probe_reads_the_runtime_not_just_the_path
 test_a_probe_declares_its_workspaces
