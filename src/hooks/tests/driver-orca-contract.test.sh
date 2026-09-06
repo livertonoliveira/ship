@@ -69,6 +69,16 @@ case "$1 ${2:-}" in
 esac
 
 case "$1 ${2:-}" in
+  "orchestration check")
+    # The behaviour the driver was blind to: the runtime REPLAYS the same
+    # delivery until it is acked, so an unacked caller is answered instantly,
+    # forever. ORCA_FAKE_CHECK picks which answer this call gets.
+    case "${ORCA_FAKE_CHECK:-replay}" in
+      replay)  printf '{ "ok": true, "result": { "deliveryId": "dlv_1", "messages": [ { "type": "worker_done", "taskId": "task_deadbeef02" } ] } }' ;;
+      fenced)  printf '{ "ok": false, "error": { "code": "consumer_fenced" } }' ;;
+      empty)   printf '{ "ok": true, "result": { "messages": [] } }' ;;
+    esac
+    exit 0 ;;
   "orchestration run-create")
     printf '{ "ok": true, "result": { "run": { "id": "run_deadbeef01" } } }' ;;
   "orchestration task-create")
@@ -423,6 +433,91 @@ test_a_probe_declares_its_workspaces() {
   rm -rf "$root"
 }
 
+# --- the wait window, which was not one --------------------------------------
+#
+# Measured on a live 17-node graph: `check --wait --timeout-ms 300000` was
+# answering in milliseconds, so the coordinator polled every 13-16s and
+# graph.sh's stall cap killed two working nodes inside 45 seconds. The runtime
+# was doing what it documents — replaying an unacked delivery — and this driver
+# had no way to tell that apart from a quiet five minutes.
+
+run_wait() {
+  local root="$1"; shift
+  local state="$root/state"
+  mkdir -p "$state"
+  printf 'run_deadbeef01\n' > "$state/driver-orca-run.txt"
+  printf 'term_c\n' > "$state/driver-orca-coordinator.txt"
+  printf 'runtime_task=task_deadbeef02\n' > "$state/driver-orca-N1.txt"
+  ORCA_FAKE_LOG="$root/argv.log" PATH="$root/bin:$PATH" ORCA_FAKE_CHECK="${ORCA_FAKE_CHECK:-replay}" \
+    bash "$DRIVER" wait --state "$state" "$@" > "$root/wait-out.txt" 2>"$root/wait-err.txt"
+  cat "$root/wait-out.txt"
+}
+
+test_wait_acks_the_previous_delivery() {
+  local root out
+  root="$(new_case)"
+  run_wait "$root" --timeout-ms 1000 >/dev/null
+  run_wait "$root" --timeout-ms 1000 >/dev/null
+  # Without --ack the runtime hands back the same batch every time and the wait
+  # window collapses to nothing. The id comes from the batch before it.
+  if grep '^orchestration check ' "$root/argv.log" | tail -1 | grep -q -- '--ack dlv_1'; then
+    log_pass "wait acknowledges the previous delivery, so the runtime stops replaying it"
+  else
+    log_fail "wait acknowledges the previous delivery (calls: $(grep -c '^orchestration check ' "$root/argv.log"))"
+  fi
+  rm -rf "$root"
+}
+
+test_a_replayed_signal_is_not_reported_twice() {
+  local root first second
+  root="$(new_case)"
+  first="$(run_wait "$root" --timeout-ms 1000)"
+  second="$(run_wait "$root" --timeout-ms 1000)"
+  # The first worker_done is real. The identical one behind it is the replay,
+  # and reporting it again is what turned the wait into a busy loop.
+  if printf '%s' "$first" | grep -q '^signal=worker_done$' \
+     && printf '%s' "$second" | grep -q '^replayed=1$' \
+     && ! printf '%s' "$second" | grep -q '^signal=worker_done$'; then
+    log_pass "a replayed delivery is not reported as a second worker finishing"
+  else
+    log_fail "a replayed delivery is not reported as a second worker finishing (first='$first' second='$second')"
+  fi
+  rm -rf "$root"
+}
+
+test_wait_owes_the_caller_its_window() {
+  local root began ended elapsed out
+  root="$(new_case)"
+  began="$(date +%s)"
+  out="$(ORCA_FAKE_CHECK=empty run_wait "$root" --timeout-ms 3000)"
+  ended="$(date +%s)"
+  elapsed=$(( ended - began ))
+  # graph.sh paces its stall checks on this call. A `wait` that answers in 50ms
+  # turns a three-minute window into a three-second one, whatever the reason.
+  if [ "$elapsed" -ge 3 ] && printf '%s' "$out" | grep -q '^timeout=1$' \
+     && printf '%s' "$out" | grep -q '^slept='; then
+    log_pass "a wait with nothing to report still spends the window it was given"
+  else
+    log_fail "a wait with nothing to report still spends the window it was given (elapsed=${elapsed}s out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_failed_check_is_named_not_swallowed() {
+  local root out
+  root="$(new_case)"
+  out="$(ORCA_FAKE_CHECK=fenced run_wait "$root" --timeout-ms 1000)"
+  # stderr discarded, exit code swallowed by `|| true`, empty parse falling
+  # through to timeout=1: a call that FAILED in 50ms read exactly like a wait
+  # window that closed, and nothing upstream could tell.
+  if printf '%s' "$out" | grep -q '^error=consumer_fenced$'; then
+    log_pass "a check the runtime refused is named, not reported as a quiet window"
+  else
+    log_fail "a check the runtime refused is named, not reported as a quiet window (out='$out')"
+  fi
+  rm -rf "$root"
+}
+
 test_a_run_is_created_before_anything_else
 test_task_create_carries_the_run
 test_the_retired_call_is_never_made
@@ -443,6 +538,10 @@ test_an_explicit_repo_wins
 test_the_run_is_reused_across_dispatches
 test_a_probe_reads_the_runtime_not_just_the_path
 test_a_probe_declares_its_workspaces
+test_wait_acks_the_previous_delivery
+test_a_replayed_signal_is_not_reported_twice
+test_wait_owes_the_caller_its_window
+test_a_failed_check_is_named_not_swallowed
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
