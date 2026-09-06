@@ -91,7 +91,7 @@ test_never_started_node_is_redispatched() {
       wt="$(bash "$DRIVER_LOCAL" collect "$n" --state ".context/ship-graph/f" | sed -n 's/^worktree=//p')"
       bash "$GRAPH" claim "$n" --worktree "$wt" --branch "ship/$n" >/dev/null
     done
-    for i in 1 2 3; do bash "$GRAPH" poll >/dev/null; done
+    for i in 1 2 3; do bash "$GRAPH" poll --stall-after 0 >/dev/null; done
   )
   out="$(cd "$repo" && bash "$GRAPH" next)"
   log="$repo/.context/ship-graph/f/graph-log.md"
@@ -116,7 +116,7 @@ test_poll_flags_never_started_separately() {
     bash "$DRIVER_LOCAL" dispatch N1 "/ship:run N1" --state ".context/ship-graph/f" --base main >/dev/null
     wt="$(bash "$DRIVER_LOCAL" collect N1 --state ".context/ship-graph/f" | sed -n 's/^worktree=//p')"
     bash "$GRAPH" claim N1 --worktree "$wt" --branch ship/N1 >/dev/null
-    for i in 1 2 3; do bash "$GRAPH" poll; done
+    for i in 1 2 3; do bash "$GRAPH" poll --stall-after 0; done
   )"
   if printf '%s' "$out" | grep -q '^retried=N1$'; then
     log_pass "poll returns a node no pipeline ever ran in to the frontier (retried=)"

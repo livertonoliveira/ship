@@ -128,7 +128,7 @@ test_a_merged_pr_completes_the_node() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" MERGED
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
@@ -150,7 +150,7 @@ test_an_open_pr_keeps_the_node_landed() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
@@ -170,7 +170,7 @@ test_a_closed_pr_fails_the_node() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" CLOSED
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   local held
   held="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
@@ -201,7 +201,7 @@ test_a_missing_pr_is_surfaced_not_assumed() {
     bash "$GRAPH" land TASK-001 >/dev/null
   )
   make_gh "$dir" MERGED
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
@@ -222,7 +222,7 @@ test_the_coordinator_checkout_is_never_touched() {
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" MERGED
   before="$(git -C "$dir" rev-parse HEAD)"
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   after="$(git -C "$dir" rev-parse HEAD)"
   [ -f "$dir/src/good.ts" ] && present=1
   rm -rf "$dir"
@@ -242,10 +242,10 @@ test_a_dependent_waits_for_the_real_merge() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   while_open="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   make_gh "$dir" MERGED
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   after_merge="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
 
@@ -266,7 +266,7 @@ test_next_hands_the_open_prs_to_the_user() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
 
@@ -289,7 +289,7 @@ test_an_armed_pr_waits_instead_of_asking() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN armed
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
 
@@ -310,7 +310,7 @@ test_an_unarmed_pr_still_asks() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
 
@@ -329,7 +329,7 @@ test_no_forge_does_not_deadlock_the_run() {
   (cd "$dir" && git remote remove origin)
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
-  out="$(cd "$dir" && bash "$GRAPH" poll)"
+  out="$(cd "$dir" && bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
@@ -424,7 +424,7 @@ test_graph_merge_policy_merges_a_clean_unarmed_pr() {
   landed_node "$dir" TASK-001 src/good.ts
   make_gh_merge "$dir" CLEAN
   (cd "$dir" && bash "$GRAPH" set --merge-policy graph >/dev/null)
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   local next_out
@@ -449,7 +449,7 @@ test_graph_merge_policy_waits_while_checks_run() {
   landed_node "$dir" TASK-001 src/good.ts
   make_gh_merge "$dir" BLOCKED
   (cd "$dir" && bash "$GRAPH" set --merge-policy graph >/dev/null)
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
@@ -470,7 +470,7 @@ test_graph_merge_policy_hands_a_conflict_to_a_person() {
   landed_node "$dir" TASK-001 src/good.ts
   make_gh_merge "$dir" DIRTY
   (cd "$dir" && bash "$GRAPH" set --merge-policy graph >/dev/null)
-  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
@@ -490,7 +490,7 @@ test_human_merge_policy_never_merges() {
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh_merge "$dir" CLEAN
-  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll)"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
   if printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' && [ -z "$merged" ]; then

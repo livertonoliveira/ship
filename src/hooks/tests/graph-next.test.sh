@@ -153,7 +153,7 @@ test_poll_lands_on_the_completion_artifact_not_a_handshake() {
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
   )
-  out="$(cd "$dir" && bash "$GRAPH" poll)"
+  out="$(cd "$dir" && bash "$GRAPH" poll --stall-after 0)"
   local inflight
   inflight="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "in_flight"' || true)"
   rm -rf "$dir"
@@ -179,7 +179,7 @@ test_poll_seals_uncommitted_work_into_the_branch() {
     mkdir -p wt-TASK-001/src/db
     printf 'export const s = 1\n' > wt-TASK-001/src/db/schema.ts
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
   )
   commits="$(git -C "$dir/wt-TASK-001" rev-list --count main..ship/TASK-001 2>/dev/null || echo 0)"
   local has_file=0
@@ -205,7 +205,7 @@ test_poll_reports_progress_without_landing() {
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
   )
-  out="$(cd "$dir" && bash "$GRAPH" poll)"
+  out="$(cd "$dir" && bash "$GRAPH" poll --stall-after 0)"
   rm -rf "$dir"
 
   if printf '%s' "$out" | grep -q '^working=TASK-001$' && ! printf '%s' "$out" | grep -q '^landed='; then
@@ -229,16 +229,16 @@ test_stalled_node_is_resumed_retried_then_reported() {
     # the stall count starts on the second: resume on the 4th poll, fail three
     # quiet polls after that.
     printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
     bash "$GRAPH" next > next1.txt
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
     bash "$GRAPH" next > next2.txt
     # The retry: a second claim in a fresh workspace, quiet again.
     git worktree add -q wt2-TASK-001 -b ship/TASK-001-r2 main
     bash "$GRAPH" claim TASK-001 --worktree "wt2-TASK-001" --branch ship/TASK-001-r2 >/dev/null
     printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt2-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
     bash "$GRAPH" next > next3.txt
   )
   out_after_resume="$(cat "$dir/next1.txt")"
@@ -273,13 +273,13 @@ test_never_started_node_is_redispatched_within_the_cap() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     # No dispatch-log.md at all: the pipeline never ran a single phase.
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll > poll3.txt
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 > poll3.txt
     bash "$GRAPH" next > next1.txt
     git worktree add -q wt2-TASK-001 -b ship/TASK-001-r2 main
     bash "$GRAPH" claim TASK-001 --worktree "wt2-TASK-001" --branch ship/TASK-001-r2 >/dev/null
-    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll > poll6.txt
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 > poll6.txt
   )
   out1="$(cat "$dir/poll3.txt")"
   out2="$(cat "$dir/poll6.txt")"
@@ -350,10 +350,10 @@ test_progress_resets_the_stall_counter() {
     bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
     printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -611,13 +611,13 @@ test_poll_writes_progress_to_the_log() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll > poll4.txt
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll >/dev/null
-    bash "$GRAPH" poll > poll7.txt
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 > poll4.txt
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 > poll7.txt
   )
   out4="$(cat "$dir/poll4.txt")"
   out7="$(cat "$dir/poll7.txt")"
@@ -674,7 +674,7 @@ test_batch_admission_holds_a_freed_slot() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
     bash "$GRAPH" next >/dev/null
     make_workspace "$dir" TASK-002 src/api/routes.ts
     bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
@@ -704,7 +704,7 @@ test_a_failed_node_does_not_freeze_the_run() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
     bash "$GRAPH" next >/dev/null
     make_workspace "$dir" TASK-002 src/api/routes.ts
     bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
@@ -754,7 +754,7 @@ test_poll_fails_a_node_from_its_own_verdict() {
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf 'plan failed validation after retries\n' > "wt-TASK-001/.context/ship-run/TASK-001/node-failed.txt"
   )
-  out="$(cd "$dir" && bash "$GRAPH" poll)"
+  out="$(cd "$dir" && bash "$GRAPH" poll --stall-after 0)"
   status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
   reason="$(grep -c 'plan failed validation after retries' "$dir/.context/ship-graph/f/graph-log.md" || true)"
   rm -rf "$dir"
@@ -776,14 +776,14 @@ test_next_refreshes_stale_conflict_edges_itself() {
     make_workspace "$dir" TASK-001 src/db/schema.ts
     bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
     printf 'deferred\n' > "wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
     # 002 and 004 overlap on src/api; 002 takes the slot, 004 is recorded as blocked by it.
     bash "$GRAPH" next >/dev/null
     make_workspace "$dir" TASK-002 src/api/routes.ts
     bash "$GRAPH" claim TASK-002 --worktree "wt-TASK-002" --branch ship/TASK-002 >/dev/null
     bash "$GRAPH" conflicts >/dev/null
     printf 'deferred\n' > "wt-TASK-002/.context/ship-run/TASK-002/homolog-approved.txt"
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
   )
   # TASK-002 is merged (no forge) and TASK-004 still carries blocked_by_conflict=TASK-002
   # in the state file. A next that trusted it would find nothing to dispatch.
@@ -814,7 +814,7 @@ test_seal_keeps_shared_tasks_md_out_of_node_commits() {
     # tasks.md marking itself done.
     printf '# Tasks\n\n### TASK-001 — a (done)\n' > wt-TASK-001/ship/changes/f/tasks.md
     printf 'deferred\n' > wt-TASK-001/.context/ship-run/TASK-001/homolog-approved.txt
-    bash "$GRAPH" poll >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
   )
   git -C "$dir" show "ship/TASK-001:src/db/schema.ts" >/dev/null 2>&1 && has_code=1
   git -C "$dir" diff --quiet main ship/TASK-001 -- ship/changes/f/tasks.md 2>/dev/null && has_tasks=0 || has_tasks=1
@@ -1449,6 +1449,143 @@ test_tasks_md_parser_ignores_rules_and_prose
 test_failed_init_leaves_no_debris
 test_corrected_init_after_a_failure_is_not_refused_as_resume
 test_poll_lands_on_the_completion_artifact_not_a_handshake
+# --- what a 17-node live run actually did ------------------------------------
+#
+# Two healthy nodes were killed 45 seconds into a develop phase, their finished
+# work discarded, re-dispatched into fresh workspaces and killed again — and the
+# ten nodes downstream of them never ran. Both halves of the cause are pinned
+# here: the stall cap counted POLLS (a measure of the coordinator's turn
+# latency, not the worker's silence), and progress was dispatch-log.md's row
+# count alone (which does not move during the phases that take the longest).
+
+test_a_fast_poll_loop_cannot_fail_a_working_node() {
+  local name="a quiet node is not failed until the quiet SECONDS run out, however fast the coordinator polls"
+  local dir out status resumed i
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    # Twenty polls back to back — far past --stall-max — inside a window that
+    # has not elapsed. This is the live cadence: 13-16s apart against a
+    # five-minute wait that was returning immediately.
+    for i in $(seq 20); do bash "$GRAPH" poll > poll.txt; done
+  )
+  out="$(cat "$dir/poll.txt")"
+  status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
+  resumed="$(grep -c 'worker resumed once' "$dir/.context/ship-graph/f/graph-log.md" 2>/dev/null | head -1 || true)"
+  rm -rf "$dir"
+
+  if [ "$status" = "in_flight" ] && [ "$resumed" = "0" ] \
+    && printf '%s' "$out" | grep -q '^quiet=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (status=$status resumed=$resumed out='$out')"
+  fi
+}
+
+test_the_quiet_log_line_names_the_seconds() {
+  local name="the quiet log line reports the seconds that decide, not only the poll count"
+  local dir line
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    bash "$GRAPH" poll >/dev/null; bash "$GRAPH" poll >/dev/null
+  )
+  line="$(grep 'quiet (' "$dir/.context/ship-graph/f/graph-log.md" | tail -1)"
+  rm -rf "$dir"
+  # Whoever is watching graph-log.md has to be able to tell "45 seconds in" from
+  # "fifteen minutes in" — the old line said "2/3 polls" for both.
+  if printf '%s' "$line" | grep -qE 's of [0-9]+s with nothing written'; then
+    log_pass "$name"
+  else
+    log_fail "$name (line='$line')"
+  fi
+}
+
+test_work_in_the_tree_counts_as_progress() {
+  local name="a worker writing source files is progress — develop dispatches one row and then writes for minutes"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    # No new dispatch row — this is develop implementing, which is exactly the
+    # stretch the row count is blind to.
+    printf 'export const y = 2\n' > wt-TASK-001/src/db/other.ts
+    bash "$GRAPH" poll --stall-after 0 > poll.txt
+  )
+  out="$(cat "$dir/poll.txt")"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^working=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_a_resume_buys_a_whole_new_window() {
+  local name="a resumed node gets a fresh quiet window, not the three polls left over from the old one"
+  local dir status i
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    # Run the clock out once so the node is resumed...
+    for i in 1 2 3 4; do bash "$GRAPH" poll --stall-after 0 >/dev/null; done
+    # ...then poll under a real window. The node was just nudged; failing it now
+    # on the leftover clock is the loop this exists to break.
+    for i in 1 2 3 4 5; do bash "$GRAPH" poll >/dev/null; done
+  )
+  status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
+  rm -rf "$dir"
+  if [ "$status" = "in_flight" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (status=$status)"
+  fi
+}
+
+test_stall_after_is_a_live_knob() {
+  local name="set --stall-after changes a live graph's quiet window without touching nodes or counters"
+  local dir out meta
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" set --stall-after 1800)"
+  meta="$(grep '^stall_after' "$dir/.context/ship-graph/f/meta.tsv" | cut -f2)"
+  local rc=0
+  (cd "$dir" && bash "$GRAPH" set --stall-after 30 >/dev/null 2>&1) || rc=$?
+  rm -rf "$dir"
+  # Below a minute is not a window, it is the bug with a different number.
+  if printf '%s' "$out" | grep -q '^stall_after=1800$' && [ "$meta" = "1800" ] && [ "$rc" -ne 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' meta=$meta rc=$rc)"
+  fi
+}
+
 test_claim_marks_the_workspace_as_having_a_coordinator
 test_a_nodes_question_reaches_the_coordinator
 test_answer_refuses_a_node_with_no_pending_question
@@ -1456,6 +1593,11 @@ test_poll_seals_uncommitted_work_into_the_branch
 test_poll_reports_progress_without_landing
 test_stalled_node_is_resumed_retried_then_reported
 test_never_started_node_is_redispatched_within_the_cap
+test_a_fast_poll_loop_cannot_fail_a_working_node
+test_the_quiet_log_line_names_the_seconds
+test_work_in_the_tree_counts_as_progress
+test_a_resume_buys_a_whole_new_window
+test_stall_after_is_a_live_knob
 test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
 test_progress_resets_the_stall_counter
