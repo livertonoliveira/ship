@@ -437,6 +437,66 @@ test_invalid_layer_fails() {
   rm -rf "$dir"
 }
 
+# --- the dependency qualifier ------------------------------------------------
+#
+# Measured 2026-09-06 on the api-agendx graph: MOB-3114's plan declared
+# `Depends on: M1 (uses summary.js)` with M1 defined two modules above. The
+# validator compared the whole string against the known ids and rejected a plan
+# that was correct, burning one of the node's two attempts — and MOB-3114 alone
+# held five dependents. The replan happened to write the bare id and passed, so
+# the failure is a coin flip per node rather than a reproducible stop.
+#
+# `slot_header_re` already tolerates exactly this shape after a scenario id, for
+# exactly this reason. The two must not disagree.
+
+test_dependency_with_a_qualifier_passes() {
+  local name="a dependency annotated with its reason resolves to the bare module id"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "lib" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "$(module_block "M2" "consumidor" "src/b.ts" "M1 (uses summary.js)" "$(scenario_tag 02)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.ts")" \
+    "$(contract_slot "$(scenario_tag 02)" unit "src/b.ts")")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
+test_several_qualified_dependencies_pass() {
+  local name="a comma-separated list of annotated dependencies resolves every id"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "lib" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "$(module_block "M2" "outra lib" "src/b.ts" "none" "$(scenario_tag 02)")" \
+    "$(module_block "M3" "consumidor" "src/c.ts" "M1 (uses summary.js), M2 (uses http.js)" "$(scenario_tag 03)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.ts")" \
+    "$(contract_slot "$(scenario_tag 02)" unit "src/b.ts")" \
+    "$(contract_slot "$(scenario_tag 03)" unit "src/c.ts")")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
+test_a_qualifier_does_not_hide_an_unknown_id() {
+  local name="an annotated dependency on a module that does not exist still fails"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "M9 (uses ghost.js)" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.ts")")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: dependência inválida — M1 referencia M9 inexistente"
+  rm -rf "$dir"
+}
+
 test_invalid_dependency_ref_fails() {
   local name="a module depending on an unknown module id fails with dependência inválida"
   local dir plan
@@ -672,6 +732,9 @@ test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails
 test_scaffolded_plan_may_divert_an_inventory_file
 test_invalid_layer_fails
 test_invalid_dependency_ref_fails
+test_dependency_with_a_qualifier_passes
+test_several_qualified_dependencies_pass
+test_a_qualifier_does_not_hide_an_unknown_id
 test_two_node_cycle_fails
 test_self_loop_cycle_fails
 test_three_node_cycle_fails
