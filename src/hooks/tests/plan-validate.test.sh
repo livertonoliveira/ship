@@ -497,6 +497,68 @@ test_a_qualifier_does_not_hide_an_unknown_id() {
   rm -rf "$dir"
 }
 
+# --- a scenario title is prose, and prose contains '>' -----------------------
+#
+# Measured 2026-09-06: MOB-3127 failed three identical times on a slot the
+# scaffold had emitted verbatim. Its title read `Crescimento de RSS > 15%`, the
+# `>` was taken for the arrow, the slot stopped counting as keyed, and the
+# validator demanded a `(derived: ...)` marker for a slot the planner had not
+# invented. Deterministic, so every retry burned an attempt for nothing. In a
+# load-testing spec `>` and `p95 > 200ms` are ordinary words.
+
+test_scenario_title_with_a_greater_than_is_a_keyed_slot() {
+  local name="a scenario title containing '>' is still recognised as a scaffolded slot"
+  local dir plan scaffold
+  dir="$(mktemp -d)"
+  scaffold="$dir/plan-scaffold.md"
+  {
+    printf '%s\n' "## Test Contract"
+    printf '%s\n' "### S1 @SC-01 (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
+  } > "$scaffold"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "relatorio" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (Crescimento de RSS > 15% retorna exit 1) -> unit -> src/a.spec.ts")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
+test_title_with_gte_is_matched_without_a_scaffold() {
+  local name="a title carrying '>=' is matched by the slot lookup, not only by the scaffold diff"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "relatorio" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### $(scenario_tag 01) (p95 >= 200ms falha) -> unit -> src/a.spec.ts")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
+test_an_unkeyed_slot_is_still_caught_beside_a_greater_than_title() {
+  local name="a genuinely unkeyed slot is still caught beside a title containing '>'"
+  local dir plan scaffold
+  dir="$(mktemp -d)"
+  scaffold="$dir/plan-scaffold.md"
+  {
+    printf '%s\n' "## Test Contract"
+    printf '%s\n' "### S1 @SC-01 (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
+  } > "$scaffold"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "relatorio" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (Crescimento de RSS > 15% retorna exit 1) -> unit -> src/a.spec.ts" \
+    "### AC-99 (inventado pelo planner) -> unit -> src/b.spec.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "slot fora do scaffold e não marcado"
+  rm -rf "$dir"
+}
+
 test_invalid_dependency_ref_fails() {
   local name="a module depending on an unknown module id fails with dependência inválida"
   local dir plan
@@ -735,6 +797,9 @@ test_invalid_dependency_ref_fails
 test_dependency_with_a_qualifier_passes
 test_several_qualified_dependencies_pass
 test_a_qualifier_does_not_hide_an_unknown_id
+test_scenario_title_with_a_greater_than_is_a_keyed_slot
+test_title_with_gte_is_matched_without_a_scaffold
+test_an_unkeyed_slot_is_still_caught_beside_a_greater_than_title
 test_two_node_cycle_fails
 test_self_loop_cycle_fails
 test_three_node_cycle_fails
