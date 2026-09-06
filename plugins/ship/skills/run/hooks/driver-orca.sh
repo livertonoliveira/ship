@@ -49,6 +49,7 @@ REPO=""
 BASE=""
 TASK=""
 TIMEOUT_MS="300000"
+UNTIL_FILES=""
 
 parse_flags() {
   REST=()
@@ -59,6 +60,8 @@ parse_flags() {
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
       --timeout-ms) TIMEOUT_MS="$2"; shift 2 ;;
+      --until-file) UNTIL_FILES="$UNTIL_FILES$2
+"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) REST+=("$1"); shift ;;
     esac
@@ -498,102 +501,129 @@ verb_collect() {
 # worker thinks it finished; graph.sh poll decides it, by reading the
 # workspace's own homolog-approved.txt. The message is still worth waiting on
 # because it ends the wait window early — it just does not get to land a node.
+# The first --until-file that exists, or nothing.
+#
+# pipeline.sh writes homolog-approved.txt, node-failed.txt and ask.md in bash,
+# the instant each happens. The runtime's worker_done, by contrast, is a message
+# the worker LLM sends when it gets round to it — so the artifact is always on
+# disk first, sometimes by minutes. Watching the disk is what makes the window
+# end when the thing actually happened, rather than when someone mentioned it.
+first_existing() {
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -e "$f" ] && { printf '%s' "$f"; return 0; }
+  done <<EOF
+$UNTIL_FILES
+EOF
+  return 1
+}
+
+# `done=` is deliberately NOT emitted. A worker_done message is a hint that a
+# worker thinks it finished; graph.sh poll decides it, by reading the
+# workspace's own homolog-approved.txt. An artifact seen here is the same kind
+# of hint: it ends the wait window early and decides nothing.
 verb_wait() {
   require_state
   require_cli
 
-  local run coordinator args=() out
+  local run coordinator
   run="$(cat "$STATE/driver-orca-run.txt" 2>/dev/null || true)"
   coordinator="$(cat "$STATE/driver-orca-coordinator.txt" 2>/dev/null || true)"
 
-  # The runtime replays the SAME delivery until it is acknowledged — `orca
-  # orchestration check --help`: "A bound Run replays the same Delivery until
-  # --ack; process every message before acknowledging." This driver never
-  # acked, so once any message landed in the coordinator's queue every later
-  # `check --wait` answered with that stale batch the instant it was called and
-  # the wait window collapsed to zero.
-  local ack
-  ack="$(cat "$STATE/driver-orca-delivery.txt" 2>/dev/null || true)"
+  # Already there before the first block: a run that finished while the previous
+  # turn was being taken must not buy another full window.
+  local hit
+  hit="$(first_existing || true)"
+  if [ -n "$hit" ]; then
+    printf 'artifact=%s\n' "$hit"
+    printf 'signal=artifact\n'
+    return 0
+  fi
 
-  args=(orchestration check --wait --types worker_done,escalation --timeout-ms "$TIMEOUT_MS" --json)
-  [ -n "$run" ] && args+=(--run "$run")
-  [ -n "$coordinator" ] && args+=(--terminal "$coordinator")
-  [ -n "$ack" ] && args+=(--ack "$ack")
-
-  # stderr carries the 15s keepalives, never results.
-  local began ended
+  # The window is spent in slices instead of one call. Between them the disk is
+  # checked, which is the only signal that tracks reality; the runtime channel
+  # is still listened to, because an escalation only ever arrives that way.
+  # The total blocked time is unchanged, so the caller's pacing is unchanged.
+  local slice_ms=15000 deadline began now_s left_ms out
   began="$(date +%s)"
-  out="$(orca "${args[@]}" 2>/dev/null || true)"
-  ended="$(date +%s)"
+  deadline=$(( began + TIMEOUT_MS / 1000 ))
 
-  # Whatever delivery this batch belongs to is acked on the NEXT call. Written
-  # before anything else so a caller that dies mid-turn still stops the replay.
-  local delivery
-  delivery="$(printf '%s' "$out" | json_val deliveryId)"
-  [ -n "$delivery" ] || delivery="$(printf '%s' "$out" | json_val delivery_id)"
-  [ -n "$delivery" ] || delivery="$(printf '%s' "$out" \
-    | sed -n 's/.*"delivery"[[:space:]]*:[[:space:]]*{[^}]*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-  [ -n "$delivery" ] && printf '%s\n' "$delivery" > "$STATE/driver-orca-delivery.txt"
+  while :; do
+    now_s="$(date +%s)"
+    left_ms=$(( (deadline - now_s) * 1000 ))
+    [ "$left_ms" -gt 0 ] || break
+    [ "$left_ms" -lt "$slice_ms" ] && slice_ms="$left_ms"
 
-  # An `ok:false` answer used to be indistinguishable from a quiet five minutes:
-  # stderr was discarded, the exit code swallowed by `|| true`, and the empty
-  # parse fell through to `timeout=1`. A call that FAILED in 50ms then read to
-  # the graph exactly like a wait window that closed. Name it instead.
-  local err=""
-  if printf '%s' "$out" | grep -q '"ok"[[:space:]]*:[[:space:]]*false'; then
-    err="$(printf '%s' "$out" | json_val code)"
-    printf 'error=%s\n' "${err:-unknown}"
-  fi
+    # The runtime replays the SAME delivery until it is acknowledged — `orca
+    # orchestration check --help`: "A bound Run replays the same Delivery until
+    # --ack; process every message before acknowledging." This driver never
+    # acked, so once any message landed in the coordinator's queue every later
+    # `check --wait` answered with that stale batch the instant it was called
+    # and the wait window collapsed to zero.
+    local ack args=()
+    ack="$(cat "$STATE/driver-orca-delivery.txt" 2>/dev/null || true)"
+    args=(orchestration check --wait --types worker_done,escalation --timeout-ms "$slice_ms" --json)
+    [ -n "$run" ] && args+=(--run "$run")
+    [ -n "$coordinator" ] && args+=(--terminal "$coordinator")
+    [ -n "$ack" ] && args+=(--ack "$ack")
 
-  local payload
-  payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | head -1 || true)"
+    # stderr carries the 15s keepalives, never results.
+    out="$(orca "${args[@]}" 2>/dev/null || true)"
 
-  # The same payload twice running is the replay, not a second worker finishing.
-  # Reporting it again is what turned the wait into a busy loop.
-  local last replayed=0
-  last="$(cat "$STATE/driver-orca-last-signal.txt" 2>/dev/null || true)"
-  if [ -n "$payload" ] && [ "$payload" = "$last" ]; then
-    replayed=1
-    payload=""
-  fi
-  [ -n "$payload" ] && printf '%s\n' "$payload" > "$STATE/driver-orca-last-signal.txt"
+    # Whatever delivery this batch belongs to is acked on the NEXT call. Written
+    # before anything else so a caller that dies mid-turn still stops the replay.
+    local delivery
+    delivery="$(printf '%s' "$out" | json_val deliveryId)"
+    [ -n "$delivery" ] || delivery="$(printf '%s' "$out" | json_val delivery_id)"
+    [ -n "$delivery" ] || delivery="$(printf '%s' "$out" \
+      | sed -n 's/.*"delivery"[[:space:]]*:[[:space:]]*{[^}]*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    [ -n "$delivery" ] && printf '%s\n' "$delivery" > "$STATE/driver-orca-delivery.txt"
 
-  if [ -n "$payload" ]; then
-    local f rtask task
-    for f in "$STATE"/driver-orca-*.txt; do
-      [ -f "$f" ] || continue
-      rtask="$(kv_get "$f" runtime_task)"
-      [ "$rtask" = "$payload" ] || continue
-      task="$(basename "$f" .txt)"
-      task="${task#driver-orca-}"
-      printf 'reported=%s\n' "$task"
-    done
-  fi
+    # An `ok:false` answer used to be indistinguishable from a quiet five
+    # minutes: stderr discarded, the exit code swallowed by `|| true`, and the
+    # empty parse falling through to `timeout=1`. A call that FAILED in 50ms
+    # then read to the graph exactly like a wait window that closed.
+    if printf '%s' "$out" | grep -q '"ok"[[:space:]]*:[[:space:]]*false'; then
+      printf 'error=%s\n' "$(printf '%s' "$out" | json_val code)"
+    fi
 
-  if printf '%s' "$out" | grep -q '"type"[[:space:]]*:[[:space:]]*"escalation"'; then
-    printf 'signal=escalation\n'
-    return 0
-  fi
-  if [ -n "$payload" ]; then
-    printf 'signal=worker_done\n'
-    return 0
-  fi
+    if printf '%s' "$out" | grep -q '"type"[[:space:]]*:[[:space:]]*"escalation"'; then
+      printf 'signal=escalation\n'
+      return 0
+    fi
 
-  # Nothing real happened, so this call OWES the caller the rest of its window.
-  # graph.sh paces itself on this verb: every poll it takes is a chance to
-  # mistake a long phase for a dead worker, and a `wait` that answers in 50ms
-  # turns a 5-minute window into a 14-second one. Measured live on a 17-node
-  # graph: polls 13-16s apart against --timeout-ms 300000, which is what let the
-  # stall cap kill two working nodes inside 45 seconds. Sleeping the remainder
-  # keeps the cadence the caller asked for whatever the runtime just did —
-  # a replayed delivery, a fenced terminal, an argument the CLI rejected.
-  local left=$(( TIMEOUT_MS / 1000 - (ended - began) ))
-  if [ "$left" -gt 0 ]; then
-    sleep "$left"
-    printf 'slept=%s\n' "$left"
-  fi
-  [ "$replayed" -eq 1 ] && printf 'replayed=1\n'
+    local payload last
+    payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | head -1 || true)"
+    # The same payload twice running is the replay, not a second worker
+    # finishing. Reporting it again is what turned the wait into a busy loop.
+    last="$(cat "$STATE/driver-orca-last-signal.txt" 2>/dev/null || true)"
+    if [ -n "$payload" ] && [ "$payload" != "$last" ]; then
+      printf '%s\n' "$payload" > "$STATE/driver-orca-last-signal.txt"
+      local f rtask task
+      for f in "$STATE"/driver-orca-*.txt; do
+        [ -f "$f" ] || continue
+        rtask="$(kv_get "$f" runtime_task)"
+        [ "$rtask" = "$payload" ] || continue
+        task="$(basename "$f" .txt)"
+        task="${task#driver-orca-}"
+        printf 'reported=%s\n' "$task"
+      done
+      printf 'signal=worker_done\n'
+      return 0
+    fi
+
+    hit="$(first_existing || true)"
+    if [ -n "$hit" ]; then
+      printf 'artifact=%s\n' "$hit"
+      printf 'signal=artifact\n'
+      printf 'waited=%s\n' "$(( $(date +%s) - began ))"
+      return 0
+    fi
+  done
+
   # A timeout is a checkpoint, not a failure: coding tasks routinely run long.
+  printf 'waited=%s\n' "$(( $(date +%s) - began ))"
   printf 'timeout=1\n'
 }
 

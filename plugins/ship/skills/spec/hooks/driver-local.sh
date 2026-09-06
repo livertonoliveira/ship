@@ -37,6 +37,10 @@ parse_flags() {
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
       --timeout-ms) shift 2 ;;
+      # Accepted and ignored: this driver's workers run inside the dispatching
+      # turn, so there is no window for an artifact to shorten. Swallowing the
+      # flag keeps every driver callable with the same argv.
+      --until-file) shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) REST+=("$1"); shift ;;
     esac

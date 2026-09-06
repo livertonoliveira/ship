@@ -13,7 +13,14 @@ set -euo pipefail
 # Seven verbs, same contract in every driver:
 #   dispatch <task> <prompt> [--repo <r>] [--state <dir>] [--base <ref>]
 #   collect  <task> [--state <dir>]
-#   wait     [--state <dir>] [--timeout-ms <n>]
+#   wait     [--state <dir>] [--timeout-ms <n>] [--until-file <path>]...
+#            --until-file names an artifact whose APPEARANCE ends the window
+#            early. The graph passes one per thing it is actually waiting for,
+#            because the runtime's own worker_done is sent by the worker when it
+#            gets round to it, while pipeline.sh writes the artifact in bash the
+#            instant the run ends. Measured: 3m37s between homolog-approved.txt
+#            landing on disk and the coordinator noticing, with the whole wait
+#            window spent listening to a channel that had nothing on it yet.
 #   ask      <question> [--task <t>] [--state <dir>]
 #   resume   <task> <message> [--state <dir>] — wake a worker that is waiting on
 #            the coordinator (an answer landed, or it stopped advancing). The
@@ -40,6 +47,7 @@ REPO=""
 BASE=""
 TASK=""
 TIMEOUT_MS=""
+UNTIL_FILES=""
 
 parse_flags() {
   REST=()
@@ -50,6 +58,8 @@ parse_flags() {
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
       --timeout-ms) TIMEOUT_MS="$2"; shift 2 ;;
+      --until-file) UNTIL_FILES="$UNTIL_FILES$2
+"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) REST+=("$1"); shift ;;
     esac
