@@ -460,15 +460,58 @@ verb_wait() {
   run="$(cat "$STATE/driver-orca-run.txt" 2>/dev/null || true)"
   coordinator="$(cat "$STATE/driver-orca-coordinator.txt" 2>/dev/null || true)"
 
+  # The runtime replays the SAME delivery until it is acknowledged — `orca
+  # orchestration check --help`: "A bound Run replays the same Delivery until
+  # --ack; process every message before acknowledging." This driver never
+  # acked, so once any message landed in the coordinator's queue every later
+  # `check --wait` answered with that stale batch the instant it was called and
+  # the wait window collapsed to zero.
+  local ack
+  ack="$(cat "$STATE/driver-orca-delivery.txt" 2>/dev/null || true)"
+
   args=(orchestration check --wait --types worker_done,escalation --timeout-ms "$TIMEOUT_MS" --json)
   [ -n "$run" ] && args+=(--run "$run")
   [ -n "$coordinator" ] && args+=(--terminal "$coordinator")
+  [ -n "$ack" ] && args+=(--ack "$ack")
 
   # stderr carries the 15s keepalives, never results.
+  local began ended
+  began="$(date +%s)"
   out="$(orca "${args[@]}" 2>/dev/null || true)"
+  ended="$(date +%s)"
+
+  # Whatever delivery this batch belongs to is acked on the NEXT call. Written
+  # before anything else so a caller that dies mid-turn still stops the replay.
+  local delivery
+  delivery="$(printf '%s' "$out" | json_val deliveryId)"
+  [ -n "$delivery" ] || delivery="$(printf '%s' "$out" | json_val delivery_id)"
+  [ -n "$delivery" ] || delivery="$(printf '%s' "$out" \
+    | sed -n 's/.*"delivery"[[:space:]]*:[[:space:]]*{[^}]*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  [ -n "$delivery" ] && printf '%s\n' "$delivery" > "$STATE/driver-orca-delivery.txt"
+
+  # An `ok:false` answer used to be indistinguishable from a quiet five minutes:
+  # stderr was discarded, the exit code swallowed by `|| true`, and the empty
+  # parse fell through to `timeout=1`. A call that FAILED in 50ms then read to
+  # the graph exactly like a wait window that closed. Name it instead.
+  local err=""
+  if printf '%s' "$out" | grep -q '"ok"[[:space:]]*:[[:space:]]*false'; then
+    err="$(printf '%s' "$out" | json_val code)"
+    printf 'error=%s\n' "${err:-unknown}"
+  fi
 
   local payload
   payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | head -1 || true)"
+
+  # The same payload twice running is the replay, not a second worker finishing.
+  # Reporting it again is what turned the wait into a busy loop.
+  local last replayed=0
+  last="$(cat "$STATE/driver-orca-last-signal.txt" 2>/dev/null || true)"
+  if [ -n "$payload" ] && [ "$payload" = "$last" ]; then
+    replayed=1
+    payload=""
+  fi
+  [ -n "$payload" ] && printf '%s\n' "$payload" > "$STATE/driver-orca-last-signal.txt"
+
   if [ -n "$payload" ]; then
     local f rtask task
     for f in "$STATE"/driver-orca-*.txt; do
@@ -483,12 +526,29 @@ verb_wait() {
 
   if printf '%s' "$out" | grep -q '"type"[[:space:]]*:[[:space:]]*"escalation"'; then
     printf 'signal=escalation\n'
-  elif [ -n "$payload" ]; then
-    printf 'signal=worker_done\n'
-  else
-    # A timeout is a checkpoint, not a failure: coding tasks routinely run long.
-    printf 'timeout=1\n'
+    return 0
   fi
+  if [ -n "$payload" ]; then
+    printf 'signal=worker_done\n'
+    return 0
+  fi
+
+  # Nothing real happened, so this call OWES the caller the rest of its window.
+  # graph.sh paces itself on this verb: every poll it takes is a chance to
+  # mistake a long phase for a dead worker, and a `wait` that answers in 50ms
+  # turns a 5-minute window into a 14-second one. Measured live on a 17-node
+  # graph: polls 13-16s apart against --timeout-ms 300000, which is what let the
+  # stall cap kill two working nodes inside 45 seconds. Sleeping the remainder
+  # keeps the cadence the caller asked for whatever the runtime just did —
+  # a replayed delivery, a fenced terminal, an argument the CLI rejected.
+  local left=$(( TIMEOUT_MS / 1000 - (ended - began) ))
+  if [ "$left" -gt 0 ]; then
+    sleep "$left"
+    printf 'slept=%s\n' "$left"
+  fi
+  [ "$replayed" -eq 1 ] && printf 'replayed=1\n'
+  # A timeout is a checkpoint, not a failure: coding tasks routinely run long.
+  printf 'timeout=1\n'
 }
 
 verb_ask() {
