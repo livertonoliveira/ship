@@ -63,17 +63,15 @@ module_depends_on() {
     | grep -v '^$' || true
 }
 
-ARROW_SAFE='([^-]|-[^>])'
-
 slot_header_re() {
-  printf '^### %s([^0-9]%s*)?->' "$1" "$ARROW_SAFE"
+  printf '^### .*%s[^0-9].*->[^>]*->' "$1"
 }
 
 test_contract_layer_for() {
   local f="$1" scenario_id="$2"
   grep -E "$(slot_header_re "$scenario_id")" "$f" 2>/dev/null \
     | head -1 \
-    | sed -E "s/^### $ARROW_SAFE+->[[:space:]]*([a-zA-Z0-9]+)[[:space:]]*->.*/\2/"
+    | sed -E 's/^### .* -> ([^>]*) -> .*$/\1/'
 }
 
 test_contract_slot_exists() {
@@ -410,15 +408,20 @@ diverged_paths() {
 # slot: an id cannot (two scenarios may share one) and a title should not (it
 # would make the plan hinge on re-typing accented prose byte for byte).
 slot_keys() {
-  grep -E "^### S[0-9]+$ARROW_SAFE*->" "$1" 2>/dev/null \
-    | sed -E "s/^### (S[0-9]+)$ARROW_SAFE*->[[:space:]]*([a-zA-Z0-9]+)[[:space:]]*->.*/\1|\3/" \
+  awk '
+    /^### S[0-9]+[[:space:]]/ {
+      arrows = gsub(/->/, "&")
+      if (arrows == 2) print
+    }
+  ' "$1" 2>/dev/null \
+    | sed -E 's/^### (S[0-9]+)[[:space:]].* -> ([^>]*) -> .*$/\1|\2/' \
     | sort || true
 }
 
 # Slots carrying no key — everything the planner added on its own.
 unkeyed_slots() {
   grep -E '^### .*->.*->' "$1" 2>/dev/null \
-    | grep -vE "^### S[0-9]+$ARROW_SAFE*->" || true
+    | grep -vE '^### S[0-9]+[[:space:]]' || true
 }
 
 scaffold_inventory() {

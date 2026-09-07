@@ -423,6 +423,22 @@ test_qualified_slot_does_not_match_longer_id() {
   rm -rf "$dir"
 }
 
+test_scenario_id_in_file_path_is_not_its_own_slot() {
+  local name="an id that only appears in a slot's file-path column is not read as that id's own slot"
+  local dir plan other_tag other_id
+  dir="$(mktemp -d)"
+  other_tag="$(scenario_tag 114)"
+  other_id="${other_tag#@}"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts" "none" "$(scenario_tag 114)")" \
+    "## Test Contract" \
+    "### $(scenario_tag 07) (tema escuro) -> unit -> test/unit/${other_id}.spec.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: cenário órfão — $(scenario_tag 114) sem slot no Test Contract"
+  rm -rf "$dir"
+}
+
 test_invalid_layer_fails() {
   local name="a Test Contract slot with an invalid layer fails with camada inválida"
   local dir plan
@@ -492,7 +508,7 @@ test_scenario_title_with_a_greater_than_is_a_keyed_slot() {
   scaffold="$dir/plan-scaffold.md"
   {
     printf '%s\n' "## Test Contract"
-    printf '%s\n' "### S1 @SC-01 (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
+    printf '%s\n' "### S1 $(scenario_tag 01) (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
   } > "$scaffold"
   plan="$(make_plan_fixture "$dir" \
     "## Modules" \
@@ -525,14 +541,14 @@ test_an_unkeyed_slot_is_still_caught_beside_a_greater_than_title() {
   scaffold="$dir/plan-scaffold.md"
   {
     printf '%s\n' "## Test Contract"
-    printf '%s\n' "### S1 @SC-01 (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
+    printf '%s\n' "### S1 $(scenario_tag 01) (Crescimento de RSS > 15% retorna exit 1) -> unit -> TBD"
   } > "$scaffold"
   plan="$(make_plan_fixture "$dir" \
     "## Modules" \
     "$(module_block "M1" "relatorio" "src/a.ts" "none" "$(scenario_tag 01)")" \
     "## Test Contract" \
     "### S1 $(scenario_tag 01) (Crescimento de RSS > 15% retorna exit 1) -> unit -> src/a.spec.ts" \
-    "### AC-99 (inventado pelo planner) -> unit -> src/b.spec.ts")"
+    "### $(criterion_tag 99) (inventado pelo planner) -> unit -> src/b.spec.ts")"
 
   assert_exit_and_message "$name" "$plan" 2 "slot fora do scaffold e não marcado"
   rm -rf "$dir"
@@ -763,6 +779,7 @@ test_file_overlap_fails
 test_orphan_scenario_fails
 test_qualified_slot_header_counts
 test_qualified_slot_does_not_match_longer_id
+test_scenario_id_in_file_path_is_not_its_own_slot
 test_scaffolded_plan_that_assigns_everything_passes
 test_scaffolded_plan_missing_a_slot_fails
 test_scaffolded_plan_inventing_a_slot_fails
