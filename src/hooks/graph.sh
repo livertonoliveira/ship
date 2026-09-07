@@ -1662,6 +1662,17 @@ cmd_reset() {
 
 # --- conflicts ---------------------------------------------------------------
 
+footprint_delta() {
+  local old="$1" new="$2" old_n new_n added removed out=""
+  old_n="$(printf '%s\n' "$old" | tr ',' '\n' | sed '/^$/d' | sort -u)"
+  new_n="$(printf '%s\n' "$new" | tr ',' '\n' | sed '/^$/d' | sort -u)"
+  added="$(comm -13 <(printf '%s\n' "$old_n") <(printf '%s\n' "$new_n"))"
+  removed="$(comm -23 <(printf '%s\n' "$old_n") <(printf '%s\n' "$new_n"))"
+  while IFS= read -r f; do [ -n "$f" ] && out="${out:+$out,}+$f"; done <<< "$added"
+  while IFS= read -r f; do [ -n "$f" ] && out="${out:+$out,}-$f"; done <<< "$removed"
+  printf '%s' "$out"
+}
+
 # Recomputes every conflict edge from the real state. Called by `conflicts`
 # and by `next` itself: an edge recorded against a holder that has since merged
 # is stale, and a `next` that trusted it reported "deadlock" over a graph whose
@@ -1674,15 +1685,17 @@ refresh_conflicts() {
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
   # this is the edge that appears by evidence rather than by prediction.
-  local id wt real refreshed=0
+  local id wt real prev refreshed=0
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
     real="$(git -C "$wt" diff --name-only "$base"...HEAD 2>/dev/null | paste -sd, - || true)"
     [ -n "$real" ] || continue
+    prev="$(node_field "$dir" "$id" 5)"
+    [ "$prev" != "$real" ] || continue
     node_set "$dir" "$id" 5 "$real"
-    log_line "$dir" "$id footprint refreshed from workspace: $real"
+    log_line "$dir" "$id footprint delta: $(footprint_delta "$prev" "$real")"
     refreshed=$((refreshed + 1))
   done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed)
 
