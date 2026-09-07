@@ -437,18 +437,6 @@ test_invalid_layer_fails() {
   rm -rf "$dir"
 }
 
-# --- the dependency qualifier ------------------------------------------------
-#
-# Measured 2026-09-06 on the api-agendx graph: MOB-3114's plan declared
-# `Depends on: M1 (uses summary.js)` with M1 defined two modules above. The
-# validator compared the whole string against the known ids and rejected a plan
-# that was correct, burning one of the node's two attempts — and MOB-3114 alone
-# held five dependents. The replan happened to write the bare id and passed, so
-# the failure is a coin flip per node rather than a reproducible stop.
-#
-# `slot_header_re` already tolerates exactly this shape after a scenario id, for
-# exactly this reason. The two must not disagree.
-
 test_dependency_with_a_qualifier_passes() {
   local name="a dependency annotated with its reason resolves to the bare module id"
   local dir plan
@@ -496,15 +484,6 @@ test_a_qualifier_does_not_hide_an_unknown_id() {
   assert_exit_and_message "$name" "$plan" 2 "plan-validate: dependência inválida — M1 referencia M9 inexistente"
   rm -rf "$dir"
 }
-
-# --- a scenario title is prose, and prose contains '>' -----------------------
-#
-# Measured 2026-09-06: MOB-3127 failed three identical times on a slot the
-# scaffold had emitted verbatim. Its title read `Crescimento de RSS > 15%`, the
-# `>` was taken for the arrow, the slot stopped counting as keyed, and the
-# validator demanded a `(derived: ...)` marker for a slot the planner had not
-# invented. Deterministic, so every retry burned an attempt for nothing. In a
-# load-testing spec `>` and `p95 > 200ms` are ordinary words.
 
 test_scenario_title_with_a_greater_than_is_a_keyed_slot() {
   local name="a scenario title containing '>' is still recognised as a scaffolded slot"
