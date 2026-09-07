@@ -224,7 +224,7 @@ test_conflicts_reports_how_many_it_refreshed() {
     cd "$dir"
     cat > nodes.json <<'EOF'
 [
-  { "id": "TASK-002", "title": "A", "deps": [], "files": ["src/api/routes.ts"] },
+  { "id": "TASK-002", "title": "A", "deps": [], "files": ["src/api/other.ts"] },
   { "id": "TASK-004", "title": "B", "deps": [], "files": ["src/api/routes.ts"] }
 ]
 EOF
@@ -288,6 +288,83 @@ EOF
   fi
 }
 
+test_unchanged_footprint_logs_nothing_new() {
+  local name="two conflicts calls with no working-tree change add no new footprint line"
+  local dir before after
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "A", "deps": [], "files": ["src/api/routes.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    git worktree add -q wt-002 -b ship/TASK-002 main
+    mkdir -p wt-002/src/api
+    printf 'x\n' > wt-002/src/api/routes.ts
+    git -C wt-002 add -A
+    git -C wt-002 commit -qm feat
+    bash "$GRAPH" claim TASK-002 --worktree wt-002 --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  before="$(grep -c "footprint delta" "$dir/.context/ship-graph/f/graph-log.md" || true)"
+  out="$(cd "$dir" && bash "$GRAPH" conflicts)"
+  after="$(grep -c "footprint delta" "$dir/.context/ship-graph/f/graph-log.md" || true)"
+  rm -rf "$dir"
+
+  if [ "$before" = "$after" ] && [ "$(field "$out" refreshed)" = "0" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (before=$before after=$after refreshed='$(field "$out" refreshed)')"
+  fi
+}
+
+test_new_file_produces_one_delta_line() {
+  local name="a new file appearing in the working tree produces exactly one line naming what entered"
+  local dir out before after
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "A", "deps": [], "files": ["src/api/routes.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    git worktree add -q wt-002 -b ship/TASK-002 main
+    mkdir -p wt-002/src/api
+    printf 'x\n' > wt-002/src/api/routes.ts
+    git -C wt-002 add -A
+    git -C wt-002 commit -qm feat
+    bash "$GRAPH" claim TASK-002 --worktree wt-002 --branch ship/TASK-002 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  before="$(grep -c "footprint delta" "$dir/.context/ship-graph/f/graph-log.md" || true)"
+  (
+    cd "$dir"
+    printf 'y\n' > wt-002/src/api/extra.ts
+    git -C wt-002 add -A
+    git -C wt-002 commit -qm "feat: extra file"
+  )
+  out="$(cd "$dir" && bash "$GRAPH" conflicts)"
+  after="$(grep -c "footprint delta" "$dir/.context/ship-graph/f/graph-log.md" || true)"
+  local new_lines
+  new_lines="$((after - before))"
+  local last_line
+  last_line="$(grep "footprint delta" "$dir/.context/ship-graph/f/graph-log.md" | tail -1)"
+  rm -rf "$dir"
+
+  if [ "$new_lines" = "1" ] && [ "$(field "$out" refreshed)" = "1" ] \
+    && printf '%s' "$last_line" | grep -q '+src/api/extra.ts'; then
+    log_pass "$name"
+  else
+    log_fail "$name (new_lines=$new_lines refreshed='$(field "$out" refreshed)' line='$last_line')"
+  fi
+}
+
 test_overlapping_ready_nodes_do_not_share_a_frontier
 test_directory_prefix_counts_as_overlap
 test_sibling_directory_is_not_an_overlap
@@ -296,6 +373,8 @@ test_loser_is_blocked_by_conflict_not_failed
 test_real_footprint_overrides_the_declared_one
 test_conflicts_reports_how_many_it_refreshed
 test_conflict_clears_once_the_holder_is_merged
+test_unchanged_footprint_logs_nothing_new
+test_new_file_produces_one_delta_line
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
