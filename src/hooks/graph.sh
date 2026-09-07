@@ -1075,7 +1075,7 @@ cmd_nodes() {
       gsub(/`/, "", v)
       if (v == "" || tolower(v) == "none" || tolower(v) == "nenhuma") next
       # A dep must look like a task id: alphanumeric with a separator (TASK-001,
-      # MOB-3013). A bare word like `M2` is a milestone name, not a task.
+      # ABC-1234). A bare word like `M2` is a milestone name, not a task.
       if (v !~ /^[A-Za-z0-9]+[-_][A-Za-z0-9_-]+$/) next
       deps = deps (deps == "" ? "" : ", ") "\"" v "\""
       next
