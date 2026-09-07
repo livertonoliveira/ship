@@ -49,14 +49,6 @@ module_scenarios() {
   printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -E '^@SC-[0-9]+' || true
 }
 
-# A dependency may carry a qualifier after the module id saying WHY it depends:
-# `Depends on: M1 (uses summary.js)`. It is the same shape slot_header_re already
-# tolerates for scenario ids, and for the same reason: the planner writes the
-# reason because the reason is useful, and refusing it fails a plan that is
-# correct. Measured 2026-09-06 — MOB-3114 burned one of its two attempts on
-# `M1 (uses summary.js)` while M1 existed two modules above; the replan happened
-# to write the bare id and passed. A coin flip per node, and with --max-attempts
-# 2 two bad draws kill a node and everything downstream of it.
 module_depends_on() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Depends on")"
@@ -71,19 +63,6 @@ module_depends_on() {
     | grep -v '^$' || true
 }
 
-# A slot header may carry a qualifier between the scenario id and the first
-# arrow: `### <id> (dark theme) -> unit -> <file>`. Requiring the bare id made a
-# spec that reuses one scenario id across two behaviorally distinct scenarios
-# impossible to plan at all — one id can hold one slot, so the planner had no
-# valid output and every replan failed the same way. The leading non-digit guard
-# keeps an id from matching a longer one with the same prefix.
-#
-# The delimiter is the two-character arrow, never a bare `>`. Matching "anything
-# up to a `>`" instead cost MOB-3127 three identical failures on a title that
-# said `Crescimento de RSS > 15%`: the `>` in the title read as the arrow, the
-# slot stopped being recognised as keyed, and the validator demanded a
-# `(derived: ...)` marker for a slot that was in the scaffold verbatim. In a load
-# testing spec `>` and `p95 > 200ms` are ordinary words.
 ARROW_SAFE='([^-]|-[^>])'
 
 slot_header_re() {
