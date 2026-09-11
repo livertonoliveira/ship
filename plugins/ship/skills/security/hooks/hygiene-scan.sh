@@ -19,6 +19,7 @@ is_excluded() {
   case "$base" in
     package-lock.json|pnpm-lock.yaml|yarn.lock|go.sum|Cargo.lock|*.lock) return 0 ;;
     hygiene-scan.sh) return 0 ;;
+    *.test.sh) return 0 ;;
   esac
   return 1
 }

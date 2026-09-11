@@ -172,6 +172,8 @@ assert_scan_status "literal under length threshold exempted from generic secret 
 assert_scan_status "repeated single-character literal exempted from generic secret detection" "file.txt" "$repeated_line" 0
 assert_scan_status ".env basename excluded from secret scanning" ".env" "$(printf 'AWS_SECRET_ACCESS_KEY=%s' "$aws_key")" 0
 assert_scan_status ".env.* basename excluded from secret scanning" ".env.production" "$(printf 'AWS_SECRET_ACCESS_KEY=%s' "$aws_key")" 0
+assert_scan_status "*.test.sh basename excluded from spec-ID scanning" "fixture.test.sh" "$(printf 'see %s for details' "$specid_ac")" 0
+assert_scan_status "*.test.sh basename excluded from secret scanning" "fixture.test.sh" "$(printf 'aws_key="%s"' "$aws_key")" 0
 assert_scan_status "secret detection fires without ship-run directory present" "file.txt" "$(printf 'aws_key = "%s"' "$aws_key")" 2
 
 dir="$(new_case_dir all_mode_secret)"
