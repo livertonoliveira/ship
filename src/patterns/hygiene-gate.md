@@ -75,6 +75,9 @@ Spec IDs and comments are **legitimate** in artifacts and reports. Never scan:
 - `**/*.md` (any markdown — specs, reports, docs)
 - `.context/**` (scratch dir, gitignored)
 - lockfiles: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`, `Cargo.lock`, `*.lock`
+- `*.test.sh` — Ship's own hook/script test suites, which legitimately construct spec-ID-shaped
+  and secret-shaped fixture strings to test the scanner itself (e.g. `AC-01` fixtures in
+  `sc-crossref.test.sh`, an `AKIA…` fixture in `hygiene-scan.test.sh`)
 
 Everything else changed in the working tree is treated as code/test and **is** scanned.
 
