@@ -41,31 +41,34 @@ usage() {
 extract_deps() {
   local file="$1" task="${2:-}"
   [ -f "$file" ] || return 0
-  if [ -n "$task" ]; then
-    awk -v task="$task" '
-      $0 ~ "^###+[[:space:]]+" task "([[:space:]]|$)" { intask = 1; indeps = 0; next }
-      intask && /^###+[[:space:]]/ { intask = 0; indeps = 0 }
-      intask && /^##[[:space:]]+Deps[[:space:]]*$/ { indeps = 1; next }
-      intask && /^#/ { indeps = 0 }
-      indeps {
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-        gsub(/`/, "")
-        if ($0 == "" || tolower($0) == "none") next
-        print
-      }
-    ' "$file"
-  else
-    awk '
-      /^##[[:space:]]+Deps[[:space:]]*$/ { indeps = 1; next }
-      /^#/ { indeps = 0 }
-      indeps {
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-        gsub(/`/, "")
-        if ($0 == "" || tolower($0) == "none") next
-        print
-      }
-    ' "$file"
-  fi
+  awk -v task="$task" '
+    # A dep line is written by a person, so it carries what people write: a
+    # markdown list marker, and prose saying WHY this blocks. The section can
+    # also be closed by a horizontal rule. Only the id survives any of that.
+    #
+    # Measured 2026-09-14 on MOB-3461: the section held
+    #   - MOB-3452 (TASK-001, firstAppointmentAt)
+    #   ---
+    # Every real dep was dropped downstream for containing punctuation, while
+    # the rule line passed every check — it is made of the one separator an id
+    # is allowed — and the run gated forever on a dependency called "---".
+    function clean(s) {
+      gsub(/`/, "", s)
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      sub(/^[-*+][[:space:]]+/, "", s)
+      sub(/^[0-9]+[.)][[:space:]]+/, "", s)
+      sub(/[[:space:]].*$/, "", s)
+      if (tolower(s) == "none") return ""
+      return s
+    }
+    task == "" { intask = 1 }
+    task != "" && $0 ~ "^###+[[:space:]]+" task "([[:space:]]|$)" { intask = 1; indeps = 0; next }
+    task != "" && intask && /^###+[[:space:]]/ { intask = 0; indeps = 0 }
+    intask && /^##[[:space:]]+Deps[[:space:]]*$/ { indeps = 1; next }
+    intask && /^#/ { indeps = 0 }
+    indeps { line = clean($0); if (line != "") print line }
+  ' "$file"
 }
 
 # The planner's own channel. A divergence that points at another task is worth
@@ -105,6 +108,13 @@ sanitize_ids() {
     case "$id" in
       *[!a-zA-Z0-9_-]*) continue ;;
       *[-_]*) ;;
+      *) continue ;;
+    esac
+    # A separator alone is not an id. `---` closing a section satisfies every
+    # rule above — its only character is one an id may contain — and gated a run
+    # on a dependency that can never resolve.
+    case "$id" in
+      *[a-zA-Z0-9]*) ;;
       *) continue ;;
     esac
     [ "$id" = "$self" ] && continue

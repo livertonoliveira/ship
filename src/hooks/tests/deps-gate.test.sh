@@ -99,6 +99,32 @@ test_plan_prose_is_not_a_dep() {
   [ -z "$out" ] && log_pass "$name" || log_fail "$name (got: '$out')"
 }
 
+test_a_written_deps_section_is_parsed() {
+  local name="a ## Deps block written by a person yields ids, not its formatting"
+  local d out; d="$(mktemp -d)"
+  # Exactly what MOB-3461 carried: bullets with the reason spelled out, and a
+  # horizontal rule closing the section.
+  make_scratch "$d/TASK-9" '- MOB-3452 (TASK-001, firstAppointmentAt)
+- MOB-3457 (TASK-007, AgendaCacheEffects)
+
+---'
+  out="$("$GATE" ids "$d/TASK-9" | tr '\n' ' ')"
+  rm -rf "$d"
+  [ "$out" = "MOB-3452 MOB-3457 " ] && log_pass "$name" || log_fail "$name (got: '$out')"
+}
+
+test_a_horizontal_rule_is_not_a_dependency() {
+  local name="a horizontal rule closing the section is not a blocking dependency"
+  local d out; d="$(mktemp -d)"
+  # `---` is made only of the separator an id is allowed to contain, so every
+  # shape check passed it and the run gated forever on a dep that cannot land.
+  make_scratch "$d/TASK-9" 'ABC-1
+---'
+  out="$("$GATE" ids "$d/TASK-9" | tr '\n' ' ')"
+  rm -rf "$d"
+  [ "$out" = "ABC-1 " ] && log_pass "$name" || log_fail "$name (got: '$out')"
+}
+
 test_self_reference_is_dropped() {
   local name="a task listing its own id as a dep does not deadlock on itself"
   local d out; d="$(mktemp -d)"
@@ -261,6 +287,8 @@ test_unknown_state_is_pending
 test_merged_clears_the_gate
 test_plan_dep_token_is_collected
 test_plan_prose_is_not_a_dep
+test_a_written_deps_section_is_parsed
+test_a_horizontal_rule_is_not_a_dependency
 test_self_reference_is_dropped
 test_ack_is_per_id
 test_pipeline_asks_before_planning
