@@ -554,13 +554,62 @@ deps_satisfied() {
 #
 # The remote's HEAD is the honest answer; the conventional local names and then
 # the checked-out branch are the fallbacks for a repo with no remote.
-default_branch() {
-  local remote d
+remote_name() {
+  local remote
   remote="$(git config --get "branch.$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true).remote" 2>/dev/null || true)"
   if [ -z "$remote" ] && git remote get-url origin >/dev/null 2>&1; then remote="origin"; fi
   if [ -z "$remote" ] && [ "$(git remote 2>/dev/null | awk 'END { print NR + 0 }')" = "1" ]; then
     remote="$(git remote)"
   fi
+  printf '%s' "$remote"
+}
+
+# Every node workspace is cut from the LOCAL base ref, and nothing here ever
+# moved it. The graph admits a dependent only once its dependency's PR is MERGED
+# on the forge — but a merge on the forge is not a commit in this clone, so the
+# dependent opened on a trunk that did not contain the very thing it waited for.
+#
+# Measured 2026-09-14: MOB-3461 was admitted on two merged PRs and started 9
+# commits behind origin/main, with neither dependency's code on disk. It caught
+# it only because the planner confronts the plan against the files; a node that
+# did not would have implemented on top of code that was not there.
+#
+# Fast-forward only, and never onto a working tree this does not own: this runs
+# unattended, so it must be incapable of rewriting or discarding anything. A
+# base that diverged locally is a person's call, and it is logged, not resolved.
+sync_base() {
+  local dir="$1" base remote before after
+  base="$(meta_get "$dir" base_branch)"
+  remote="$(remote_name)"
+  [ -n "$base" ] && [ -n "$remote" ] || return 0
+
+  before="$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)"
+  if ! git fetch -q "$remote" "$base" >/dev/null 2>&1; then
+    log_line "$dir" "base sync: could not fetch $remote/$base — workspaces stay on whatever $base is here"
+    return 0
+  fi
+
+  # Moving the ref through fetch touches no working tree, and git refuses it
+  # outright when $base is checked out somewhere — in this worktree or another.
+  # The in-place fast-forward is the fallback for the one case where it is ours.
+  if ! git fetch -q "$remote" "$base:$base" >/dev/null 2>&1; then
+    if [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$base" ] \
+      && [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+      git merge --ff-only -q FETCH_HEAD >/dev/null 2>&1 || true
+    fi
+  fi
+
+  after="$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)"
+  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+    log_line "$dir" "base sync: $base fast-forwarded to $remote/$base ($(git rev-list --count "$before..$after" 2>/dev/null || echo '?') commit(s)) — new workspaces are cut from it"
+  elif [ -n "$after" ] && ! git merge-base --is-ancestor "$after" "FETCH_HEAD" >/dev/null 2>&1; then
+    log_line "$dir" "base sync: local $base has diverged from $remote/$base and was NOT moved — node workspaces may be cut from a stale base"
+  fi
+}
+
+default_branch() {
+  local remote d
+  remote="$(remote_name)"
   if [ -n "$remote" ]; then
     d="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s|^$remote/||" || true)"
     [ -n "$d" ] && { printf '%s' "$d"; return 0; }
@@ -853,6 +902,9 @@ cmd_init() {
 
   render_json "$dir"
   log_line "$dir" "init feature=$feature driver=$driver ($chosen_by) mode=$mode max_in_flight=$max_in_flight base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
+  # Ahead of seal_spec, which commits onto the base: sealing onto a stale base
+  # and then fast-forwarding would put the spec behind the nodes that need it.
+  sync_base "$dir"
   [ "$mode" = "local" ] && seal_spec "$dir" "$feature"
 
   printf 'INIT %s\n' "$feature"
@@ -1981,6 +2033,9 @@ cmd_next() {
   render_json "$dir"
 
   if [ -n "$frontier" ]; then
+    # Before any workspace is cut, not after: the whole point is what the next
+    # node opens on.
+    sync_base "$dir"
     local t repo prompt default_repo
     # A node carries a repo only in multi-repo graphs. Single-repo runs fall back
     # to the graph's own, so a coordinator outside a managed workspace still

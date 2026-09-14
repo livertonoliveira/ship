@@ -53,6 +53,51 @@ init_usage() {
   echo "  resume: preserve existing state; only re-capture diff.md and re-classify" >&2
 }
 
+# Brings this workspace up to date with the trunk before the run touches
+# anything.
+#
+# A graph node's workspace is cut from the LOCAL base ref, and the graph admits
+# a node once its dependency's PR is MERGED on the forge — a merge that is not
+# a commit in this clone. Measured 2026-09-14: MOB-3461 was admitted on two
+# merged PRs and opened 9 commits behind origin/main, with neither dependency's
+# code on disk. Only the planner's confrontation pass caught it; a phase that
+# did not confront would have implemented on top of code that was not there.
+#
+# Fast-forward only, and only from a clean tree. A branch already carrying
+# commits is left exactly as it is: at init, anything ahead of the base means a
+# resume, and moving it would be a rebase nobody asked for. Every refusal is
+# reported rather than silently swallowed — a run that did NOT sync is worth
+# knowing about.
+init_sync_to_base() {
+  local scratch="$1" remote base
+  remote="$(git config --get "branch.$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true).remote" 2>/dev/null || true)"
+  if [ -z "$remote" ] && git remote get-url origin >/dev/null 2>&1; then remote="origin"; fi
+  [ -n "$remote" ] || { printf 'skipped-no-remote'; return 0; }
+
+  # The graph states the base it will open the PR against; outside a graph the
+  # remote's own HEAD is the honest answer.
+  base="$(sed -n 's/^base=//p' "$scratch/pr-mode.txt" 2>/dev/null | head -1)"
+  [ -n "$base" ] || base="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s|^$remote/||" || true)"
+  # refs/remotes/<remote>/HEAD is a local convenience ref, and plenty of clones
+  # simply do not have it — measured on a fresh one, where its absence silently
+  # skipped the whole sync. Asking the remote costs one call and cannot be wrong.
+  [ -n "$base" ] || base="$(git ls-remote --symref "$remote" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\).*#\1#p' | head -1)"
+  [ -n "$base" ] || { printf 'skipped-no-base'; return 0; }
+
+  # TRACKED changes only. init has just written this run's own scratch dir, so a
+  # porcelain check is never clean here and skipped the sync every single time —
+  # measured before this line existed in this shape. An untracked file that a
+  # fast-forward would clobber is not this guard's job: `merge --ff-only` refuses
+  # that case itself, and refusing is reported below.
+  git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null \
+    || { printf 'skipped-dirty-tree'; return 0; }
+  git fetch -q "$remote" "$base" >/dev/null 2>&1 || { printf 'skipped-fetch-failed'; return 0; }
+
+  git merge-base --is-ancestor HEAD FETCH_HEAD >/dev/null 2>&1 || { printf 'skipped-branch-ahead'; return 0; }
+  git merge --ff-only -q FETCH_HEAD >/dev/null 2>&1 || { printf 'skipped-ff-refused'; return 0; }
+  printf '%s/%s' "$remote" "$base"
+}
+
 cmd_init() {
   local TASK_ID=""
   local MODE="check"
@@ -119,6 +164,8 @@ cmd_init() {
 
   mkdir -p "$SCRATCH"
 
+  local BASE_SYNC=""
+
   # Reset the retry counters and the remediation marker ONLY on a fresh init. A
   # resume continues a live run (a re-queued /ship:run, or recovery after an
   # interruption), so remediation-done.txt MUST survive — clearing it would hand
@@ -148,6 +195,10 @@ cmd_init() {
     printf '# Phase Status\n\n| Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes |\n|-------|-----|-----------|-------|------|----------|------|--------|-----|-------|\n' > "$PHASE_STATUS"
     printf '# Dispatch Log\n\n| Phase | Tool | Name | Model | Timestamp |\n|-------|------|------|-------|-----------|\n' > "$DISPATCH_LOG"
 
+    # Before the baseline sha and the file snapshot: both must describe the tree
+    # the run will actually work on.
+    BASE_SYNC="$(init_sync_to_base "$SCRATCH")"
+
     git rev-parse HEAD > "$SCRATCH/pre-quality-snapshot.sha"
     bash "$HOOK_DIR/snapshot-files.sh" snapshot "$SCRATCH/pre-develop-files.txt"
   fi
@@ -159,6 +210,8 @@ cmd_init() {
   printf 'INIT %s\n' "$MODE"
   printf 'scratch=%s\n' "$SCRATCH"
   printf 'diff_class=%s\n' "$CLASS_OUT"
+  [ -n "${BASE_SYNC:-}" ] && printf 'base_sync=%s\n' "$BASE_SYNC"
+  return 0
 }
 
 cmd_dispatch() {
