@@ -244,7 +244,7 @@ test_an_unsent_brief_is_submitted() {
   root="$(new_case)"; ORCA_FAKE_TUI=dirty run_dispatch "$root"
   # A pane holding an unsent brief needs a BARE Enter as its own keystroke — the
   # trailing newline of a paste is consumed by the paste itself.
-  if grep -q 'terminal send .*--enter' "$root/argv.log"; then
+  if grep -q '^terminal send .*--enter' "$root/argv.log"; then
     log_pass "a brief left unsent in the prompt gets the Enter the runtime never sent"
   else
     log_fail "a brief left unsent in the prompt gets the Enter the runtime never sent"
@@ -255,10 +255,10 @@ test_an_unsent_brief_is_submitted() {
 test_a_brief_that_never_arrived_is_delivered() {
   local root
   root="$(new_case)"; ORCA_FAKE_TUI=clean run_dispatch "$root"
-  if grep -q 'terminal send .*--text ' "$root/argv.log" && grep -q 'terminal send .*--enter' "$root/argv.log"; then
+  if grep -q '^terminal send .*--text ' "$root/argv.log" && grep -q '^terminal send .*--enter' "$root/argv.log"; then
     log_pass "a brief that never arrived is pasted and then submitted"
   else
-    log_fail "a brief that never arrived is pasted and then submitted (log: $(grep -c 'terminal send' "$root/argv.log") sends)"
+    log_fail "a brief that never arrived is pasted and then submitted (log: $(grep -c '^terminal send' "$root/argv.log") sends)"
   fi
   rm -rf "$root"
 }
@@ -307,7 +307,10 @@ test_a_working_worker_is_not_disturbed() {
   local root
   root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
   # Pressing Enter into a working agent injects a stray turn into its session.
-  if grep -q 'terminal send' "$root/argv.log"; then
+  # Anchored, like every other assertion here: this is about a CALL the driver
+  # makes. Unanchored it also matches the string appearing inside another call's
+  # arguments, which is a pass the driver did not earn.
+  if grep -q '^terminal send' "$root/argv.log"; then
     log_fail "a worker already working is left alone (it was sent input anyway)"
   else
     log_pass "a worker already working is left alone"
