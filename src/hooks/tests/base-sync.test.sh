@@ -14,6 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE="$SCRIPT_DIR/../pipeline.sh"
+GRAPH="$SCRIPT_DIR/../graph.sh"
 
 pass_count=0
 fail_count=0
@@ -169,11 +170,72 @@ test_no_remote_is_not_a_failure() {
   rm -rf "$root"
 }
 
+
+# --- the coordinator half ------------------------------------------------------
+
+# One clone, many worktrees, the base checked out in the primary one: the common
+# layout, and the one where the coordinator may NOT move the base ref.
+graph_case() {
+  local root work
+  root="$(new_case)"
+  work="$root/work"
+  git -C "$work" checkout -q main
+  # The coordinator sits on its own branch, exactly like a real one.
+  git -C "$work" worktree add -q "$root/coord" -b coordinator main
+  git -C "$root/coord" config user.email t@t.com
+  git -C "$root/coord" config user.name t
+  printf '%s' "$root"
+}
+
+test_a_base_checked_out_elsewhere_is_named_not_called_diverged() {
+  local name="a base that is merely behind is never reported as diverged"
+  local root log
+  root="$(graph_case)"
+  printf '[{"id":"T1","title":"t","deps":[],"files":["a.txt"]}]' > "$root/coord/nodes.json"
+  ( cd "$root/coord" && mkdir -p ship && printf '# Config\n' > ship/config.md \
+    && bash "$GRAPH" init --feature demo --from nodes.json --driver manual --mode local >/dev/null 2>&1 ) || true
+  log="$(cat "$root/coord/.context/ship-graph/demo/graph-log.md" 2>/dev/null || true)"
+
+  # main here is strictly behind origin/main and has nothing of its own. The
+  # ref-moving fetch is refused because main is checked out in $root/work, and
+  # a refused fetch leaves FETCH_HEAD unreadable — which is what made every
+  # downstream check fail and call a healthy base diverged.
+  if printf '%s' "$log" | grep -q 'has diverged'; then
+    log_fail "$name (reported diverged: $(printf '%s' "$log" | grep 'base sync' | head -1))"
+  elif ! printf '%s' "$log" | grep -q 'checked out elsewhere'; then
+    log_fail "$name (the real reason was not named: $(printf '%s' "$log" | grep 'base sync' | head -1 || echo 'no base sync line'))"
+  else
+    log_pass "$name"
+  fi
+  rm -rf "$root"
+}
+
+test_a_base_the_coordinator_owns_is_fast_forwarded() {
+  local name="a base this clone owns is fast-forwarded before any node is cut"
+  local root log
+  root="$(new_case)"
+  git -C "$root/work" checkout -q main
+  printf '[{"id":"T1","title":"t","deps":[],"files":["a.txt"]}]' > "$root/work/nodes.json"
+  ( cd "$root/work" && bash "$GRAPH" init --feature demo --from nodes.json --driver manual --mode local >/dev/null 2>&1 ) || true
+  log="$(cat "$root/work/.context/ship-graph/demo/graph-log.md" 2>/dev/null || true)"
+
+  if [ ! -f "$root/work/dependency.txt" ]; then
+    log_fail "$name (the trunk commit is still missing from the coordinator's own tree)"
+  elif ! printf '%s' "$log" | grep -q 'fast-forwarded'; then
+    log_fail "$name (not reported: $(printf '%s' "$log" | grep 'base sync' | head -1 || echo none))"
+  else
+    log_pass "$name"
+  fi
+  rm -rf "$root"
+}
+
 test_a_node_opens_on_what_the_forge_has
 test_the_run_scratch_dir_does_not_block_the_sync
 test_a_branch_with_work_is_left_alone
 test_uncommitted_work_is_never_discarded
 test_no_remote_is_not_a_failure
+test_a_base_checked_out_elsewhere_is_named_not_called_diverged
+test_a_base_the_coordinator_owns_is_fast_forwarded
 
 echo
 echo "$pass_count passed, $fail_count failed"

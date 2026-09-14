@@ -588,21 +588,43 @@ sync_base() {
     log_line "$dir" "base sync: could not fetch $remote/$base — workspaces stay on whatever $base is here"
     return 0
   fi
+  # Pinned to a sha immediately. A FETCH_HEAD read later is not the same thing:
+  # the ref-moving fetch below is REFUSED whenever $base is checked out
+  # anywhere, and a refused fetch leaves FETCH_HEAD unreadable — "Needed a
+  # single revision". Every check downstream then failed for that reason and
+  # reported a perfectly healthy base as diverged.
+  local tip
+  tip="$(git rev-parse --quiet --verify FETCH_HEAD 2>/dev/null || true)"
+  [ -n "$tip" ] || return 0
 
   # Moving the ref through fetch touches no working tree, and git refuses it
   # outright when $base is checked out somewhere — in this worktree or another.
   # The in-place fast-forward is the fallback for the one case where it is ours.
   if ! git fetch -q "$remote" "$base:$base" >/dev/null 2>&1; then
+    # Tracked changes only: the graph's own state dir and the caller's
+    # nodes.json are untracked, so a porcelain check is never clean here and
+    # skipped the fast-forward every time. A fast-forward that would clobber an
+    # untracked file is refused by git itself, below.
     if [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$base" ] \
-      && [ -z "$(git status --porcelain 2>/dev/null)" ]; then
-      git merge --ff-only -q FETCH_HEAD >/dev/null 2>&1 || true
+      && git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+      git merge --ff-only -q "$tip" >/dev/null 2>&1 || true
     fi
   fi
 
+  local after
   after="$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)"
-  if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+  [ -n "$after" ] || return 0
+
+  if [ -n "$before" ] && [ "$before" != "$after" ]; then
     log_line "$dir" "base sync: $base fast-forwarded to $remote/$base ($(git rev-list --count "$before..$after" 2>/dev/null || echo '?') commit(s)) — new workspaces are cut from it"
-  elif [ -n "$after" ] && ! git merge-base --is-ancestor "$after" "FETCH_HEAD" >/dev/null 2>&1; then
+  elif [ "$after" = "$tip" ]; then
+    : # already current, nothing worth a line
+  elif git merge-base --is-ancestor "$after" "$tip" >/dev/null 2>&1; then
+    # The common layout: one clone, many worktrees, $base checked out in the
+    # primary one. Nothing here may move it, and that is fine — each node
+    # fast-forwards its OWN workspace at init, which is the load-bearing half.
+    log_line "$dir" "base sync: $base is behind $remote/$base and is checked out elsewhere, so it was not moved here — each node fast-forwards its own workspace at init"
+  else
     log_line "$dir" "base sync: local $base has diverged from $remote/$base and was NOT moved — node workspaces may be cut from a stale base"
   fi
 }
