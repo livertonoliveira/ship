@@ -332,6 +332,36 @@ test_the_worker_is_told_how_to_report_completion() {
   rm -rf "$root"
 }
 
+test_the_worker_is_told_to_wake_the_coordinator() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
+  # worker_done goes to a pull-only mailbox: it reaches the coordinator only
+  # while it happens to be inside a wait window. Measured 2026-09-14, one sat
+  # unread for 25 minutes while two merged PRs stayed in_flight. `terminal send
+  # --enter` is the push that actually starts a turn on an idle terminal.
+  if ! printf '%s' "$line" | grep -q -- 'orca terminal send --terminal'; then
+    log_fail "the brief tells the worker to wake the coordinator (got: $line)"
+  elif ! printf '%s' "$line" | grep -q -- '--enter'; then
+    # Without --enter the text is typed into the TUI input box and never
+    # submitted, so the poke looks sent and wakes nobody.
+    log_fail "the wake instruction submits with --enter (got: $line)"
+  elif ! printf '%s' "$line" | grep -qE '"/[^"]*/driver-orca-coordinator\.txt"'; then
+    # The worker runs in its own workspace; the relative state dir graph.sh
+    # passes in resolves to nothing there, so the path has to be absolute.
+    # Matched by shape, not by $root: mktemp -d hands back /var/folders/... and
+    # `cd && pwd` resolves it to /private/var/folders/....
+    log_fail "the wake instruction reads an absolute coordinator handle path (got: $line)"
+  elif ! printf '%s' "$line" | grep -q -- 'graph.sh next'; then
+    # A message to a mid-loop coordinator ends its turn (measured 2026-09-06).
+    # Carrying the resume instruction is what keeps the poke from stalling it.
+    log_fail "the wake instruction tells the coordinator to resume its loop (got: $line)"
+  else
+    log_pass "the brief tells the worker to wake the coordinator, submitted and self-healing"
+  fi
+  rm -rf "$root"
+}
+
 test_concurrent_dispatches_share_one_run() {
   local root state repo
   root="$(new_case)"; run_dispatch "$root"   # seeds the repo and the first node
@@ -685,6 +715,7 @@ test_an_unconfirmed_worker_is_still_stoppable
 test_a_working_worker_is_reported_confirmed
 test_a_working_worker_is_not_disturbed
 test_the_worker_is_told_how_to_report_completion
+test_the_worker_is_told_to_wake_the_coordinator
 test_concurrent_dispatches_share_one_run
 test_repo_is_resolved_from_the_working_tree
 test_an_explicit_repo_wins

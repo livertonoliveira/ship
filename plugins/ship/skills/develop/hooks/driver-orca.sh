@@ -71,6 +71,11 @@ parse_flags() {
 require_state() {
   [ -n "$STATE" ] || { echo "driver-orca.sh: --state <dir> is required" >&2; exit 1; }
   mkdir -p "$STATE"
+  # graph.sh passes the state dir relative to the coordinator's own cwd. The
+  # dispatch spec quotes a path out of it for the WORKER to read, and a worker
+  # runs in a different workspace entirely — a relative path there resolves to
+  # nothing. Absolute from here on; nothing else in this file cares which it is.
+  STATE="$(cd "$STATE" && pwd)"
 }
 
 require_cli() {
@@ -340,10 +345,33 @@ verb_dispatch() {
   # answer.txt, delivered by `resume`). Measured live: three nodes each spent
   # 10-minute timeouts re-asking a channel nobody answered while their answer
   # sat on disk. The spec is the one place this driver can override that rule.
+  # `orchestration check` is pull-only — its own help calls it "block until a
+  # matching message arrives". A worker_done therefore lands in a mailbox that
+  # wakes nobody: it is read only while the coordinator is INSIDE a wait window,
+  # and between turns nothing reads it at all. Measured 2026-09-14: MOB-3452
+  # sent worker_done at 16:18 and the coordinator picked it up at 16:43, 25
+  # minutes later, on the first `wait` that ran again. Both nodes had merged
+  # PRs the graph still called in_flight.
+  #
+  # `terminal send --enter` is the runtime's actual push: it starts a turn on an
+  # idle terminal. `--enter` is the whole mechanism — without it the text lands
+  # in the TUI's input box as an unsubmitted draft and nothing happens.
+  #
+  # Waking a coordinator that is mid-loop used to STOP it: the message arrives
+  # as a turn of its own, it answers, and nothing re-enters wait/poll (measured
+  # 2026-09-06). That is why the text carries the resume instruction — the poke
+  # has to be self-healing, or it trades a 25-minute stall for a permanent one.
   local spec
   spec="$prompt
 
 When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only.
+
+Immediately after that send, wake the coordinator directly — worker_done alone only reaches it if it happens to be inside a wait window:
+
+  coord=\$(cat \"$STATE/driver-orca-coordinator.txt\" 2>/dev/null || true)
+  [ -n \"\$coord\" ] && orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Run graph.sh poll, then graph.sh next, and keep the loop going until action=ask or action=done.' --enter
+
+Send it once, ignore any failure, and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
 
 Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else."
 
