@@ -27,6 +27,13 @@ new_case() {
   local root work other
   root="$(mktemp -d)"
   git init -q --bare "$root/remote.git"
+  # Pin the bare repo's HEAD instead of inheriting init.defaultBranch: on a
+  # runner that still defaults to master, the second clone below checks out an
+  # unborn master, its commit lands there, and `push origin main` fails with
+  # "src refspec main does not match any" — which is a broken fixture wearing
+  # the costume of a broken sync. `symbolic-ref` works on every git that has
+  # ever shipped; `init -b` does not.
+  git -C "$root/remote.git" symbolic-ref HEAD refs/heads/main
 
   git clone -q "$root/remote.git" "$root/work" 2>/dev/null
   work="$root/work"
@@ -39,6 +46,7 @@ new_case() {
   git -C "$work" commit -qm trunk
   git -C "$work" branch -M main
   git -C "$work" push -q origin main
+  git -C "$work" branch --set-upstream-to=origin/main main >/dev/null 2>&1 || true
 
   git clone -q "$root/remote.git" "$root/other" 2>/dev/null
   other="$root/other"
