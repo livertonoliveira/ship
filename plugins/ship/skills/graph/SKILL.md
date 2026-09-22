@@ -30,7 +30,7 @@ The input is a whole feature, never a single issue — a graph of one node is ju
 - `linear.app/**/project/**` URL → one `get_project` call with the URL's last path segment as `query` (it is the project's slug) and take the project's **name**. Never `list_projects`, never derive the feature from the URL: its trailing id makes two copy-pastes of the same project look like two features.
 - Bare text → the project name (Linear) or the `ship/changes/<dir>` folder (local).
 
-Pass that name to `init` as-is — `graph.sh` slugifies it (`Autenticação V2` → `autenticacao-v2`) and echoes back `feature=<slug>`, which is the graph's identity from then on.
+Pass that name to `init` as-is — `graph.sh` slugifies it (`Autenticação V2` → `autenticacao-v2`) and echoes `feature=<slug>`, the graph's identity from then on.
 
 ## 2. Build `nodes.json` — yourself, no sub-agent
 
@@ -43,11 +43,11 @@ This is the only judgment step. One JSON array; each object is `{ "id", "repo", 
 
 `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" init --feature "<project name>" --from nodes.json --driver <d> --max-in-flight <N> --mode <linear|local> [--repo <id>]`
 
-Pass `--repo` when the caller gave one, or when the driver needs a repo the coordinator's own directory cannot imply. Nodes without their own `repo` fall back to it.
+Pass `--repo` when the caller gave one, or when the coordinator's own directory cannot imply it; nodes without their own `repo` fall back to it.
 
 Exit 3 with a `RESUME` report means a graph for this feature is already live — go straight to the loop; the run continues where it stopped. `--fresh` is the opposite: it discards that graph along with its in-flight claims and PR state, so pass it only when the user explicitly asks to start over.
 
-Changing a live graph's knobs is `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" set [--driver <d>] [--max-in-flight N] [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]` — never a re-init, and never `--fresh`. `admission batch` refills slots only once every in-flight node has closed (`stream`, the default, refills each slot as it frees). `merge-policy graph` lets `poll` squash-merge a node PR that `/ship:pr` could not arm for auto-merge, once the forge reports it CLEAN — what auto-merge would do, for a repo without the feature; `human` (default) hands it to the user. `max-attempts` (default 2) caps how many times a node is claimed before its failure is final. A driver that turns out not to work here is found only after init, and starting over is the wrong answer to it. Nodes still held by the old driver must be released first (`abort`).
+Changing a live graph's knobs is `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" set [--driver <d>] [--max-in-flight N] [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]` — never a re-init, and never `--fresh`. `admission batch` refills slots only once every in-flight node has closed (`stream`, the default, refills each slot as it frees). `merge-policy graph` lets `poll` squash-merge a node PR that `/ship:pr` could not arm for auto-merge, once the forge reports it CLEAN — what auto-merge would do, for a repo without the feature; `human` (default) hands it to the user. `max-attempts` (default 2) caps how many times a node is claimed before its failure is final. Nodes still held by the old driver must be released first (`abort`).
 
 Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight is already around a dozen concurrent agents.
 
@@ -62,9 +62,11 @@ Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight i
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
 
-`bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" status` renders the graph at any point; `--json` gives the raw state. `graph-log.md` in the graph dir carries the running timeline — every claim, poll, seal and PR verdict — and is the only progress signal visible from outside this turn.
+`graph.sh status` renders the graph at any point; `--json` gives the raw state. `graph-log.md` in the graph dir carries the running timeline — every claim, poll, seal and PR verdict — and is the only progress signal visible from outside this turn.
 
-To stop a run, `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Killing the orchestrator does NOT do this — workers survive it and keep billing. `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" reset <task>... | --all` returns failed nodes to pending, each retry in a fresh workspace.
+Workspaces are full checkouts: each is removed as its node merges, reports harvested to the graph dir first. `graph.sh sweep [--force]` frees what a run left behind, merged nodes only; `init --keep-workspaces` keeps them all.
+
+To stop a run, `graph.sh abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Killing the orchestrator does NOT do this — workers survive it and keep billing. `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" reset <task>... | --all` returns failed nodes to pending, each retry in a fresh workspace.
 
 ## Rules
 

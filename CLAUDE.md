@@ -81,7 +81,8 @@ ship/
 
 - The graph's scheduling, conflict edges, PR-state gate and caps live in `src/hooks/graph.sh` — a deterministic script, testable in CI with no runtime installed.
 - The coordinator never merges into a shared trunk and never runs a test suite. A dependent node is admitted only once its dependency's PR is **merged on the forge** (`graph.sh poll` reads that state); local pipeline completion is not that signal.
-- `graph.sh` must never name a workspace runtime. Everything runtime-specific goes through `src/hooks/driver-<name>.sh` and its four verbs (`dispatch`/`collect`/`wait`/`ask`); `scripts/check-graph-driver-isolation.sh` enforces it.
+- `graph.sh` must never name a workspace runtime. Everything runtime-specific goes through `src/hooks/driver-<name>.sh` and its verbs (`dispatch`/`collect`/`wait`/`ask`/`resume`/`stop`/`dispose`/`probe`); `scripts/check-graph-driver-isolation.sh` enforces it.
+- A node's workspace is removed once its PR is **merged on the forge**, through the driver's `dispose` verb — `graph.sh` never deletes a directory itself. Its `.context/ship-run/<task>/` artifacts are harvested into `.context/ship-graph/<feature>/artifacts/<task>/` first, because `done` presents those reports after the workspace is gone. Only a merged node is ever disposed: a failed node's workspace is the record of what went wrong, and one with uncommitted changes is kept (the forge cannot have what was never committed). `graph.sh sweep` is the catch-up; `--keep-workspaces` turns it all off.
 - `.context/ship-graph/<feature>/` holds the graph state. `graph.sh` is its only writer.
 
 ### Gates

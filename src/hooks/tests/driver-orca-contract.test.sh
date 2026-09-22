@@ -701,6 +701,28 @@ test_every_driver_accepts_the_until_file_flag() {
   rm -rf "$dir"
 }
 
+# The workspace is the runtime's, so only the runtime can take it back: a plain
+# rm -rf leaves it registered with the app and with git. And the worker is fenced
+# first — removing a workspace out from under a live agent leaves it writing into
+# a directory that is gone.
+test_dispose_removes_the_workspace_through_the_runtime() {
+  local root out log
+  root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
+  out="$( cd "$root/repo" && ORCA_FAKE_LOG="$root/dispose.log" PATH="$root/bin:$PATH" \
+    ORCA_FAKE_TUI_STATE="$root/tui" ORCA_FAKE_TICK="$root/tick" \
+    bash "$DRIVER" dispose N1 --state "$root/state" 2>/dev/null || true)"
+  log="$(cat "$root/dispose.log" 2>/dev/null || true)"
+
+  if printf '%s' "$log" | grep -q '^worktree rm .*--worktree id:' \
+    && printf '%s' "$log" | grep -qE '^orchestration worker-(stop|abandon)' \
+    && printf '%s' "$out" | grep -q '^disposed=1$'; then
+    log_pass "dispose fences the worker and removes the workspace through the runtime"
+  else
+    log_fail "dispose fences the worker and removes the workspace through the runtime (out: $out / log: $log)"
+  fi
+  rm -rf "$root"
+}
+
 test_a_run_is_created_before_anything_else
 test_task_create_carries_the_run
 test_the_retired_call_is_never_made
@@ -733,6 +755,7 @@ test_an_existing_artifact_ends_the_wait_at_once
 test_an_artifact_appearing_mid_window_cuts_it_short
 test_a_watched_file_that_never_appears_still_spends_the_window
 test_every_driver_accepts_the_until_file_flag
+test_dispose_removes_the_workspace_through_the_runtime
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
