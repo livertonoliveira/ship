@@ -18,16 +18,17 @@ set -euo pipefail
 # dependent is admitted only once its dependency's PR is MERGED there.
 #
 # This script never names a workspace runtime. Everything runtime-specific goes
-# through driver-<name>.sh's verbs (dispatch/collect/wait/ask/resume/stop/probe), so
+# through driver-<name>.sh's verbs (dispatch/collect/wait/ask/resume/stop/dispose/probe), so
 # swapping runtimes is swapping a file. scripts/check-graph-driver-isolation.sh enforces it.
 # ---------------------------------------------------------------------------
 
 usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
-  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--fresh]" >&2
+  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--keep-workspaces] [--fresh]" >&2
   echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
   echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
+  echo "            [--workspace-cleanup on|off]" >&2
   echo "  next      [--feature <f>]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
@@ -37,6 +38,7 @@ usage() {
   echo "  answer    <task> <answer> [--feature <f>]" >&2
   echo "  reset     <task>... | --all [--feature <f>]" >&2
   echo "  abort     [--feature <f>] [--reason <r>]" >&2
+  echo "  sweep     [--feature <f>] [--force]" >&2
   echo "  conflicts [--feature <f>]" >&2
   echo "  status    [--feature <f>] [--json]" >&2
   echo "  iter      <counter-name> [--max N] [--feature <f>]" >&2
@@ -746,13 +748,14 @@ reelect_driver() {
 }
 
 cmd_init() {
-  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on"
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on"
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
       --from) from="$2"; shift 2 ;;
       --driver) driver="$2"; shift 2 ;;
+      --keep-workspaces) workspace_cleanup="off"; shift ;;
       --max-in-flight) max_in_flight="$2"; shift 2 ;;
       --base-branch) base_branch="$2"; shift 2 ;;
       --mode) mode="$2"; shift 2 ;;
@@ -908,6 +911,7 @@ cmd_init() {
   meta_set "$dir" feature "$feature"
   meta_set "$dir" mode "$mode"
   meta_set "$dir" driver "$driver"
+  meta_set "$dir" workspace_cleanup "$workspace_cleanup"
   # Without this, every election looks the same to a later reader, so a fallback
   # forced by a broken runtime is indistinguishable from a deliberate pin — and
   # re-election cannot tell which ones it is allowed to revisit.
@@ -940,7 +944,7 @@ cmd_init() {
 # --- set ---------------------------------------------------------------------
 
 set_usage() {
-  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch]" >&2
+  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch] [--workspace-cleanup on|off]" >&2
   echo "                    [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
   echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
 }
@@ -957,11 +961,12 @@ set_usage() {
 # targets it, so changing it mid-run would leave the conflict edges reading
 # against a base the nodes never saw.
 cmd_set() {
-  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" stall_after="" changed=0
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" stall_after="" workspace_cleanup="" changed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
       --driver) driver="$2"; shift 2 ;;
+      --workspace-cleanup) workspace_cleanup="$2"; shift 2 ;;
       --max-in-flight) max_in_flight="$2"; shift 2 ;;
       --node-pr) node_pr="$2"; shift 2 ;;
       --admission) admission="$2"; shift 2 ;;
@@ -974,7 +979,8 @@ cmd_set() {
   done
   [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
     || [ -n "$merge_policy" ] || [ -n "$max_attempts" ] || [ -n "$stall_after" ] \
-    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy, --max-attempts and/or --stall-after"
+    || [ -n "$workspace_cleanup" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy, --max-attempts, --stall-after and/or --workspace-cleanup"
 
   if [ -n "$admission" ]; then
     case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
@@ -1038,6 +1044,17 @@ cmd_set() {
     log_line "$dir" "max_in_flight → $max_in_flight"
     printf 'max_in_flight=%s\n' "$max_in_flight"
     changed=1
+  fi
+
+  if [ -n "$workspace_cleanup" ]; then
+    case "$workspace_cleanup" in
+      on|off) ;;
+      *) die "set: --workspace-cleanup takes on or off: $workspace_cleanup" ;;
+    esac
+    meta_set "$dir" workspace_cleanup "$workspace_cleanup"
+    log_line "$dir" "workspace_cleanup → $workspace_cleanup"
+    printf 'workspace_cleanup=%s\n' "$workspace_cleanup"
+    changed=$((changed + 1))
   fi
 
   if [ -n "$driver" ]; then
@@ -1277,6 +1294,77 @@ seal_workspace() {
   log_line "$dir" "$id workspace sealed into a commit on $(node_field "$dir" "$id" 8)"
 }
 
+# --- workspace lifecycle -----------------------------------------------------
+
+# On unless a run opted out. Graphs created before the flag existed have no meta
+# row, and absent reads as on for them too.
+workspace_cleanup_on() {
+  [ "$(meta_get "$1" workspace_cleanup)" != "off" ]
+}
+
+# What has to survive the workspace. `done` presents every node's homolog report,
+# and those reports live inside the workspace the node ran in — removing it
+# without copying them out first turns the final report into a list of paths that
+# no longer exist. The graph dir outlives every workspace, so they go there.
+harvest_node() {
+  local dir="$1" id="$2" wt src dest
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] || return 0
+  src="$wt/.context/ship-run/$id"
+  [ -d "$src" ] || return 0
+  dest="$dir/artifacts/$id"
+  mkdir -p "$dest"
+  cp -R "$src/." "$dest/" 2>/dev/null || true
+}
+
+# Gives the disk back. Every node holds a whole second checkout of the repo plus
+# whatever its setup installed; nothing ever removed them, so a seventeen-node
+# run left seventeen copies behind and kept them there after the work had been
+# merged. Once a node's PR is merged on the forge, the copy on disk is pure cost.
+#
+# Three things keep a workspace alive, and each one is deliberate:
+#   * the node is not merged — a failed one is exactly what `reset` and a human
+#     go and read, so only merged nodes are ever disposed;
+#   * its tree still holds uncommitted or untracked changes — the forge cannot
+#     have what was never committed, so that workspace is kept and said so;
+#   * --keep-workspaces / `set --workspace-cleanup off`.
+#
+# The third argument is how much the caller is overriding. Empty is the
+# automatic path at a merge and overrides nothing. `explicit` is `sweep`: the
+# operator asked for the disk back, so the standing preference not to clean up
+# automatically no longer applies. `force` is `sweep --force` and also waives
+# the uncommitted-changes guard. Nothing waives the first rule.
+dispose_workspace() {
+  local dir="$1" id="$2" force="${3:-}" wt driver out disposed reason
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] || return 0
+  [ -n "$force" ] || workspace_cleanup_on "$dir" || return 0
+
+  if [ "$force" != "force" ] && [ -d "$wt" ] \
+    && [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+    log_line "$dir" "$id workspace kept at $wt — it still holds uncommitted changes"
+    printf 'workspace_kept=%s\n' "$id"
+    return 0
+  fi
+
+  harvest_node "$dir" "$id"
+  driver="$(meta_get "$dir" driver)"
+  out="$(bash "$HOOK_DIR/driver-$driver.sh" dispose "$id" --state "$dir" --worktree "$wt" 2>/dev/null || true)"
+  disposed="$(printf '%s' "$out" | sed -n 's/^disposed=//p' | head -1)"
+  if [ "$disposed" = "1" ]; then
+    # Cleared, not left pointing at a directory that is gone: every reader of
+    # this column guards on the path existing, and a stale one reads as a
+    # workspace that vanished rather than one that was deliberately freed.
+    node_set "$dir" "$id" 7 ""
+    log_line "$dir" "$id workspace removed ($wt) — reports harvested to $dir/artifacts/$id"
+    printf 'workspace_freed=%s\n' "$id"
+  else
+    reason="$(printf '%s' "$out" | sed -n 's/^reason=//p' | head -1)"
+    log_line "$dir" "$id workspace kept at $wt — ${reason:-the driver removed nothing}"
+    printf 'workspace_kept=%s\n' "$id"
+  fi
+}
+
 poll_usage() {
   echo "usage: graph.sh poll [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
 }
@@ -1306,6 +1394,7 @@ settle_landed() {
       transition "$dir" "$id" landed merged
       meta_set "$dir" last_merged "$id"
       log_line "$dir" "$id merged — no forge gate here (node PRs off, no forge client, or no remote)"
+      dispose_workspace "$dir" "$id"
       printf 'merged=%s\n' "$id"
       SETTLE_MERGED=$((SETTLE_MERGED + 1))
       continue
@@ -1325,6 +1414,7 @@ settle_landed() {
         transition "$dir" "$id" landed merged
         meta_set "$dir" last_merged "$id"
         log_line "$dir" "$id PR #$number merged on the forge — its dependents are free"
+        dispose_workspace "$dir" "$id"
         printf 'merged=%s\n' "$id"
         SETTLE_MERGED=$((SETTLE_MERGED + 1))
         ;;
@@ -1353,6 +1443,7 @@ settle_landed() {
                 transition "$dir" "$id" landed merged
                 meta_set "$dir" last_merged "$id"
                 log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN) — its dependents are free"
+                dispose_workspace "$dir" "$id"
                 printf 'merged=%s\n' "$id"
                 SETTLE_MERGED=$((SETTLE_MERGED + 1))
                 continue
@@ -1592,6 +1683,7 @@ cmd_complete() {
   # by a route the forge cannot report (merged by hand, landed in another PR).
   transition "$dir" "$id" "landed" merged
   meta_set "$dir" last_merged "$id"
+  dispose_workspace "$dir" "$id"
   render_json "$dir"
   printf 'completed=%s\n' "$id"
 }
@@ -1894,6 +1986,53 @@ cmd_abort() {
   printf 'note=workspaces kept; run status to see them\n'
 }
 
+sweep_usage() {
+  echo "usage: graph.sh sweep [--feature <f>] [--force]" >&2
+  echo "  removes the workspace of every node whose PR is already merged" >&2
+  echo "  --force also removes one whose tree still holds uncommitted changes" >&2
+}
+
+# The catch-up half of the lifecycle. Disposal happens at the merge, node by
+# node, but a graph that ran before this existed, one whose driver was down at
+# the moment a node merged, or one started with --keep-workspaces still has the
+# copies on disk — and they are what fills it. This frees them in one call.
+#
+# Only merged nodes, always: a failed node's workspace is the record of what
+# went wrong, and --force does not reach it.
+cmd_sweep() {
+  local feature="" force="explicit"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --force) force="force"; shift ;;
+      -h|--help) sweep_usage; exit 0 ;;
+      *) sweep_usage; exit 1 ;;
+    esac
+  done
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  local id freed=0 kept=0 out
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    [ -n "$(node_field "$dir" "$id" 7)" ] || continue
+    out="$(dispose_workspace "$dir" "$id" "$force")"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if printf '%s' "$out" | grep -q '^workspace_freed='; then
+      freed=$((freed + 1))
+    else
+      kept=$((kept + 1))
+    fi
+  done < <(nodes_with_status "$dir" merged)
+
+  render_json "$dir"
+  printf 'swept=%s\n' "$freed"
+  printf 'kept=%s\n' "$kept"
+  printf 'note=only merged nodes are swept — a failed node keeps its workspace for inspection\n'
+}
+
 cmd_status() {
   local feature="" as_json=0
   while [ $# -gt 0 ]; do
@@ -2175,7 +2314,7 @@ cmd_next() {
   # --- done ------------------------------------------------------------------
   if [ "$merged_n" -eq "$total" ]; then
     next_body_add "Every node's PR is merged into $(meta_get "$dir" base_branch)."
-    next_body_add "Present the batch homolog: for each node, its workspace's .context/ship-run/<task>/homolog-report.md (written by the deferred homolog), in the artifact language."
+    next_body_add "Present the batch homolog: for each node, $dir/artifacts/<task>/homolog-report.md (written by the deferred homolog, harvested when the node merged), in the artifact language."
     if ! node_pr_on "$dir"; then
       next_body_add "Then inform: node PRs were off, so each node's branch is still unmerged — run /ship:pr per branch when ready. NEVER auto-invoke /ship:pr."
     fi
@@ -2188,7 +2327,7 @@ cmd_next() {
   if [ "$failed" -gt 0 ]; then
     next_body_add "Every node that could run has: $merged_n merged, $failed failed after $(max_attempts_of "$dir") attempt(s) or by decision, $((total - merged_n - failed)) held behind a failed dependency."
     next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its last workspace is kept."
-    next_body_add "Present the batch homolog for the merged nodes (.context/ship-run/<task>/homolog-report.md in each workspace) and the failed list with reasons, in the artifact language. Then STOP."
+    next_body_add "Present the batch homolog for the merged nodes ($dir/artifacts/<task>/homolog-report.md) and the failed list with reasons, in the artifact language. Then STOP."
     next_body_add "Mention once: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) puts a failed node back on the frontier with a fresh workspace, and bash \"$HOOK_DIR/graph.sh\" next continues the run."
     next_emit "done" "done" "0" "" "graph finished — $merged_n merged, $failed failed of $total"
   fi
@@ -2221,6 +2360,7 @@ case "$SUBCOMMAND" in
   answer)    cmd_answer "$@" ;;
   reset)     cmd_reset "$@" ;;
   abort)     cmd_abort "$@" ;;
+  sweep)     cmd_sweep "$@" ;;
   conflicts) cmd_conflicts "$@" ;;
   status)    cmd_status "$@" ;;
   iter)      cmd_iter "$@" ;;
