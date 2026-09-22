@@ -10,7 +10,7 @@ set -euo pipefail
 # without losing track of the frontier, and it is what makes graph.sh testable
 # in CI, where no workspace runtime is installed.
 #
-# Seven verbs, same contract in every driver:
+# Eight verbs, same contract in every driver:
 #   dispatch <task> <prompt> [--repo <r>] [--state <dir>] [--base <ref>]
 #   collect  <task> [--state <dir>]
 #   wait     [--state <dir>] [--timeout-ms <n>] [--until-file <path>]...
@@ -27,6 +27,11 @@ set -euo pipefail
 #            graph writes the answer to a file; this is the only thing that
 #            tells the worker to go and read it.
 #   stop     <task> [--state <dir>]
+#   dispose  <task> [--state <dir>] — the node is finished and its work is safe
+#            somewhere else; remove the workspace this driver created for it and
+#            print disposed=1. A driver that cannot remove it prints disposed=0
+#            plus a reason=. NEVER destructive beyond that one workspace, and
+#            never called by the graph while a node can still be inspected.
 #   probe    — can this driver run here, and how strongly does it want the job?
 # Output is key=value lines on stdout; graph.sh and the orchestrator read those.
 #
@@ -39,13 +44,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
+  echo "usage: driver-manual.sh <dispatch|collect|wait|ask|resume|stop|dispose|probe> [args...]" >&2
 }
 
 STATE=""
 REPO=""
 BASE=""
 TASK=""
+WORKTREE=""
 TIMEOUT_MS=""
 UNTIL_FILES=""
 
@@ -57,6 +63,7 @@ parse_flags() {
       --repo) REPO="$2"; shift 2 ;;
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
+      --worktree) WORKTREE="$2"; shift 2 ;;
       --timeout-ms) TIMEOUT_MS="$2"; shift 2 ;;
       --until-file) UNTIL_FILES="$UNTIL_FILES$2
 "; shift 2 ;;
@@ -141,6 +148,18 @@ verb_stop() {
   printf 'note=Nothing was spawned, so nothing to stop. Close the workspace you opened for %s yourself.\n' "$task"
 }
 
+# The human opened the workspace, so the human closes it. Saying disposed=0 is
+# the honest answer: the graph then leaves the node's path in its log instead of
+# reporting disk it never actually freed.
+verb_dispose() {
+  local task="${REST[0]:-}"
+  [ -n "$task" ] || { echo "driver-manual.sh dispose: <task> is required" >&2; exit 1; }
+  printf 'disposed=0\n'
+  printf 'manual=1\n'
+  printf 'reason=this driver creates no workspace, so it removes none\n'
+  printf 'instruction=Delete the workspace you opened for %s — its work is merged.\n' "$task"
+}
+
 if [ $# -lt 1 ]; then
   usage
   exit 1
@@ -157,6 +176,7 @@ case "$VERB" in
   ask)      verb_ask ;;
   resume)   verb_resume ;;
   stop)     verb_stop ;;
+  dispose)  verb_dispose ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac

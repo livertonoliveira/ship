@@ -16,17 +16,18 @@ set -euo pipefail
 # each node's own test run collects over — the runner would pick up their test
 # files too.
 #
-# Verbs: dispatch | collect | wait | ask | resume | stop | probe  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | resume | stop | dispose | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-local.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
+  echo "usage: driver-local.sh <dispatch|collect|wait|ask|resume|stop|dispose|probe> [args...]" >&2
 }
 
 STATE=""
 REPO=""
 BASE=""
 TASK=""
+WORKTREE=""
 
 parse_flags() {
   REST=()
@@ -36,6 +37,7 @@ parse_flags() {
       --repo) REPO="$2"; shift 2 ;;
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
+      --worktree) WORKTREE="$2"; shift 2 ;;
       --timeout-ms) shift 2 ;;
       # Accepted and ignored: this driver's workers run inside the dispatching
       # turn, so there is no window for an artifact to shorten. Swallowing the
@@ -228,6 +230,69 @@ verb_stop() {
   printf 'note=Agents are synchronous here; nothing outlives the turn. Workspace kept.\n'
 }
 
+# Gives the disk back. A workspace here is a full second checkout of the repo
+# plus whatever its setup installed, so N nodes cost N copies — and nothing ever
+# removed them, so a finished run left every one of them behind.
+#
+# `git worktree remove` is the only correct removal: a bare `rm -rf` leaves the
+# registration in .git/worktrees, and the next node that wants the same branch
+# fails against a worktree that is not there. The rm is the fallback for a path
+# git no longer recognises, and it is fenced to this driver's own workspace root
+# so a bad path can only ever delete something this driver created.
+verb_dispose() {
+  local task="${REST[0]:-}"
+  [ -n "$task" ] || { echo "driver-local.sh dispose: <task> is required" >&2; exit 1; }
+  require_state
+
+  # The graph passes the path it has on record; this driver's own state file is
+  # the first source and that one the fallback, because a resumed graph can
+  # outlive the state file (a --fresh clears it) while nodes.tsv still knows
+  # exactly which directory the node ran in.
+  local f="$STATE/driver-local-$task.txt" path
+  path="$(kv_get "$f" worktree)"
+  [ -n "$path" ] || path="$WORKTREE"
+
+  if [ -z "$path" ] || [ ! -d "$path" ]; then
+    rm -f "$f"
+    printf 'disposed=1\n'
+    printf 'note=no workspace on disk for %s — nothing to free\n' "$task"
+    return 0
+  fi
+
+  case "$path" in
+    */.ship-graph/*) ;;
+    *)
+      printf 'disposed=0\n'
+      printf 'reason=%s is not under this driver'"'"'s workspace root (.ship-graph) — refusing to remove it\n' "$path"
+      return 0 ;;
+  esac
+
+  # The repo is resolved FROM THE WORKSPACE, never from the caller's cwd. A
+  # `git worktree remove` run against the wrong repo does not fail loudly — it
+  # just does not know that path, so the rm -rf fallback takes over and leaves a
+  # registration behind in .git/worktrees. The next node that wants that branch
+  # then dies on "already exists" against a worktree that is not there.
+  local main freed
+  main="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  main="${main:+$(dirname "$main")}"
+  freed="$(du -sk "$path" 2>/dev/null | awk '{print $1}')"
+  git -C "${main:-.}" worktree remove --force "$path" >/dev/null 2>&1 || rm -rf "$path"
+  git -C "${main:-.}" worktree prune >/dev/null 2>&1 || true
+  # The per-feature root, once its last node is gone. rmdir and not rm -rf: it
+  # succeeds only if nothing else is left in there.
+  rmdir "$(dirname "$path")" 2>/dev/null || true
+  rm -f "$f"
+
+  if [ -d "$path" ]; then
+    printf 'disposed=0\n'
+    printf 'reason=%s survived both git worktree remove and rm -rf\n' "$path"
+    return 0
+  fi
+  printf 'disposed=1\n'
+  printf 'freed_kb=%s\n' "${freed:-0}"
+  printf 'workspace=%s\n' "$path"
+}
+
 if [ $# -lt 1 ]; then
   usage
   exit 1
@@ -244,6 +309,7 @@ case "$VERB" in
   ask)      verb_ask ;;
   resume)   verb_resume ;;
   stop)     verb_stop ;;
+  dispose)  verb_dispose ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac

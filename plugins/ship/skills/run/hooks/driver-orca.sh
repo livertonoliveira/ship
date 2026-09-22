@@ -37,17 +37,18 @@ set -euo pipefail
 # homolog-approved.txt (docs/graph-mode-orca-findings.md §B). worker_done only
 # ends the wait window early.
 #
-# Verbs: dispatch | collect | wait | ask | resume | stop | probe  (contract in driver-manual.sh)
+# Verbs: dispatch | collect | wait | ask | resume | stop | dispose | probe  (contract in driver-manual.sh)
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|resume|stop|probe> [args...]" >&2
+  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|resume|stop|dispose|probe> [args...]" >&2
 }
 
 STATE=""
 REPO=""
 BASE=""
 TASK=""
+WORKTREE=""
 TIMEOUT_MS="300000"
 UNTIL_FILES=""
 
@@ -59,6 +60,7 @@ parse_flags() {
       --repo) REPO="$2"; shift 2 ;;
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
+      --worktree) WORKTREE="$2"; shift 2 ;;
       --timeout-ms) TIMEOUT_MS="$2"; shift 2 ;;
       --until-file) UNTIL_FILES="$UNTIL_FILES$2
 "; shift 2 ;;
@@ -772,6 +774,44 @@ verb_stop() {
   printf 'note=Workspace kept for inspection; only the agent was stopped.\n'
 }
 
+# Gives the disk back once the node's work is merged. The runtime owns the
+# workspace, so the runtime removes it — `worktree rm` de-registers it from the
+# app and from git in one call, which a plain rm -rf cannot do.
+#
+# The worker is fenced first. Removing the workspace out from under a live agent
+# leaves it writing into a deleted directory, and the dispatch stays listening.
+verb_dispose() {
+  local task="${REST[0]:-}"
+  [ -n "$task" ] || { echo "driver-orca.sh dispose: <task> is required" >&2; exit 1; }
+  require_state
+  require_cli
+
+  local f="$STATE/driver-orca-$task.txt" wt_id path
+  wt_id="$(kv_get "$f" worktree_id)"
+  path="$(kv_get "$f" worktree)"
+  [ -n "$path" ] || path="$WORKTREE"
+
+  REST=("$task")
+  verb_stop >/dev/null 2>&1 || true
+
+  if [ -z "$wt_id" ]; then
+    rm -f "$f"
+    printf 'disposed=0\n'
+    printf 'reason=no worktree id recorded for %s — remove its workspace by hand\n' "$task"
+    return 0
+  fi
+
+  orca worktree rm --worktree "id:$wt_id" --force --json >/dev/null 2>&1 || true
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    printf 'disposed=0\n'
+    printf 'reason=the runtime still reports a workspace at %s\n' "$path"
+    return 0
+  fi
+  rm -f "$f"
+  printf 'disposed=1\n'
+  printf 'workspace=%s\n' "${path:-id:$wt_id}"
+}
+
 if [ $# -lt 1 ]; then
   usage
   exit 1
@@ -788,6 +828,7 @@ case "$VERB" in
   ask)      verb_ask ;;
   resume)   verb_resume ;;
   stop)     verb_stop ;;
+  dispose)  verb_dispose ;;
   probe)    verb_probe ;;
   *)        usage; exit 1 ;;
 esac
