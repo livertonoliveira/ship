@@ -1463,6 +1463,9 @@ settle_landed() {
             DIRTY)
               log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
               ;;
+            UNSTABLE)
+              log_line "$dir" "$id PR #$number has failing checks (UNSTABLE) — never merged red; needs the CI fixed"
+              ;;
           esac
         fi
         printf 'awaiting_merge=%s\n' "$id"
@@ -2304,12 +2307,14 @@ cmd_next() {
       next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}${lmstate:+ merge-state=$lmstate}"
       [ "$larmed" = "yes" ] && continue
       # Under merge-policy=graph an unarmed PR is the graph's to merge once the
-      # forge says CLEAN; only a conflict (DIRTY) still needs a person.
-      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ]; then continue; fi
+      # forge says CLEAN. A conflict (DIRTY) or red checks (UNSTABLE) will never
+      # get there by waiting, so those still need a person — waiting on them
+      # would park the graph with nothing to show for it.
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
       unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
-      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, or conflicts against the base) — present them to the user for review and merge, in the artifact language."
+      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
       next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
       next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
       next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"

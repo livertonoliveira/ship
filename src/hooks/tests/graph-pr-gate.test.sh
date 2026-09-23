@@ -484,6 +484,26 @@ test_graph_merge_policy_hands_a_conflict_to_a_person() {
   fi
 }
 
+test_graph_merge_policy_asks_on_red_checks() {
+  local name="merge-policy=graph never merges a PR with failing checks (UNSTABLE) and asks instead of waiting forever"
+  local dir next_out merged
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" UNSTABLE
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ -z "$merged" ] && [ "$(field "$next_out" state)" = "landed" ] && [ "$(field "$next_out" action)" = "ask" ] \
+    && printf '%s' "$next_out" | grep -q 'merge-state=UNSTABLE'; then
+    log_pass "$name"
+  else
+    log_fail "$name (merged='$merged' next=$(field "$next_out" state)/$(field "$next_out" action))"
+  fi
+}
+
 test_human_merge_policy_never_merges() {
   local name="merge-policy=human never calls merge, even on a CLEAN PR"
   local dir out merged
@@ -575,6 +595,7 @@ test_a_merged_pr_completes_the_node
 test_graph_merge_policy_merges_a_clean_unarmed_pr
 test_graph_merge_policy_waits_while_checks_run
 test_graph_merge_policy_hands_a_conflict_to_a_person
+test_graph_merge_policy_asks_on_red_checks
 test_human_merge_policy_never_merges
 test_graph_is_the_default_merge_policy
 test_a_graph_without_the_key_merges_by_default
