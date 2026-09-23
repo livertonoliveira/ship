@@ -6,6 +6,10 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "usage: plan-validate.sh <plan-file> [--scaffold <file>] [--spec <spec-file>] [--config <path>]" >&2
+  echo "       plan-validate.sh --module-files <plan-file>" >&2
+  echo "  --module-files prints every file the plan's modules claim, one per line," >&2
+  echo "  with the same parser the checks use — pipeline.sh reads module files" >&2
+  echo "  through it so the two can never disagree on what a module owns." >&2
   echo "  With a scaffold (auto-detected beside the plan) the plan is confronted" >&2
   echo "  with it instead of with the spec: the derived lists were generated, not" >&2
   echo "  transcribed, so only the planner's own assignments are checked." >&2
@@ -30,16 +34,37 @@ module_section() {
   ' "$f"
 }
 
+# A field's value is its own line plus any indented sub-bullets right under it,
+# joined with ", ". Planners write `- Files:` both ways; reading only the first
+# line made a module listing its files as sub-bullets claim nothing, so a plan
+# that assigned every inventory row failed as if it had assigned none.
 module_field() {
   local f="$1" id="$2" field="$3"
-  module_section "$f" "$id" | grep -E "^- ${field}:" | head -1 | sed -E "s/^- ${field}:[[:space:]]*//"
+  module_section "$f" "$id" | awk -v field="$field" '
+    !found && index($0, "- " field ":") == 1 {
+      found = 1
+      value = substr($0, length(field) + 4)
+      sub(/^[[:space:]]+/, "", value)
+      next
+    }
+    found && /^[[:space:]]+[-*][[:space:]]+/ {
+      item = $0
+      sub(/^[[:space:]]+[-*][[:space:]]+/, "", item)
+      value = (value == "" ? item : value ", " item)
+      next
+    }
+    found { exit }
+    END { if (found) print value }
+  '
 }
 
 module_files() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Files")"
   [ -n "$raw" ] || return 0
-  printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
+  printf '%s\n' "$raw" | tr ',' '\n' \
+    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/^[[:space:]]+|[[:space:]]+$//g' \
+    | grep -v '^$' || true
 }
 
 module_scenarios() {
@@ -351,8 +376,8 @@ plan_scenarios() {
 spec_files() {
   local spec="$1" kind="${2:-}"
   awk -v kind="$kind" '
-    /^## Files/ { insection = 1; next }
-    /^## / { insection = 0 }
+    /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
+    /^#+[[:space:]]/ { insection = 0 }
     insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
@@ -596,6 +621,15 @@ validate_plan() {
 
 main() {
   local positional=() spec="" config="" scaffold=""
+
+  if [ "${1:-}" = "--module-files" ]; then
+    if [ ! -f "${2:-}" ]; then
+      echo "plan-validate: --module-files requires an existing plan file" >&2
+      exit 1
+    fi
+    plan_files "$2"
+    exit 0
+  fi
 
   while [ $# -gt 0 ]; do
     case "$1" in

@@ -83,12 +83,15 @@ scenario_records() {
 
 # `## Files` entries the spec owns. Same extraction plan-validate.sh used to run
 # against the spec directly; centralised here so the two can never disagree.
+# The heading level is not fixed: the spec slice is rewritten on every attempt,
+# and one that nested it as `### Files` scaffolded an empty inventory — the
+# plan was then checked against nothing and passed by accident.
 spec_files() {
   local spec="$1"
   [ -f "$spec" ] || return 0
   awk '
-    /^## Files/ { insection = 1; next }
-    /^## / { insection = 0 }
+    /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
+    /^#+[[:space:]]/ { insection = 0 }
     insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
