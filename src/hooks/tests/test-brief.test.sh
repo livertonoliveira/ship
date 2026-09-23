@@ -71,12 +71,14 @@ Scenario: greets
 EOF
 }
 
+PLAN_FILES_BLOCK='- Files: src/b.js'
+
 plan_with_contract() {
   local layer="$1" path="$2"
   cat <<EOF
 ## Modules
 ### M1: core
-- Files: src/b.js
+$PLAN_FILES_BLOCK
 - Depends on: none
 - Contract: does things
 - Scenarios: $SCEN_ID
@@ -179,6 +181,27 @@ test_brief_acs_are_scoped_to_their_section() {
   drive_to_verify "$dir" TASK-1 unit src/b.test.js >/dev/null
   brief="$(scratch_of "$dir" TASK-1)/test-brief-unit.md"
   if [ -f "$brief" ] && grep -q "$AC_IN" "$brief" && ! grep -q "$AC_OUT" "$brief"; then
+    log_pass "$name"
+  else
+    log_fail "$name (brief=$brief)"
+  fi
+  rm -rf "$dir"
+}
+
+test_sub_bullet_module_files_reach_the_brief() {
+  local name="files a module lists as sub-bullets under '- Files:' reach the brief's Denylist and Source"
+  local dir brief
+  dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled'
+  PLAN_FILES_BLOCK='- Files:
+  - src/b.js'
+  drive_to_verify "$dir" TASK-1 unit src/b.test.js >/dev/null
+  PLAN_FILES_BLOCK='- Files: src/b.js'
+  brief="$(scratch_of "$dir" TASK-1)/test-brief-unit.md"
+  if [ -f "$brief" ] \
+    && [ "$(grep -c '^- src/b.js$' "$brief")" -ge 2 ]; then
     log_pass "$name"
   else
     log_fail "$name (brief=$brief)"
@@ -299,6 +322,7 @@ test_layer_without_contract_is_not_dispatched
 test_layer_already_authored_by_develop_is_not_dispatched
 test_develop_authored_tests_reach_the_manifest
 test_brief_acs_are_scoped_to_their_section
+test_sub_bullet_module_files_reach_the_brief
 test_existing_tests_block_is_filtered
 test_style_ref_is_layer_appropriate
 test_no_style_ref_beats_a_wrong_one

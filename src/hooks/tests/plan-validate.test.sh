@@ -426,6 +426,27 @@ test_files_as_sub_bullets_still_catch_an_unassigned_file() {
   rm -rf "$dir"
 }
 
+test_module_files_query_reads_both_shapes() {
+  local name="--module-files prints what inline and sub-bullet Files claim, the same set the checks see"
+  local dir plan out
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts, src/b.ts" "none" "$(scenario_tag 01)")" \
+    "### M2: segundo" \
+    "- Files:" \
+    "  - src/c.ts" \
+    "  * src/d.ts" \
+    "- Depends on: M1")"
+  out="$(bash "$PLAN_VALIDATE_SCRIPT" --module-files "$plan" | tr '\n' ' ')"
+  if [ "$out" = "src/a.ts src/b.ts src/c.ts src/d.ts " ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (got: $out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_scaffolded_plan_may_divert_an_inventory_file() {
   local name="an inventory file logged under Map Divergences is accounted for without a module"
   local dir plan
@@ -843,6 +864,7 @@ test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails
 test_scaffolded_plan_may_divert_an_inventory_file
 test_files_as_sub_bullets_claim_the_inventory
 test_files_as_sub_bullets_still_catch_an_unassigned_file
+test_module_files_query_reads_both_shapes
 test_invalid_layer_fails
 test_invalid_dependency_ref_fails
 test_dependency_with_a_qualifier_passes

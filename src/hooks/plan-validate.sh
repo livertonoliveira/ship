@@ -6,6 +6,10 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "usage: plan-validate.sh <plan-file> [--scaffold <file>] [--spec <spec-file>] [--config <path>]" >&2
+  echo "       plan-validate.sh --module-files <plan-file>" >&2
+  echo "  --module-files prints every file the plan's modules claim, one per line," >&2
+  echo "  with the same parser the checks use — pipeline.sh reads module files" >&2
+  echo "  through it so the two can never disagree on what a module owns." >&2
   echo "  With a scaffold (auto-detected beside the plan) the plan is confronted" >&2
   echo "  with it instead of with the spec: the derived lists were generated, not" >&2
   echo "  transcribed, so only the planner's own assignments are checked." >&2
@@ -617,6 +621,15 @@ validate_plan() {
 
 main() {
   local positional=() spec="" config="" scaffold=""
+
+  if [ "${1:-}" = "--module-files" ]; then
+    if [ ! -f "${2:-}" ]; then
+      echo "plan-validate: --module-files requires an existing plan file" >&2
+      exit 1
+    fi
+    plan_files "$2"
+    exit 0
+  fi
 
   while [ $# -gt 0 ]; do
     case "$1" in
