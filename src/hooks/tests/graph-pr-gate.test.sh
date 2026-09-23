@@ -259,13 +259,14 @@ test_a_dependent_waits_for_the_real_merge() {
 }
 
 test_next_hands_the_open_prs_to_the_user() {
-  local name="with nothing left to dispatch, next presents the open PRs and its exits"
+  local name="with nothing left to dispatch, next presents the open PRs and its exits under merge-policy=human"
   local dir out
   dir="$(mktemp -d)"
   new_repo "$dir"
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
+  (cd "$dir" && bash "$GRAPH" set --merge-policy human >/dev/null)
   (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -303,13 +304,14 @@ test_an_armed_pr_waits_instead_of_asking() {
 }
 
 test_an_unarmed_pr_still_asks() {
-  local name="an OPEN PR with no auto-merge armed still needs a human — action stays ask"
+  local name="under merge-policy=human an OPEN PR with no auto-merge armed still needs a human — action stays ask"
   local dir out
   dir="$(mktemp -d)"
   new_repo "$dir"
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh "$dir" OPEN
+  (cd "$dir" && bash "$GRAPH" set --merge-policy human >/dev/null)
   (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
@@ -483,13 +485,14 @@ test_graph_merge_policy_hands_a_conflict_to_a_person() {
 }
 
 test_human_merge_policy_never_merges() {
-  local name="the default merge-policy=human never calls merge, even on a CLEAN PR"
+  local name="merge-policy=human never calls merge, even on a CLEAN PR"
   local dir out merged
   dir="$(mktemp -d)"
   new_repo "$dir"
   init_graph "$dir"
   landed_node "$dir" TASK-001 src/good.ts
   make_gh_merge "$dir" CLEAN
+  (cd "$dir" && bash "$GRAPH" set --merge-policy human >/dev/null)
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
@@ -500,11 +503,82 @@ test_human_merge_policy_never_merges() {
   fi
 }
 
+test_graph_is_the_default_merge_policy() {
+  local name="with no --merge-policy, init records graph and poll merges a CLEAN unarmed PR by itself"
+  local dir out json merged
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && printf '%s' "$merged" | grep -q -- '--squash' \
+    && printf '%s' "$json" | grep -q '"merge_policy": "graph"'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' merged='$merged')"
+  fi
+}
+
+test_a_graph_without_the_key_merges_by_default() {
+  local name="a graph created before merge_policy existed reads as graph, not human"
+  local dir out merged meta
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  meta="$dir/.context/ship-graph/f/meta.tsv"
+  grep -q "^merge_policy" "$meta" || { log_fail "$name (no merge_policy key at $meta)"; rm -rf "$dir"; return; }
+  grep -v "^merge_policy" "$meta" > "$meta.tmp" && mv "$meta.tmp" "$meta"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' && [ -n "$merged" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' merged='$merged')"
+  fi
+}
+
+test_init_takes_merge_policy_like_max_in_flight() {
+  local name="init --merge-policy human is recorded and never merges; an invalid value is refused"
+  local dir out merged rc=0
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    printf '[{ "id": "TASK-001", "title": "Base", "deps": [], "files": ["src/good.ts"] }]\n' > nodes.json
+    bash "$GRAPH" init --feature bad --from nodes.json --driver manual --merge-policy sometimes >/dev/null 2>&1
+  ) || rc=$?
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --base-branch main --merge-policy human >/dev/null
+  )
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' && [ -z "$merged" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (invalid rc=$rc out='$out' merged='$merged')"
+  fi
+}
+
 test_a_merged_pr_completes_the_node
 test_graph_merge_policy_merges_a_clean_unarmed_pr
 test_graph_merge_policy_waits_while_checks_run
 test_graph_merge_policy_hands_a_conflict_to_a_person
 test_human_merge_policy_never_merges
+test_graph_is_the_default_merge_policy
+test_a_graph_without_the_key_merges_by_default
+test_init_takes_merge_policy_like_max_in_flight
 test_an_open_pr_keeps_the_node_landed
 test_a_closed_pr_fails_the_node
 test_a_missing_pr_is_surfaced_not_assumed

@@ -124,7 +124,7 @@ EOF
 gh pr merge --auto --squash <branch-name>
 ```
 
-This arms GitHub's native auto-merge — it still waits on the forge's own required checks/branch protection and merges nothing itself; `graph.sh poll` (never this skill) is what later reads the merge back. If the command fails (auto-merge not enabled on the repo, or branch protection missing), log it plainly and fall back to the manual-merge reminder in Step 10 — never treat the failure as a pipeline error.
+This arms GitHub's native auto-merge — it still waits on the forge's own required checks/branch protection and merges nothing itself; `graph.sh poll` (never this skill) is what later reads the merge back. If the command fails (auto-merge not enabled on the repo, or branch protection missing), log it plainly and report it in Step 10 — never treat the failure as a pipeline error.
 
 ### 8. Update artifacts
 
@@ -145,7 +145,7 @@ Pass `--keep-context` when the preflight printed `keep_context=yes` or the user 
 Inform the user of the PR URL, commit count, and branch name.
 
 - `keep_context=yes` and auto-merge armed: say auto-merge is armed and will complete once the forge's required checks pass — no action needed; the graph polls this PR and releases dependent nodes once it lands.
-- `keep_context=yes` and arming failed: say auto-merge could not be armed (reason from the failed command) and the PR needs a manual merge.
+- `keep_context=yes` and arming failed: say auto-merge could not be armed (reason from the failed command); the graph merges the PR once the forge reports it CLEAN, unless its merge-policy is `human`.
 - Otherwise: remind "Do NOT merge — review the PR and merge manually."
 
 ---

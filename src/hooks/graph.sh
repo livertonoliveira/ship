@@ -25,7 +25,8 @@ set -euo pipefail
 usage() {
   echo "usage: graph.sh <subcommand> [args...]" >&2
   echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
-  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--keep-workspaces] [--fresh]" >&2
+  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--merge-policy human|graph]" >&2
+  echo "            [--keep-workspaces] [--fresh]" >&2
   echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
   echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
   echo "            [--workspace-cleanup on|off]" >&2
@@ -157,13 +158,19 @@ admission_of() {
   case "$a" in batch) printf 'batch' ;; *) printf 'stream' ;; esac
 }
 
-# Who merges a node PR that /ship:pr could not arm for auto-merge. `human`
-# (default) hands it to the operator. `graph` merges it from here once the forge
-# reports it CLEAN — the same thing GitHub's auto-merge would have done, for a
-# repository that has that feature off. Nothing is merged while checks run, and
-# nothing is merged over a conflict: DIRTY still needs a person.
+# Who merges a node PR that /ship:pr could not arm for auto-merge. `graph`
+# (default) merges it from here once the forge reports it CLEAN — the same thing
+# GitHub's auto-merge would have done, for a repository that has that feature
+# off. Nothing is merged while checks run or fail, and nothing is merged over a
+# conflict: DIRTY still needs a person. `human` hands every such PR to the
+# operator.
+#
+# Measured 2026-09-23: /ship:pr arms auto-merge seconds after `gh pr create`,
+# while the forge still reports the PR UNKNOWN, so on a repo with auto-merge off
+# the arm fails and the PR never merges itself. Under `human` that stalled the
+# graph on a PR nobody was watching; a graph run is unattended by contract.
 merge_policy_of() {
-  case "$(meta_get "$1" merge_policy)" in graph) printf 'graph' ;; *) printf 'human' ;; esac
+  case "$(meta_get "$1" merge_policy)" in human) printf 'human' ;; *) printf 'graph' ;; esac
 }
 
 # How many times a node may be claimed before a failure is final. Each claim
@@ -748,7 +755,7 @@ reelect_driver() {
 }
 
 cmd_init() {
-  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on"
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on" merge_policy="graph"
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -761,6 +768,7 @@ cmd_init() {
       --mode) mode="$2"; shift 2 ;;
       --repo) default_repo="$2"; shift 2 ;;
       --node-pr) node_pr="$2"; shift 2 ;;
+      --merge-policy) merge_policy="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) usage; exit 1 ;;
@@ -777,6 +785,7 @@ cmd_init() {
   [ "$max_in_flight" -ge 1 ] || die "init: --max-in-flight must be >= 1"
   case "$mode" in linear|local) ;; *) die "init: --mode must be linear or local: $mode" ;; esac
   case "$node_pr" in on|off) ;; *) die "init: --node-pr must be on or off: $node_pr" ;; esac
+  case "$merge_policy" in human|graph) ;; *) die "init: --merge-policy must be human or graph: $merge_policy" ;; esac
   local driver_workspaces=""
   if [ -z "$driver" ]; then
     local sel
@@ -921,13 +930,14 @@ cmd_init() {
   meta_set "$dir" max_in_flight "$max_in_flight"
   meta_set "$dir" repo "$default_repo"
   meta_set "$dir" node_pr "$node_pr"
+  meta_set "$dir" merge_policy "$merge_policy"
   meta_set "$dir" last_merged ""
 
   mkdir -p "$GRAPH_ROOT"
   printf '%s\n' "$feature" > "$ACTIVE_POINTER"
 
   render_json "$dir"
-  log_line "$dir" "init feature=$feature driver=$driver ($chosen_by) mode=$mode max_in_flight=$max_in_flight base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
+  log_line "$dir" "init feature=$feature driver=$driver ($chosen_by) mode=$mode max_in_flight=$max_in_flight merge_policy=$merge_policy base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
   # Ahead of seal_spec, which commits onto the base: sealing onto a stale base
   # and then fast-forwarding would put the spec behind the nodes that need it.
   sync_base "$dir"
