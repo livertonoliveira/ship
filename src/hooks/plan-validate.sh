@@ -30,16 +30,37 @@ module_section() {
   ' "$f"
 }
 
+# A field's value is its own line plus any indented sub-bullets right under it,
+# joined with ", ". Planners write `- Files:` both ways; reading only the first
+# line made a module listing its files as sub-bullets claim nothing, so a plan
+# that assigned every inventory row failed as if it had assigned none.
 module_field() {
   local f="$1" id="$2" field="$3"
-  module_section "$f" "$id" | grep -E "^- ${field}:" | head -1 | sed -E "s/^- ${field}:[[:space:]]*//"
+  module_section "$f" "$id" | awk -v field="$field" '
+    !found && index($0, "- " field ":") == 1 {
+      found = 1
+      value = substr($0, length(field) + 4)
+      sub(/^[[:space:]]+/, "", value)
+      next
+    }
+    found && /^[[:space:]]+[-*][[:space:]]+/ {
+      item = $0
+      sub(/^[[:space:]]+[-*][[:space:]]+/, "", item)
+      value = (value == "" ? item : value ", " item)
+      next
+    }
+    found { exit }
+    END { if (found) print value }
+  '
 }
 
 module_files() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Files")"
   [ -n "$raw" ] || return 0
-  printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
+  printf '%s\n' "$raw" | tr ',' '\n' \
+    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/^[[:space:]]+|[[:space:]]+$//g' \
+    | grep -v '^$' || true
 }
 
 module_scenarios() {
