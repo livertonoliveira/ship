@@ -373,6 +373,80 @@ test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails() {
   rm -rf "$dir"
 }
 
+test_files_as_sub_bullets_claim_the_inventory() {
+  local name="a module listing its files as indented sub-bullets under '- Files:' claims them"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (modify) -> M?" \
+    "- src/b.ts (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "### M1: primeiro" \
+    "- Files:" \
+    "  - src/a.ts" \
+    "  - \`src/b.ts\` — swap the token" \
+    "- Depends on: none" \
+    "- Scenarios: $(scenario_tag 01)" \
+    "" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_files_as_sub_bullets_still_catch_an_unassigned_file() {
+  local name="sub-bullet Files are read, not waved through: an inventory row none of them names still fails"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (modify) -> M?" \
+    "- src/esquecido.ts (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "### M1: primeiro" \
+    "- Files:" \
+    "  - src/a.ts" \
+    "- Depends on: none" \
+    "- Scenarios: $(scenario_tag 01)" \
+    "- Contract: touches src/esquecido.ts only in prose" \
+    "  - src/esquecido.ts is mentioned here, not claimed" \
+    "" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts")"
+
+  assert_exit_and_message "$name" "$plan" 2 "sem módulo (e sem registro em ## Map Divergences) — src/esquecido.ts"
+  rm -rf "$dir"
+}
+
+test_module_files_query_reads_both_shapes() {
+  local name="--module-files prints what inline and sub-bullet Files claim, the same set the checks see"
+  local dir plan out
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts, src/b.ts" "none" "$(scenario_tag 01)")" \
+    "### M2: segundo" \
+    "- Files:" \
+    "  - src/c.ts" \
+    "  * src/d.ts" \
+    "- Depends on: M1")"
+  out="$(bash "$PLAN_VALIDATE_SCRIPT" --module-files "$plan" | tr '\n' ' ')"
+  if [ "$out" = "src/a.ts src/b.ts src/c.ts src/d.ts " ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (got: $out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_scaffolded_plan_may_divert_an_inventory_file() {
   local name="an inventory file logged under Map Divergences is accounted for without a module"
   local dir plan
@@ -788,6 +862,9 @@ test_scaffolded_plan_with_an_unfilled_path_fails
 test_scaffolded_plan_with_an_unmarked_extra_slot_fails
 test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails
 test_scaffolded_plan_may_divert_an_inventory_file
+test_files_as_sub_bullets_claim_the_inventory
+test_files_as_sub_bullets_still_catch_an_unassigned_file
+test_module_files_query_reads_both_shapes
 test_invalid_layer_fails
 test_invalid_dependency_ref_fails
 test_dependency_with_a_qualifier_passes

@@ -857,8 +857,7 @@ next_module_files() {
   # next_test_pattern_ref uses to FIND tests.
   local test_re='(\.test\.|\.spec\.|_test\.|_spec\.|__tests__/|(^|/)tests?/|(^|/)test_[^/]*\.py)'
   if [ -f "$plan" ]; then
-    grep -E '^- Files:' "$plan" | sed -E 's/^- Files:[[:space:]]*//' | tr ',' '\n' \
-      | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/`//g' | grep -v '^$' \
+    bash "$HOOK_DIR/plan-validate.sh" --module-files "$plan" 2>/dev/null \
       | grep -vE "$test_re" || true
   elif [ -f "$spec" ]; then
     awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /{sub(/^- */,"");print}' "$spec" 2>/dev/null \
