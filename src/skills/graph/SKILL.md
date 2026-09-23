@@ -1,7 +1,7 @@
 ---
 name: ship:graph
 description: "Runs a feature's independent tasks in parallel: one isolated workspace per task, dependency and file-conflict edges, and one PR per node merged on the forge."
-argument-hint: "<linear-project-url | project-name | local-feature-dir> [--driver manual|local|orca] [--max-in-flight N] [--repo <id>]"
+argument-hint: "<linear-project-url | project-name | local-feature-dir> [--driver manual|local|orca] [--max-in-flight N] [--merge-policy human|graph] [--repo <id>]"
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
@@ -41,13 +41,13 @@ This is the only judgment step. One JSON array; each object is `{ "id", "repo", 
 
 ## 3. Initialize
 
-`bash "@@ship/hooks/graph.sh" init --feature "<project name>" --from nodes.json --driver <d> --max-in-flight <N> --mode <linear|local> [--repo <id>]`
+`bash "@@ship/hooks/graph.sh" init --feature "<project name>" --from nodes.json --driver <d> --max-in-flight <N> --mode <linear|local> [--merge-policy human|graph] [--repo <id>]`
 
 Pass `--repo` when the caller gave one, or when the coordinator's own directory cannot imply it; nodes without their own `repo` fall back to it.
 
 Exit 3 with a `RESUME` report means a graph for this feature is already live — go straight to the loop; the run continues where it stopped. `--fresh` is the opposite: it discards that graph along with its in-flight claims and PR state, so pass it only when the user explicitly asks to start over.
 
-Changing a live graph's knobs is `bash "@@ship/hooks/graph.sh" set [--driver <d>] [--max-in-flight N] [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]` — never a re-init, and never `--fresh`. `admission batch` refills slots only once every in-flight node has closed (`stream`, the default, refills each slot as it frees). `merge-policy graph` lets `poll` squash-merge a node PR that `/ship:pr` could not arm for auto-merge, once the forge reports it CLEAN — what auto-merge would do, for a repo without the feature; `human` (default) hands it to the user. `max-attempts` (default 2) caps how many times a node is claimed before its failure is final. Nodes still held by the old driver must be released first (`abort`).
+Changing a live graph's knobs is `bash "@@ship/hooks/graph.sh" set [--driver <d>] [--max-in-flight N] [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N]` — never a re-init, and never `--fresh`. `admission batch` refills slots only once every in-flight node has closed (`stream`, the default, refills each slot as it frees). `merge-policy graph` (default) lets `poll` squash-merge an unarmed node PR once the forge reports it CLEAN — never over red checks or conflicts; `human` hands it to the user. `max-attempts` (default 2) caps how many times a node is claimed before its failure is final. Nodes still held by the old driver must be released first (`abort`).
 
 Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight is already around a dozen concurrent agents.
 
@@ -75,6 +75,6 @@ To stop a run, `graph.sh abort`: it stops each in-flight worker, marks those nod
 - `claim` writes `homolog-mode=defer` into the task's workspace, so no node stops for its own acceptance prompt. Every report is presented in one batch at `done`.
 - Completion is observed, never reported: `poll` lands a node when its pipeline leaves `homolog-approved.txt` on disk, and seals the workspace into a commit (`/ship:run` writes files but never commits, so the branch would otherwise be empty). A node that stops writing anything is resumed once through the driver, then failed; one whose worker never started, or whose pipeline reports its own failure, is failed at once. A node that failed on its own is re-dispatched in a fresh workspace while it has attempts left; one failed by a decision (`abort`, `fail`, a PR closed on the forge) waits for `reset`. A failed node holds only its dependents — the run goes on and ends with the failed list at `done`. `init` refuses a dependency cycle before any workspace exists.
 - Inside a node, gates decide themselves: the pipeline fixes while a remediation round still changes the residue, defers once it stops, and treats the declared deps as already satisfied (admission guaranteed it). Each decision is written to the node's `graph-decisions.md`. `answer` writes the reply and wakes the worker through the driver — never type into a worker yourself.
-- The gate is whether the PR actually landed: `poll` reads each landed node's real state on the forge, and only a PR **merged** there releases the nodes that depend on it. The graph never merges, never pushes a base and never runs the suite itself — a PR closed without merging fails its node instead of stalling the graph.
+- The gate is whether the PR actually landed: `poll` reads each landed node's real state on the forge, and only a PR **merged** there releases the nodes that depend on it. The graph merges only a CLEAN PR under `merge-policy graph`, never pushes a base and never runs the suite itself — a PR closed without merging fails its node instead of stalling the graph.
 - One issue, one PR: each node opens its own against the base — the repo's real trunk — from inside its workspace, syncing onto it first with the full context of the change it just implemented (`/ship:pr` step 5). `pipeline.sh next` emits that step on a green gate; a red gate stops the node before it. Never open or merge one by hand; `--node-pr off` turns the whole behaviour off, and then nothing merges anywhere.
 - Language: user-facing output in the config's `Artifact language`; code, commits, branch names stay English (@@ship/patterns/language.md).
