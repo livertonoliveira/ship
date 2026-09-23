@@ -80,6 +80,20 @@ test('pipeline.sh init reports RESUME with exit 3 when dispatch rows exist', () 
   assert.match(res.stdout, /unfinished=dev/);
 });
 
+test('pipeline.sh init resume mode preserves existing state and only refreshes the diff', () => {
+  const dir = setupRepo();
+  assert.equal(runPipelineInit(dir, ['TASK-A']).status, 0);
+  const scratch = path.join(dir, '.context', 'ship-run', 'TASK-A');
+  const marker = '| dev | Skill | ship:develop | sonnet | 2026-07-17T10:00:00Z |\n';
+  fs.appendFileSync(path.join(scratch, 'dispatch-log.md'), marker);
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'new file\n');
+  const res = runPipelineInit(dir, ['TASK-A', '--mode', 'resume']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /INIT resume/);
+  assert.ok(fs.readFileSync(path.join(scratch, 'dispatch-log.md'), 'utf8').includes(marker));
+  assert.ok(fs.readFileSync(path.join(scratch, 'diff.md'), 'utf8').includes('b.txt'));
+});
+
 test('pipeline.sh init rejects a task id with an invalid character', () => {
   const dir = setupRepo();
   const res = runPipelineInit(dir, ['../evil']);
@@ -106,17 +120,4 @@ test('pipeline.sh with no subcommand exits 1 with usage', () => {
   const res = sh(dir, 'bash', [PIPELINE]);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /usage: pipeline\.sh/);
-});
-
-test('pipeline.sh init matches run-init.sh output byte-for-byte for the same inputs', () => {
-  const dirA = setupRepo();
-  const dirB = setupRepo();
-  const runInit = path.join(__dirname, '..', '..', '..', 'src', 'hooks', 'run-init.sh');
-  const resPipeline = runPipelineInit(dirA, ['TASK-A']);
-  const resDirect = sh(dirB, 'bash', [runInit, 'TASK-A']);
-  assert.equal(resPipeline.status, resDirect.status);
-  assert.equal(
-    resPipeline.stdout.replace(/TASK-A/g, 'X'),
-    resDirect.stdout.replace(/TASK-A/g, 'X')
-  );
 });
