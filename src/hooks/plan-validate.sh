@@ -376,8 +376,8 @@ plan_scenarios() {
 spec_files() {
   local spec="$1" kind="${2:-}"
   awk -v kind="$kind" '
-    /^## Files/ { insection = 1; next }
-    /^## / { insection = 0 }
+    /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
+    /^#+[[:space:]]/ { insection = 0 }
     insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line)
