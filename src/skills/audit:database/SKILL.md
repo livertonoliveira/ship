@@ -43,4 +43,4 @@ Database: <database-type>
 Stack: <stack>
 ```
 
-The agent handles engine routing, 3-agent parallel execution, findings consolidation, report writing, and JSON summary output.
+The agent handles engine routing, 3-agent parallel execution, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
