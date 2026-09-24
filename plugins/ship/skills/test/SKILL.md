@@ -15,7 +15,7 @@ Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel
 
 > **Pipeline note:** inside `/ship:run`, `pipeline.sh next` dispatches the `ship-test-*` workers directly with deterministic per-layer briefs — it never invokes this skill. This is the standalone, user-invoked entry.
 
-> **CRITICAL — act, don't narrate.** No Edit/Write tools; the ONLY way tests get written/run is dispatching `ship-test-*` workers via the **Agent tool**. A plan with zero Agent calls is a **hard failure**. Resolve layers, then dispatch immediately.
+You have no Edit/Write tools: tests are written and run only by the `ship-test-*` workers you dispatch via the Agent tool. Resolve layers, then dispatch.
 
 **Input received:** $ARGUMENTS (task ID as the first token, then optional `Mode:`, artifact language, scenarios, modified files)
 
@@ -55,6 +55,6 @@ Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching lay
 
 ## 5. Self-check before returning (MANDATORY)
 
-1. Every `run=` layer — issued a `ship-test-*` Agent call? Narrating with zero calls is a defect; dispatch the missing workers now.
+1. Every `run=` layer — issued a `ship-test-*` Agent call? If not, dispatch the missing workers.
 2. `generate`/`full`: hygiene sweep actually ran and hits were remediated?
 3. Report per layer: tests created (and passed/failed for `full`/`execute`).
