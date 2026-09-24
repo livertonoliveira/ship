@@ -87,7 +87,7 @@ ship/
 
 ### Gates
 - `critical` or `high` findings → gate `fail` → pipeline stops
-- `medium` findings → gate `warn` → pipeline pauses, asks user
+- `medium` findings → gate `warn` → remediated in the same automatic round as failures; residue after that round asks the user
 - Only `low` or no findings → gate `pass` → pipeline continues
 
 ### Tracking
