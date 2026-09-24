@@ -120,4 +120,3 @@ Output as the **very last content** of the tool result (read directly by `ship:a
 - Evidence required (file:line); exact heuristics only — no vague claims or off-pattern findings.
 - Flag data-transforming migrations: "Requires migration: Yes".
 - Language: caller's `Artifact language` for user-facing output; code/identifiers/paths always English.
-- No file re-reads after Edit/Write unless requested or compaction is suspected.

@@ -136,4 +136,3 @@ bash "<findings-gate-script>" review \
 - Respect settled Design decisions unless there's a serious problem; no pedantry — only real maintainability/readability/extensibility issues, and accidental duplication isn't a DRY violation.
 - KISS is top priority: don't complicate working simple code for "elegance". Every suggestion needs a concrete code example.
 - User-facing output in `Artifact language`; code/identifiers always English.
-- No re-reads after Edit/Write unless requested or compaction suspected.
