@@ -111,7 +111,6 @@ Output as the **very last content** of the tool result (read directly by `ship:a
 {"audit":"database","gate":"<PASS|WARN|FAIL>","score":"<A|B|C|D|F>","counts":{"critical":0,"high":0,"medium":0,"low":0},"top_findings":[{"id":"<ID>","severity":"<sev>","title":"<title>","file":"<file:line>"}],"report_path":"ship/audits/database-<YYYY-MM-DD>.md"}
 ```
 
-**Score:** A=0 critical/0 high/≤2 medium. B=0 critical/≤2 high/≤5 medium. C=0 critical/≤4 high/any medium. D=1 critical or >4 high. F=≥2 critical.
 
 ---
 
