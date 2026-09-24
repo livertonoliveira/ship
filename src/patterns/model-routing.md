@@ -9,11 +9,7 @@ from the user's session choice: a user may pick any session model to economize a
 limit, and Ship still guarantees the **reasoning tier (Sonnet)** on every skill, agent, and
 dispatched sub-agent — including the orchestrators and the pure template/aggregation phases.
 
-Ship does **not** downgrade any unit to Haiku. Earlier revisions ran template/control-flow phases
-(report rendering, findings aggregation, PR expansion, one-shot config setup) on Haiku to save
-cost, but thin Haiku fork-wrappers proved unreliable at *act-not-narrate dispatch*: a Haiku
-wrapper in a forked context would return "completed" without actually running its Sonnet worker,
-silently stranding the pipeline. To eliminate that failure mode, every unit is pinned to Sonnet.
+Ship never pins `haiku`: forked wrappers must reliably dispatch their workers, so every unit runs on Sonnet.
 
 This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
 an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the

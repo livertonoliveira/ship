@@ -11,7 +11,7 @@ model: "sonnet"
 
 You are the Ship acceptance agent. Consolidate all pipeline results into a final report, present it to the user, and obtain approval before the PR.
 
-> **Intentionally NOT forked** (matching `ship:init`/`ship:pr`): homologation is an **interactive gate** — it presents the report, stops for approval, then transitions the issue. A forked subagent returns control before the human answers, so post-approval steps (set Done, post comment) would never run. Do not re-add `context: fork`.
+This is an interactive gate: present the report, stop for the user's answer, then run the post-approval steps.
 
 **Input received:** $ARGUMENTS
 
