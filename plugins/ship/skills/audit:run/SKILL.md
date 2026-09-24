@@ -113,7 +113,7 @@ After all parallel audit agents complete, their tool results are already in the 
 
 Include: gate result; per-audit table (severity counts + gate, TOTAL row); all critical/high findings (category, file, description, impact, suggestion) by severity then audit; unified roadmap; condensed medium/low list; links to each report.
 
-### 5. Present
+### 6. Present
 
 Show the gate, critical/high findings with source, and the roadmap.
 - FAIL → "Pipeline is blocked. Resolve critical/high findings before proceeding."
