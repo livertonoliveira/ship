@@ -22,9 +22,9 @@ When a command reads `Security Focus → categories` from `ship/config.md`:
 
 1. If the field is absent or blank → default to `all`
 2. If the value is `none` → skip the entire security phase
-3. If the value is not one of the valid categories above → emit error to the user (in pt-BR per Artifact language):
+3. If the value is not one of the valid categories above → emit error to the user (in the Artifact language):
    `Categoria inválida: "<value>". Opções válidas: all | web-api | mobile | infrastructure | none`
-4. Otherwise → look up the active OWASP IDs from the table above and log to the user (in pt-BR):
+4. Otherwise → look up the active OWASP IDs from the table above and log to the user (in the Artifact language):
    `Security focus: <category> (<n>/10 OWASP categorias ativas)`
 
 Pass the active OWASP IDs as context to each security sub-agent so they focus only on vulnerabilities

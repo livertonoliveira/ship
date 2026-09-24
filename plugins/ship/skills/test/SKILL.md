@@ -27,11 +27,11 @@ Parse `$ARGUMENTS`: `task-id` = first token (absent → derive from branch name 
 
 ## 2. Guard — all layers disabled
 
-`run=` empty → output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope`..." and stop. Applies to every mode.
+`run=` empty → tell the user, in the Artifact language, that the test phase was skipped because every layer is disabled in `Test Scope`, and stop. Applies to every mode.
 
 ## 3. Fan out to named agents (parallel) — MANDATORY ACTION
 
-For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`; some skipped → log "Layers pulados por configuração: [...]. Para habilitá-los, edite `Test Scope`.").
+For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`; some skipped → tell the user, in the Artifact language, which layers were skipped and that `Test Scope` enables them).
 
 **Context slicing — always pass inline, never rely on the agent re-reading:**
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.

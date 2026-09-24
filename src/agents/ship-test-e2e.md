@@ -33,8 +33,7 @@ Generate and run e2e tests for critical user flows described in the inline conte
 
 Detect via `ship/config.md`, else Glob before concluding absence: `playwright.config.{ts,js}`, `cypress.config.{ts,js}`/`.json`, `wdio.conf.{ts,js}`, `nightwatch.conf.{js,ts}`, `testcafe.js`/`.testcaferc.json`, `codecept.conf.{ts,js}`. Explicit `ship/config.md` naming wins.
 
-**If NO framework is detected**: do NOT generate tests — `NEEDS_CONTEXT` trigger (§4), distinct from a config-disabled skip (handled upstream by the orchestrator). Report (artifact language):
-> "E2E pulado: nenhum framework e2e detectado no projeto (playwright.config.ts, cypress.config.ts, wdio.conf.ts, etc. não encontrados). Para ativar, configure um framework e2e e atualize ship/config.md."
+**If NO framework is detected**: do NOT generate tests — `NEEDS_CONTEXT` trigger (§4), distinct from a config-disabled skip (handled upstream by the orchestrator). Report, in the Artifact language, that e2e was skipped because no framework config was found (name the files checked) and how to enable it.
 
 ---
 
