@@ -64,9 +64,7 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 - Import style: [detected pattern]
 - Error handling: [detected pattern]
 - Commit style: [detected pattern]
-- artifact_language: [e.g. pt-BR | en]
-- prompt_language: [e.g. pt-BR | en]
-- code_language: en
+- Artifact language: [e.g. pt-BR | en]
 
 ## Pipeline Phases
 - dev: enabled
@@ -144,7 +142,7 @@ Preservation rule from step 1 applies here too: never overwrite existing `Test S
 Present all at once, in one block, wait for a single reply. Skip any question whose section already exists in `ship/config.md` (note: "already configured — preserving existing value").
 
 1. **Gate behavior** — `ask` (teams, default), `fix` (solo), `defer` (only `on_fail`); `on_fail`/`on_warn` set independently.
-2. **Artifact/prompt language** — e.g. `pt-BR`, `en`, `es`; see ${CLAUDE_SKILL_DIR}/patterns/language.md.
+2. **Artifact language** — e.g. `pt-BR`, `en`, `es`; see ${CLAUDE_SKILL_DIR}/patterns/language.md.
 3. **Pipeline phases** — default all enabled (dev, test, perf, security, review, homolog, pr); name any to disable.
 4. **Test Scope** — show detected type + computed defaults; reply with overrides or Enter to confirm.
 5. **Scenario Depth** — `full` (default: nominal+edge+error per AC) or `none`.
