@@ -87,7 +87,7 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
 
-**Behavior:** orchestrator re-dispatches the worker with the missing context supplied, bounded by the existing retry ceilings for the calling command (`ship:test`: 2 cycles; `ship:run`: 3 iterations). If the ceiling is reached without resolution, treat as `BLOCKED`.
+**Behavior:** name the missing input; the orchestrator re-dispatches with it supplied or treats the unit as `BLOCKED`.
 
 ### BLOCKED
 
