@@ -70,7 +70,7 @@ Apply the plan's `## Integration` notes — verify cross-module imports/exports 
 
 Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 7.
 
-Present → run as before:
+Present → run:
 
 ```bash
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1

@@ -9,7 +9,7 @@ model: sonnet
 
 Project-wide backend performance audit (not diff-scoped). **Input:** $ARGUMENTS (artifact language, storage mode, stack, team ID).
 
-`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
 ## 1. Load context
 

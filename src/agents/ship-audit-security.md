@@ -11,7 +11,7 @@ Project-wide AppSec audit of the codebase (not a diff).
 
 **Input:** $ARGUMENTS.
 
-`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
 ## 1. Focus
 
