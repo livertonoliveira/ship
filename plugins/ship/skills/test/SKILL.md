@@ -35,7 +35,7 @@ For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:
 
 **Context slicing — always pass inline, never rely on the agent re-reading:**
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.
-2. Resolve the diff **once**, pass inline as `## Source`: `BASE=$(git merge-base origin/main HEAD); git add -A -N; git diff "$BASE"` (captures untracked; never three-dot committed-only).
+2. Resolve the diff **once**, pass inline as `## Source`: `bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md`, then read that file.
 3. Prompt: `Task ID` / `Artifact language` / `## Test Contract` (this layer's slots, omit if none) / `## Scenarios` (filtered) / `## Files` / `## Source`.
 4. **De-identify before injecting** — strip spec-ID tags, keep behavioral steps. `${CLAUDE_SKILL_DIR}/patterns/deidentify-context.md`.
 5. Agents receiving these sections inline MUST NOT fall back to standalone discovery.
