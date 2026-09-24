@@ -99,7 +99,7 @@ Each finding: Heuristic ID `<engine>-<name>` (e.g. `mongo-write-concern`), Sever
 
 **Local:** `ship/audits/database-<YYYY-MM-DD>.md`. **Linear:** `mcp__linear-server__save_comment`, prefix `[DB]`, label `performance`, evidence file:line+snippet, plus `Maintenance window required: <Yes|No>`.
 
-**Sections:** Summary (counts+Gate) → Diagnosis (5-line) → Index Analysis by Collection/Table (existing/add/remove) → Findings (severity-ordered) → Roadmap (Priority/Finding/Category/Impact/Effort/Quick win) → Validation Metrics (Finding/Metric/Current/Target) → Best Practices Checklist → Blind Spots (Hypothesis/Why unconfirmed/How to validate). Header: `# Database Audit — <date>` + `Database: <engine>`.
+**Sections:** Summary (counts+Gate) → Diagnosis (short overview a reader can skim before the findings) → Index Analysis by Collection/Table (existing/add/remove) → Findings (severity-ordered) → Roadmap (Priority/Finding/Category/Impact/Effort/Quick win) → Validation Metrics (Finding/Metric/Current/Target) → Best Practices Checklist → Blind Spots (Hypothesis/Why unconfirmed/How to validate). Header: `# Database Audit — <date>` + `Database: <engine>`.
 
 ---
 
