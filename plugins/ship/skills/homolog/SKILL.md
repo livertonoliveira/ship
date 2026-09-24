@@ -43,7 +43,7 @@ Identify the feature/task ID from `$ARGUMENTS`. Prefer the scratch dir `.context
 
 ### 2. Consolidate quality report — lazy-load findings
 
-Apply `${CLAUDE_SKILL_DIR}/patterns/lazy-load-findings.md`, using `phase-status.md` (loaded in step 1) as the canonical gate index — only WARN/FAIL phases get their findings files opened. Rendering format (PASS table vs WARN/FAIL expanded block) and full report structure: read `${CLAUDE_SKILL_DIR}/report-templates.md`, sections "Lazy Mode" and "Quality Report".
+Apply `${CLAUDE_SKILL_DIR}/patterns/lazy-load-findings.md`, using the `pipeline.sh rows` output from step 1 as the gate index — only WARN/FAIL phases get their findings files opened. Rendering format (PASS table vs WARN/FAIL expanded block) and full report structure: read `${CLAUDE_SKILL_DIR}/report-templates.md`, sections "Lazy Mode" and "Quality Report".
 Linear mode: report becomes a comment (no local file). Local mode: report is written to `report.md`.
 
 ### 3. Verify task completeness
