@@ -50,7 +50,7 @@ Each audit below fans out to its own sub-agents, and every one of them would oth
 
 ### 3. Launch in parallel
 
-Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently — never sequentially. Each declares `context: fork` + `model: sonnet` and delegates to its `ship-audit-*` agent; do NOT wrap any in an `Agent` call. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
+Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently. Each declares `context: fork` + `model: sonnet` and delegates to its own `ship-audit-*` agent, so call the skill directly rather than through an `Agent`. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
 
 ### 4. Consolidate
 
@@ -103,7 +103,7 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 ## Usage in `ship:audit:run`
 
-After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) — do NOT re-read the report files. Apply the gate logic inline in this context; the summaries already returned here, so a separate consolidation agent only adds a serial round-trip. Never fan out an Agent to aggregate.
+After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) ; the report files need not be reopened. Apply the gate here: the summaries are already in context, so a consolidation agent would only add a serial round-trip.
 
 **Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 
