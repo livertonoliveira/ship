@@ -51,6 +51,7 @@ Create `ship/`, `ship/changes/`, `ship/changes/archive/`, `ship/audits/`, and `s
 - Test Framework: [detected]
 - Typecheck: [detected command or "none"]
 - Lint: [detected command or "none"; `{files}` in it receives only the files develop touched]
+- Lint fix: [the linter's autofix with `{files}` (e.g. `npx eslint --fix {files}`, `ruff check --fix {files}`), or "none"; run on develop's files before static checks]
 
 ## Project Type
 [backend | frontend | fullstack | monorepo]

@@ -346,16 +346,23 @@ cmd_post_develop() {
     exit 1
   fi
 
-  # 1. develop writes to the tree without committing, so refresh the diff + class.
-  bash "$HOOK_DIR/capture-diff.sh" "$scratch/diff.md"
-  local class
-  class="$(bash "$HOOK_DIR/diff-classify.sh" "$scratch/diff.md" "$scratch/diff-class.txt")"
-
-  # 2. Mutation evidence: snapshot the tree, diff against the pre-develop snapshot.
+  # 1. Mutation evidence: snapshot the tree, diff against the pre-develop snapshot.
   #    A non-empty set is develop's verified footprint — trusted over its self-report.
   bash "$HOOK_DIR/snapshot-files.sh" snapshot "$scratch/post-develop-files.txt"
   bash "$HOOK_DIR/snapshot-files.sh" diff "$pre" "$scratch/post-develop-files.txt" \
     > "$scratch/develop-touched-files.txt"
+
+  # 2. The linter's own fixes on exactly those files, before any detector reads
+  #    the tree: mechanical lint errors were a recurring share of the remediation
+  #    batch, each costing a fix agent a round to re-learn the change.
+  if [ -s "$scratch/develop-touched-files.txt" ]; then
+    bash "$HOOK_DIR/test-exec.sh" "$scratch" --lint-fix >/dev/null 2>&1 || true
+  fi
+
+  # 3. develop writes to the tree without committing, so refresh the diff + class.
+  bash "$HOOK_DIR/capture-diff.sh" "$scratch/diff.md"
+  local class
+  class="$(bash "$HOOK_DIR/diff-classify.sh" "$scratch/diff.md" "$scratch/diff-class.txt")"
 
   local evidence
   if [ -s "$scratch/develop-touched-files.txt" ]; then
@@ -368,7 +375,7 @@ cmd_post_develop() {
     evidence="fail"
   fi
 
-  # 3. Untested touched files (non-blocking): count source files with no sibling test.
+  # 4. Untested touched files (non-blocking): count source files with no sibling test.
   local untested=0
   if [ -s "$scratch/develop-touched-files.txt" ]; then
     untested="$(bash "$HOOK_DIR/evidence-gate.sh" "$scratch/develop-touched-files.txt" \
@@ -1390,7 +1397,7 @@ next_fix_dispatch() {
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error., then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
 next_remediation_verify_dispatch() {
@@ -1812,6 +1819,7 @@ cmd_next() {
     printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
 
     rm -f "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --lint-fix >/dev/null 2>&1 || true
     local rse_rc=0
     set +e
     bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
