@@ -2252,8 +2252,9 @@ cmd_next() {
   # Checked before the stall cap on purpose: a node waiting on an answer makes no
   # phase progress, so it reads as stalled and gets reported as stuck when in
   # fact it asked something and is waiting for this.
+  local asked=""
   if [ "$inflight" -gt 0 ]; then
-    local qid qwt qask asked=""
+    local qid qwt qask
     while IFS= read -r qid; do
       [ -n "$qid" ] || continue
       qwt="$(node_field "$dir" "$qid" 7)"
@@ -2266,7 +2267,14 @@ cmd_next() {
     if [ -n "${asked# }" ]; then
       next_body_add "Read each ask.md above. Inside a graph the node's pipeline decides its own gates, so a question that still reaches here is one it could not decide from its artifacts: present it to the user in the artifact language."
       next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that writes the answer and wakes the worker through the driver."
-      next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+      # Stop only when nothing else is running. A question from one node used
+      # to park the whole graph while its siblings sat finished and unpolled.
+      local asked_n
+      asked_n="$(printf '%s\n' $asked | grep -c . || true)"
+      if [ "$asked_n" -ge "$inflight" ]; then
+        next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+      fi
+      next_body_add "The other in-flight node(s) keep running: after presenting the question, carry on with the calls below; the answer can come later."
     fi
   fi
 
@@ -2287,7 +2295,10 @@ cmd_next() {
       [ -n "$wwt" ] || continue
       until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/homolog-approved.txt\""
       until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/node-failed.txt\""
-      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\""
+      case " $asked " in
+        *" $wid "*) ;;
+        *) until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\"" ;;
+      esac
     done < <(nodes_with_status "$dir" in_flight)
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"$until_args   → blocks until a node finishes, fails or asks, until a worker reports, or until the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
