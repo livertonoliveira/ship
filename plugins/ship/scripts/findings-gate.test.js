@@ -119,3 +119,43 @@ test('the emitted row survives status-consolidate #<RUN> substitution', () => {
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /^\| perf \| #2 \|.*\| warn \| 0 \| 0 \| 1 \| 0 \|/);
 });
+
+test('audit mode scores A..F from the counts', () => {
+  const score = (args) => parse(run(['--audit', 'backend', ...args, '--config', '/nonexistent']).stdout).score;
+  assert.equal(score([]), 'A');
+  assert.equal(score(['--low', '4']), 'A');
+  assert.equal(score(['--medium', '1']), 'B');
+  assert.equal(score(['--high', '2', '--medium', '9']), 'C');
+  assert.equal(score(['--high', '3']), 'D');
+  assert.equal(score(['--critical', '1']), 'F');
+});
+
+test('audit mode applies the gate rules and prints no phase-status row', () => {
+  const o = parse(run(['--audit', 'database', '--high', '1', '--config', '/nonexistent']).stdout);
+  assert.equal(o.gate, 'FAIL');
+  assert.equal(o.row, undefined);
+});
+
+test('the tests audit caps its gate at WARN but keeps the score', () => {
+  const o = parse(run(['--audit', 'tests', '--critical', '1', '--config', '/nonexistent']).stdout);
+  assert.equal(o.gate, 'WARN');
+  assert.equal(o.score, 'F');
+});
+
+test('the frontend audit answers to the frontend-perf overrides', () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'config.md'), '## Severity Overrides\n- frontend-perf: high→medium\n');
+  const o = parse(run(['--audit', 'frontend', '--high', '2', '--config', path.join(dir, 'config.md')]).stdout);
+  assert.equal(o.gate, 'WARN');
+  assert.equal(o.score, 'B');
+});
+
+test('an unknown audit fails fast', () => {
+  const res = run(['--audit', 'nope', '--config', '/nonexistent']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /unknown audit: nope/);
+});
+
+test('a phase and --audit together are rejected', () => {
+  assert.notEqual(run(['perf', '--audit', 'backend', '--config', '/nonexistent']).status, 0);
+});
