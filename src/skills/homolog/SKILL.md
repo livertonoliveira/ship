@@ -67,11 +67,11 @@ Ask: "Review the acceptance criteria above. Is the feature ready for PR?"
 3. Clean up temporary findings files (perf/security/review) — already consolidated in `report.md`
 4. Inform: "Acceptance approved! Run `/ship:pr` when you are ready to create the Pull Request."
 
-**Linear mode** — after approval, execute ALL steps below, none may be skipped:
+**Linear mode** — after approval:
 
 > **STEPS A+B (parallel) — post report comment AND transition issue to completed state**
 > Resolve the team's completed-state name via the recipe in `@@ship/patterns/linear-status.md` first — **never pass the literal string `"Done"`**, it silently no-ops on teams whose completed state is named differently (e.g. `Concluído`).
-> In parallel: `mcp__linear-server__save_comment` posts the full quality report on the task issue, Homologation section marked `- [x]` for reviewed/verified/approved (with date) as above; AND `mcp__linear-server__save_issue` with `state: <resolved completed-state>`. Both are mandatory.
+> In parallel: `mcp__linear-server__save_comment` posts the full quality report on the task issue, Homologation section marked `- [x]` for reviewed/verified/approved (with date) as above; AND `mcp__linear-server__save_issue` with `state: <resolved completed-state>`.
 
 > **STEP C — verify both succeeded**
 > In parallel: `mcp__linear-server__list_comments` (confirm the comment posted) AND `mcp__linear-server__get_issue` (confirm `state.type == "completed"`). Do not use `get_issue_status` (returns a status definition, not the issue's current state). Retry any failed step per the Step A/B recipe.
@@ -90,10 +90,8 @@ Ask: "Review the acceptance criteria above. Is the feature ready for PR?"
 
 ## Rules
 
-- **Do not make decisions for the user**: present the data and let the user approve or reject
-- **Be transparent with warnings**: do not minimize medium-level findings. Present them clearly.
+- **Approval is the user's call**: present every finding, mediums included, and wait for an explicit answer — acceptance is a manual gate
 - **Acceptance criteria belong to the user**: present them as a checklist for manual verification, not as automated tests
 - **Language**: per `@@ship/patterns/language.md`.
-- **Do not proceed without approval**: acceptance is a manual gate, never automatic
 - **Linear mode**: quality report is posted as a comment on the task issue, no local report.md is created
 - **Local mode**: quality report is written to report.md in the feature directory
