@@ -1858,8 +1858,18 @@ footprint_delta() {
 # frontier was free — measured live, one missed `conflicts` call was enough.
 # Prints refreshed=<n> and blocked=<n>.
 refresh_conflicts() {
-  local dir="$1" base
+  local dir="$1" base remote diff_base
   base="$(meta_get "$dir" base_branch)"
+  # The footprint is what the node changed, measured from the trunk it now sits
+  # on. Nodes sync their own branch with $remote/$base, while the local $base is
+  # usually checked out elsewhere and never moves — measured from there, every
+  # merged sibling's files counted as this node's, and each merge widened every
+  # footprint until all pending nodes looked in conflict with all running ones.
+  diff_base="$base"
+  remote="$(remote_name)"
+  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+    diff_base="$remote/$base"
+  fi
 
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
@@ -1869,7 +1879,7 @@ refresh_conflicts() {
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
-    real="$(git -C "$wt" diff --name-only "$base"...HEAD 2>/dev/null | paste -sd, - || true)"
+    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null | paste -sd, - || true)"
     [ -n "$real" ] || continue
     prev="$(node_field "$dir" "$id" 5)"
     [ "$prev" != "$real" ] || continue
