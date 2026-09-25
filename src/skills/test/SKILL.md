@@ -37,7 +37,7 @@ For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.
 2. Resolve the diff **once**, pass inline as `## Source`: `bash "@@ship/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md`, then read that file.
 3. Prompt: `Task ID` / `Artifact language` / `## Test Contract` (this layer's slots, omit if none) / `## Scenarios` (filtered) / `## Files` / `## Source`.
-4. **De-identify before injecting** — strip spec-ID tags, keep behavioral steps. `@@ship/patterns/deidentify-context.md`.
+4. **De-identify before injecting** — pipe the `## Test Contract` and `## Scenarios` text through `bash "@@ship/hooks/deidentify.sh" --team <Linear team key>` (omit `--team` in local mode) and inject its output; why: `@@ship/patterns/deidentify-context.md`.
 5. Agents receiving these sections inline MUST NOT fall back to standalone discovery.
 
 **Mode: generate delta** — add `Mode: generate` after `Task ID:`; append `## Denylist` (paths the worker must never touch: `plan.md` module file sets, else the task's `## Files` create/modify paths); workers generate only, no test command, no pass/fail report.
