@@ -173,6 +173,48 @@ advance_past_planning() {
   printf '%s' "$out"
 }
 
+linear_graph_node() {
+  local dir="$1" task="$2" graph="$3"
+  sed -i.bak 's/^- Configured: no$/- Configured: yes/' "$dir/ship/config.md"
+  mkdir -p "$dir/.context/ship-run/$task"
+  printf '%s\n' "$graph" > "$dir/.context/ship-run/$task/graph-node.txt"
+}
+
+test_graph_node_reads_cached_project_docs() {
+  local name="a graph node reads the Proposal/Design another node cached instead of fetching them again"
+  local dir graph docs; dir="$(mktemp -d)"; graph="$dir/.context/ship-graph/feat"; docs="$dir/.context/ship-graph-docs/feat"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  linear_graph_node "$dir" GD1 "$graph"
+  mkdir -p "$docs"; echo p > "$docs/proposal.md"; echo d > "$docs/design.md"
+  local out; out="$(next "$dir" GD1)"
+  if printf '%s' "$out" | grep -q "cached for this graph at $docs/proposal.md" \
+    && ! printf '%s' "$out" | grep -q 'list_documents+get_document'; then
+    log_pass "$name"
+  else
+    log_fail "$name ($out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_first_graph_node_caches_project_docs() {
+  local name="the first graph node to stage context is told to cache the Proposal/Design for the others"
+  local dir graph docs; dir="$(mktemp -d)"; graph="$dir/.context/ship-graph/feat"; docs="$dir/.context/ship-graph-docs/feat"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  linear_graph_node "$dir" GD2 "$graph"
+  local out; out="$(next "$dir" GD2)"
+  if printf '%s' "$out" | grep -q 'list_documents+get_document' \
+    && printf '%s' "$out" | grep -q "Save the full Proposal and Design documents to $docs/proposal.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_first_call_asks_for_context_staging() {
   local name="first call inits the scratch dir and asks for context staging (action=work)"
   local dir; dir="$(mktemp -d)"
@@ -884,6 +926,8 @@ test_static_gate_skip_when_no_checks() {
 }
 
 test_first_call_asks_for_context_staging
+test_graph_node_reads_cached_project_docs
+test_first_graph_node_caches_project_docs
 test_worker_status_reaches_the_test_generate_row
 test_worker_status_all_done_leaves_notes_empty
 test_greenfield_multi_module_runs_planner

@@ -1467,7 +1467,24 @@ cmd_next() {
   # --- context staging (judgment: Linear/local artifact slicing) ---------------
   if [ ! -s "$SCRATCH/spec.md" ]; then
     next_body_add "Stage the task context yourself (no sub-agent):"
-    if [ "$STORE" = "linear" ]; then
+    # Inside a work graph every node belongs to the same project, so its
+    # Proposal and Design are identical for all of them: the first node to stage
+    # context saves them next to the graph state and the rest read them there
+    # (40-80s of MCP round trips per node otherwise). The issue itself is
+    # always fetched — it is the one document that differs per node. The cache
+    # sits beside the graph state, never inside it: graph.sh is that dir's only
+    # writer.
+    local docs_dir="" graph_dir
+    if [ -f "$SCRATCH/graph-node.txt" ]; then
+      graph_dir="$(head -1 "$SCRATCH/graph-node.txt")"
+      docs_dir="$(dirname "$(dirname "$graph_dir")")/ship-graph-docs/$(basename "$graph_dir")"
+    fi
+    if [ "$STORE" = "linear" ] && [ -n "$docs_dir" ] && [ -s "$docs_dir/proposal.md" ] && [ -s "$docs_dir/design.md" ]; then
+      next_body_add "- Fetch the issue via Linear MCP (get_issue) and move it to its started state per $HOOK_DIR/../patterns/linear-status.md. The project's Proposal and Design are already cached for this graph at $docs_dir/proposal.md and $docs_dir/design.md — read those; do not call list_documents/get_document."
+    elif [ "$STORE" = "linear" ] && [ -n "$docs_dir" ]; then
+      next_body_add "- Fetch the issue and project documents via Linear MCP (get_issue/get_project/list_documents+get_document) and move the issue to its started state per $HOOK_DIR/../patterns/linear-status.md."
+      next_body_add "- Save the full Proposal and Design documents to $docs_dir/proposal.md and $docs_dir/design.md (mkdir -p; skip a file that already exists) so the graph's other nodes reuse them."
+    elif [ "$STORE" = "linear" ]; then
       next_body_add "- Fetch the issue and project documents via Linear MCP (get_issue/get_project/list_documents+get_document) and move the issue to its started state per $HOOK_DIR/../patterns/linear-status.md."
     else
       next_body_add "- Read ship/changes/<feature>/proposal.md and design.md per $HOOK_DIR/../patterns/load-artifacts.md."
