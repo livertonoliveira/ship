@@ -6,7 +6,7 @@ This is a **completion axis** — it answers "did the worker finish, and how?" �
 
 ## Enum {#worker-status-contract}
 
-Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
+Each worker ends its report with a single line — and, when the prompt names a status file, writes the same line there:
 
 ```
 Status: <ENUM>
@@ -18,25 +18,29 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker completed its assigned unit with no caveats.
 
-**Behavior:** orchestrator marks the unit complete and continues to the next unit or phase.
+**Behavior:** the unit is complete; nothing is recorded.
 
 ### DONE_WITH_CONCERNS
 
 **Trigger:** the worker completed its assigned unit but hit a non-blocking caveat (e.g. a collision with a denylisted path, a partial fallback applied).
 
-**Behavior:** orchestrator marks the unit complete, records a `warn` entry describing the caveat, and continues.
+**Behavior:** the unit is complete; describe the caveat in the report. The status is recorded, not gated.
 
 ### NEEDS_CONTEXT
 
 **Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
 
-**Behavior:** name the missing input; the orchestrator re-dispatches with it supplied or treats the unit as `BLOCKED`.
+**Behavior:** name the missing input in the report. The status is recorded, not gated; a standalone `ship:test` run may re-dispatch with the input supplied.
 
 ### BLOCKED
 
 **Trigger:** the worker determined the unit is not viable in its current state (e.g. the plan is unworkable, a hard dependency is absent, sibling file ownership conflicts).
 
-**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.
+**Behavior:** say why in the report. The status is recorded, not gated.
+
+## Where the status goes
+
+Inside `/ship:run`, `pipeline.sh` reads each test worker's status file through `worker-status-gate.sh` when it consolidates the manifests, and names every layer that did not report `DONE` in the `test-generate` row's Notes (`worker status: e2e NEEDS_CONTEXT`), which the quality report shows. It never changes the gate: `NEEDS_CONTEXT` is the normal answer of an e2e layer with no framework.
 
 ## Fail-closed rule
 
@@ -48,19 +52,19 @@ A `Status:` field that is **missing**, **empty**, or **outside the four-value en
 
 **Trigger:** the worker's output has no `Status:` line at all.
 
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
+**Behavior:** treat as `BLOCKED` per the fail-closed rule.
 
 ### Edge case 2 — Out-of-enum value
 
 **Trigger:** the `Status:` line contains a value other than `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` (e.g. a typo, a legacy value, free text).
 
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
+**Behavior:** treat as `BLOCKED` per the fail-closed rule.
 
 ### Edge case 3 — Empty value
 
 **Trigger:** the `Status:` line is present but has no value after the colon.
 
-**Behavior:** treat as `BLOCKED` per the fail-closed rule. Escalate via `on_fail`.
+**Behavior:** treat as `BLOCKED` per the fail-closed rule.
 
 ### Edge case 4 — `DONE` with a failing quality gate
 

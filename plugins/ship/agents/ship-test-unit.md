@@ -62,7 +62,7 @@ Name every test by observable behavior. No spec ID (`SC-XX`, `AC-XX`, `REQ-XX`, 
 
 `Status` semantics: `## Enum {#worker-status-contract}
 
-Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
+Each worker ends its report with a single line — and, when the prompt names a status file, writes the same line there:
 
 ```
 Status: <ENUM>
@@ -74,25 +74,25 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker completed its assigned unit with no caveats.
 
-**Behavior:** orchestrator marks the unit complete and continues to the next unit or phase.
+**Behavior:** the unit is complete; nothing is recorded.
 
 ### DONE_WITH_CONCERNS
 
 **Trigger:** the worker completed its assigned unit but hit a non-blocking caveat (e.g. a collision with a denylisted path, a partial fallback applied).
 
-**Behavior:** orchestrator marks the unit complete, records a `warn` entry describing the caveat, and continues.
+**Behavior:** the unit is complete; describe the caveat in the report. The status is recorded, not gated.
 
 ### NEEDS_CONTEXT
 
 **Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
 
-**Behavior:** name the missing input; the orchestrator re-dispatches with it supplied or treats the unit as `BLOCKED`.
+**Behavior:** name the missing input in the report. The status is recorded, not gated; a standalone `ship:test` run may re-dispatch with the input supplied.
 
 ### BLOCKED
 
 **Trigger:** the worker determined the unit is not viable in its current state (e.g. the plan is unworkable, a hard dependency is absent, sibling file ownership conflicts).
 
-**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (already reported in generate mode); `Status` adds the signal, it does not replace the report. `NEEDS_CONTEXT` — required input missing (no scenarios/source injected and the standalone fallback found nothing, or a layer-specific precondition below). Exactly one `Status:` line per report.
+**Behavior:** say why in the report. The status is recorded, not gated.`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (already reported in generate mode); `Status` adds the signal, it does not replace the report. `NEEDS_CONTEXT` — required input missing (no scenarios/source injected and the standalone fallback found nothing, or a layer-specific precondition below). Exactly one `Status:` line per report.
 
 ## Rules {#test-worker-rules}
 

@@ -21,7 +21,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -838,6 +838,26 @@ next_consolidate() {
   done
 }
 
+# "; worker status: e2e NEEDS_CONTEXT, unit BLOCKED" for every test worker that
+# did not report DONE — empty when all did. A missing or malformed status file
+# reads as BLOCKED, per the worker-status contract. Recorded in the
+# test-generate row's Notes so the report shows it; it never changes the gate
+# (NEEDS_CONTEXT is the normal answer of an e2e layer with no framework).
+next_worker_status_note() {
+  local scratch="$1" layers="$2" l f v notes=""
+  for l in $layers; do
+    f="$scratch/worker-status-$l.md"
+    if [ -f "$f" ] && bash "$HOOK_DIR/worker-status-gate.sh" "$f" >/dev/null 2>&1; then
+      v="$(grep -m1 '^Status:' "$f" | sed -E 's/^Status:[[:space:]]*//')"
+    else
+      v="BLOCKED"
+    fi
+    [ "$v" = "DONE" ] || notes="$notes, $l $v"
+  done
+  [ -n "$notes" ] && printf '; worker status: %s' "${notes#, }"
+  return 0
+}
+
 next_write_row() {
   local scratch="$1" phase="$2" gate="$3" notes="$4" medium="${5:-0}" ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1361,7 +1381,7 @@ next_test_dispatch() {
   local scratch="$1" task="$2" lang="$3" layer="$4"
   next_test_brief "$scratch" "$layer"
   cmd_dispatch "$scratch" test Agent "ship-test-$layer" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Generate only — never run a test command.\""
+  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Status: write your report's single 'Status: <value>' line to $scratch/worker-status-$layer.md. Generate only — never run a test command.\""
 }
 
 next_fix_dispatch() {
@@ -1731,9 +1751,9 @@ cmd_next() {
         printf '%s\n' "$tr_out" | awk '{ printf "- %s: %s → %s cases\n", $1, $2, $3 }'
         printf '\nRestore the removed assertions; do not delete coverage to make a contract fit.\n'
       } > "$SCRATCH/test-regression.md"
-      next_write_row "$SCRATCH" test-generate warn "coverage removed from pre-existing test file(s)" 1
+      next_write_row "$SCRATCH" test-generate warn "coverage removed from pre-existing test file(s)$(next_worker_status_note "$SCRATCH" "$layers_v")" 1
     else
-      next_write_row "$SCRATCH" test-generate pass ""
+      next_write_row "$SCRATCH" test-generate pass "$(next_worker_status_note "$SCRATCH" "$layers_v" | sed 's/^; //')"
     fi
     next_consolidate "$SCRATCH" "$RUN" test-generate
     # Intent-add the freshly generated (untracked) test files so every later
