@@ -29,7 +29,7 @@ Parse `$ARGUMENTS`: `task-id` = first token (absent → derive from branch name 
 
 `run=` empty → tell the user, in the Artifact language, that the test phase was skipped because every layer is disabled in `Test Scope`, and stop. Applies to every mode.
 
-## 3. Fan out to named agents (parallel) — MANDATORY ACTION
+## 3. Fan out to named agents (parallel)
 
 For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`; some skipped → tell the user, in the Artifact language, which layers were skipped and that `Test Scope` enables them).
 
@@ -46,14 +46,14 @@ For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:
 
 **Mode: full (default)** — no `Mode:` line, no denylist: each worker runs its full generate+execute cycle.
 
-## 4. Hygiene sweep (MANDATORY after generate/full)
+## 4. Hygiene sweep after generate/full
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/hooks/hygiene-scan.sh" --all 2>&1
 ```
 Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching layer type), pass exact `file:line` hits, re-run. Hits remain after 2nd cycle → surface `warn` — never report clean with known hits.
 
-## 5. Self-check before returning (MANDATORY)
+## 5. Self-check before returning
 
 1. Every `run=` layer — issued a `ship-test-*` Agent call? If not, dispatch the missing workers.
 2. `generate`/`full`: hygiene sweep actually ran and hits were remediated?

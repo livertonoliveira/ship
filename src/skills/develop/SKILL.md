@@ -40,11 +40,11 @@ You are the context about to do the work, so act on the answers yourself: extend
 
 ## 3. Mark issue as In Progress
 
-> **MANDATORY — LINEAR MODE ONLY.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
+> **Linear mode only.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
 
 ---
 
-## 4. Implement modules sequentially — MANDATORY ACTION
+## 4. Implement modules sequentially
 
 Order modules by `Depends on` (dependencies first; `none` in plan order). Implement one module at a time, completely, before starting the next:
 
@@ -66,7 +66,7 @@ Apply the plan's `## Integration` notes — verify cross-module imports/exports 
 
 ---
 
-## 6. Hygiene gate — final sweep (MANDATORY)
+## 6. Hygiene gate — final sweep
 
 Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 7.
 
@@ -86,7 +86,7 @@ Hits → clean the exact `file:line` hits yourself (remove the comment or rename
 
 ---
 
-## 8. Self-check before returning (MANDATORY)
+## 8. Self-check before returning
 
 1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
 2. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
