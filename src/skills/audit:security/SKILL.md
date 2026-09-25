@@ -27,7 +27,7 @@ Extract any `Security focus override` (e.g., `web-api`, `mobile`, `infrastructur
 - `Conventions → Artifact language` → e.g., `pt-BR`
 - `Stack` → for additional context
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-security agent
 

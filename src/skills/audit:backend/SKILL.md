@@ -28,7 +28,7 @@ Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty fo
 - `Project Type` → backend | fullstack | monorepo (warn and stop if `frontend`)
 - `Stack` → for additional context
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-backend agent
 

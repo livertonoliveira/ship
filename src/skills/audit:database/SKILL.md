@@ -27,7 +27,7 @@ Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty fo
 - `Database` → MongoDB | PostgreSQL | MySQL | SQLite | none
 - `Stack` → for additional context
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-database agent
 

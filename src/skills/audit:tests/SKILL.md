@@ -27,7 +27,7 @@ Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty fo
 - `Test Scope` section → enabled/disabled status for `unit`, `integration`, `e2e` layers
 - If the `Test Scope` section is absent → treat all three layers as `enabled`
 
-See @ship/patterns/storage-mode.md, @ship/patterns/load-artifacts.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md, @ship/patterns/load-artifacts.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-tests agent
 
