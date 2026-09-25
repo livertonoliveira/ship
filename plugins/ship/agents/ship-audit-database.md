@@ -91,8 +91,6 @@ Each finding: Heuristic ID `<engine>-<name>` (e.g. `mongo-write-concern`), Sever
 
 **Severity:** Critical = write-concern `w:0` (data-loss risk). High = missing indexes/scans/schema hurting perf under load. Medium = suboptimal config/schema, no immediate failure. Low = best-practice gaps.
 
-**Gate:** critical/high → **FAIL**; medium only → **WARN**; low/none only → **PASS**.
-
 ---
 
 ## 3. Write report
@@ -105,11 +103,34 @@ Each finding: Heuristic ID `<engine>-<name>` (e.g. `mongo-write-concern`), Sever
 
 ## 4. Return JSON summary
 
-Output as the **very last content** of the tool result (read directly by `ship:audit:run`, no re-read):
+Emit per ## Schema Core {#schema-core}
+
+Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool result (`ship:audit:run` reads it directly — no file I/O).
+
+### Schema
 
 ```json
-{"audit":"database","gate":"<PASS|WARN|FAIL>","score":"<A|B|C|D|F>","counts":{"critical":0,"high":0,"medium":0,"low":0},"top_findings":[{"id":"<ID>","severity":"<sev>","title":"<title>","file":"<file:line>"}],"report_path":"ship/audits/database-<YYYY-MM-DD>.md"}
+{
+  "audit": "<backend|frontend|database|security|tests>",
+  "gate": "<PASS|WARN|FAIL>",
+  "score": "<A|B|C|D|F>",
+  "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
+  "top_findings": [{ "id": "<FINDING-ID>", "severity": "<critical|high|medium|low>", "title": "<short title>", "file": "<path/to/file.ts:line>" }],
+  "report_path": "ship/audits/<type>-<YYYY-MM-DD>.md"
+}
 ```
+
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+
+### Gate and score
+
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
+
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
+
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself. with `audit=database` and `report_path=ship/audits/database-<YYYY-MM-DD>.md`, as the **very last content** of your response.
 
 
 ---

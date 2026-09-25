@@ -43,40 +43,7 @@ Category: `TEST`
 
 ---`.
 
-Gate per `## Gate Decision Rules {#gate-decision-rules}
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.` + `## Schema Core {#schema-core}
-
-Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool result (`ship:audit:run` reads it directly — no file I/O).
-
-### Schema
-
-```json
-{
-  "audit": "<backend|frontend|database|security|tests>",
-  "gate": "<PASS|WARN|FAIL>",
-  "score": "<A|B|C|D|F>",
-  "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
-  "top_findings": [{ "id": "<FINDING-ID>", "severity": "<critical|high|medium|low>", "title": "<short title>", "file": "<path/to/file.ts:line>" }],
-  "report_path": "ship/audits/<type>-<YYYY-MM-DD>.md"
-}
-```
-
-Fields: `audit` type id · `gate` per `the Gate Decision Rules section (included above)` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
-
-### Scoring table
-
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical.`: **uncovered ACs/SCs (HIGH) map to WARN only, never FAIL** — a quality gap, not a blocking defect. MEDIUM-only → WARN; none → PASS.
+Gate and score: the findings gate (see the summary JSON below) — it caps this audit at WARN, since a coverage gap is a quality issue, not a blocking defect.
 
 ## 3. Report
 
@@ -134,7 +101,34 @@ Team/Project fields below always come from `ship/config.md → Linear Integratio
   - **Layer:** unit | integration | e2e
   - **Current confidence:** <0.0 to 1.0>
   - **Effort:** <Hours | Days>
-  ````, prefix `[TEST]`, label `test-coverage`. Emit summary JSON per `the Schema Core section (included above)`.
+  ````, prefix `[TEST]`, label `test-coverage`. Emit summary JSON per `## Schema Core {#schema-core}
+
+Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool result (`ship:audit:run` reads it directly — no file I/O).
+
+### Schema
+
+```json
+{
+  "audit": "<backend|frontend|database|security|tests>",
+  "gate": "<PASS|WARN|FAIL>",
+  "score": "<A|B|C|D|F>",
+  "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
+  "top_findings": [{ "id": "<FINDING-ID>", "severity": "<critical|high|medium|low>", "title": "<short title>", "file": "<path/to/file.ts:line>" }],
+  "report_path": "ship/audits/<type>-<YYYY-MM-DD>.md"
+}
+```
+
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+
+### Gate and score
+
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
+
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
+
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself.`.
 
 ## Rules
 

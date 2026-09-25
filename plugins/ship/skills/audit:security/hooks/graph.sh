@@ -1,0 +1,2384 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# graph.sh — the work graph. Decides only WHAT MAY RUN NOW; each node is the
+# pipeline that already exists (pipeline.sh next) running in its own workspace.
+#
+# Two edges gate admission:
+#   dependency — declared in the spec's `## Deps`; immutable during a run.
+#   conflict   — files(A) ∩ files(B) ≠ ∅; the declared `## Files` footprint until
+#                a node is in flight, then the REAL footprint of its workspace.
+#
+# The graph never merges anything and never runs a test suite. Each node syncs
+# its own branch against the base and opens its own PR from inside its workspace,
+# with the full context of the change it just implemented; the forge is the only
+# place a merge happens. What this script observes is the real PR state, and a
+# dependent is admitted only once its dependency's PR is MERGED there.
+#
+# This script never names a workspace runtime. Everything runtime-specific goes
+# through driver-<name>.sh's verbs (dispatch/collect/wait/ask/resume/stop/dispose/probe), so
+# swapping runtimes is swapping a file. scripts/check-graph-driver-isolation.sh enforces it.
+# ---------------------------------------------------------------------------
+
+usage() {
+  echo "usage: graph.sh <subcommand> [args...]" >&2
+  echo "  init      --feature <f> --from <nodes.json> [--driver <d>] [--max-in-flight N]" >&2
+  echo "            [--base-branch <ref>] [--mode linear|local] [--repo <id>] [--node-pr on|off] [--merge-policy human|graph]" >&2
+  echo "            [--keep-workspaces] [--fresh]" >&2
+  echo "  set       [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off]" >&2
+  echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
+  echo "            [--workspace-cleanup on|off]" >&2
+  echo "  next      [--feature <f>]" >&2
+  echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
+  echo "  land      <task> [--feature <f>]" >&2
+  echo "  poll      [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
+  echo "  complete  <task> [--feature <f>]" >&2
+  echo "  fail      <task> --reason <r> [--feature <f>]" >&2
+  echo "  answer    <task> <answer> [--feature <f>]" >&2
+  echo "  reset     <task>... | --all [--feature <f>]" >&2
+  echo "  abort     [--feature <f>] [--reason <r>]" >&2
+  echo "  sweep     [--feature <f>] [--force]" >&2
+  echo "  conflicts [--feature <f>]" >&2
+  echo "  status    [--feature <f>] [--json]" >&2
+  echo "  iter      <counter-name> [--max N] [--feature <f>]" >&2
+  echo "  nodes     --from-tasks <tasks.md>" >&2
+}
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+GRAPH_ROOT=".context/ship-graph"
+ACTIVE_POINTER="$GRAPH_ROOT/active.txt"
+
+# Column order of nodes.tsv — the awk field numbers below refer to it:
+#   1 id  2 repo  3 title  4 deps  5 files
+#   6 status  7 worktree  8 branch  9 attempts  10 blocked_by_conflict
+# status: pending → ready → in_flight → landed → merged
+#         landed = the node's pipeline finished and its PR is open
+#         merged = that PR is merged on the forge — the only signal that
+#                  releases dependents
+#         failed halts admission; `reset` returns it to pending
+#
+# Per-node PR state lives in pr-status.tsv (id, number, state, url) rather than
+# an eleventh column: every awk above indexes nodes.tsv by field number, and the
+# PR is metadata about a node, not an input to scheduling beyond its state.
+
+die() { echo "graph.sh: $*" >&2; exit 1; }
+
+valid_id() {
+  case "$1" in
+    ''|*[!a-zA-Z0-9_-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# --- feature resolution ------------------------------------------------------
+
+# The feature name becomes a directory, so it has to be a slug — but callers
+# hold human project names ("Autenticação V2"), not slugs, so normalize instead
+# of refusing.
+#
+# A URL or a path is refused rather than normalized, on purpose. Mangling
+# https://linear.app/acme/project/checkout-v2-9f3a into a directory name is how
+# two slightly different copy-pastes of the same project become two graphs, each
+# holding half the nodes. Resolving a URL needs the issue tracker, which is the
+# skill's job (it has MCP); by the time a name reaches here it must already be
+# the project's name.
+slugify_feature() {
+  local raw="$1" slug
+  case "$raw" in
+    *://*|*/*)
+      die "init: --feature takes a project NAME, not a URL or path: $raw
+    /ship:graph resolves a project URL to its name before calling init." ;;
+  esac
+  # No transliteration: "Autenticação V2" becomes autentica-o-v2, not
+  # autenticacao-v2. Uglier, but the slug is an internal directory name nobody
+  # types, and every portable way to fold accents (iconv //TRANSLIT is glibc-only
+  # and fails on BSD; sed y/// counts bytes, not characters) buys prettier output
+  # at the cost of behaving differently per platform.
+  slug="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//; s/-$//')"
+  [ -n "$slug" ] || die "init: --feature has no usable characters: $raw"
+  printf '%s' "$slug"
+}
+
+resolve_feature() {
+  local f="$1"
+  if [ -z "$f" ] && [ -f "$ACTIVE_POINTER" ]; then
+    f="$(head -1 "$ACTIVE_POINTER")"
+  fi
+  [ -n "$f" ] || die "no feature given and no active graph ($ACTIVE_POINTER missing) — run 'graph.sh init' first"
+  slugify_feature "$f"
+}
+
+graph_dir() {
+  printf '%s/%s' "$GRAPH_ROOT" "$1"
+}
+
+require_graph() {
+  [ -f "$1/nodes.tsv" ] || die "no graph at $1 — run 'graph.sh init' first"
+}
+
+# --- meta --------------------------------------------------------------------
+
+meta_get() {
+  local dir="$1" key="$2"
+  [ -f "$dir/meta.tsv" ] || { printf ''; return 0; }
+  awk -F'\t' -v k="$key" '$1 == k { print $2; exit }' "$dir/meta.tsv"
+}
+
+meta_set() {
+  local dir="$1" key="$2" value="$3" tmp
+  tmp="$dir/.meta.tmp"
+  touch "$dir/meta.tsv"
+  awk -F'\t' -v k="$key" -v v="$value" '
+    BEGIN { OFS = "\t" }
+    $1 == k { print k, v; done = 1; next }
+    { print }
+    END { if (!done) print k, v }
+  ' "$dir/meta.tsv" > "$tmp"
+  mv "$tmp" "$dir/meta.tsv"
+}
+
+# One issue, one workspace, one PR — the graph's node granularity IS the PR
+# granularity, so this is on unless a run opts out. Graphs created before the
+# flag existed have no meta row; absent reads as on for them too, which is the
+# behaviour their next claim should get.
+node_pr_on() {
+  [ "$(meta_get "$1" node_pr)" != "off" ]
+}
+
+# How a freed slot is refilled. `stream` (default) dispatches the next node the
+# moment a slot opens; `batch` waits until EVERY in-flight node has closed
+# before opening the next set. Batch is what an operator asked for by hand on a
+# live run ("resolve all of them before opening two more") and then had to
+# re-state in every wake-up prompt because the graph had no place to keep it.
+admission_of() {
+  local a
+  a="$(meta_get "$1" admission)"
+  case "$a" in batch) printf 'batch' ;; *) printf 'stream' ;; esac
+}
+
+# Who merges a node PR that /ship:pr could not arm for auto-merge. `graph`
+# (default) merges it from here once the forge reports it CLEAN — the same thing
+# GitHub's auto-merge would have done, for a repository that has that feature
+# off. Nothing is merged while checks run or fail, and nothing is merged over a
+# conflict: DIRTY still needs a person. `human` hands every such PR to the
+# operator.
+#
+# Measured 2026-09-23: /ship:pr arms auto-merge seconds after `gh pr create`,
+# while the forge still reports the PR UNKNOWN, so on a repo with auto-merge off
+# the arm fails and the PR never merges itself. Under `human` that stalled the
+# graph on a PR nobody was watching; a graph run is unattended by contract.
+merge_policy_of() {
+  case "$(meta_get "$1" merge_policy)" in human) printf 'human' ;; *) printf 'graph' ;; esac
+}
+
+# How many times a node may be claimed before a failure is final. Each claim
+# counts, so 2 means one automatic retry in a fresh workspace. Failures that
+# were a person's decision (abort, fail, a PR closed on the forge) are never
+# retried automatically — they carry a hold marker.
+max_attempts_of() {
+  local n
+  n="$(meta_get "$1" max_attempts)"
+  case "$n" in ''|*[!0-9]*) n=2 ;; esac
+  [ "$n" -ge 1 ] || n=1
+  printf '%s' "$n"
+}
+
+# How long a node may go without touching anything before the stall cap may
+# fire. The cap used to count POLLS only, and the poll cadence is whatever the
+# driver's `wait` returns at — so a driver that answered instantly turned
+# "3 polls" into 45 seconds and killed nodes mid-develop. Polls AND seconds must
+# both run out now, and the seconds are the ones that mean something.
+stall_after_of() {
+  local n
+  n="$(meta_get "$1" stall_after)"
+  case "$n" in ''|*[!0-9]*) n=900 ;; esac
+  [ "$n" -ge 60 ] || n=60
+  printf '%s' "$n"
+}
+
+# A worker that has not written its first dispatch row is a different case: the
+# dispatch may simply not have taken. It still gets a floor, because a worker
+# reading its spec writes nothing either — measured: 80s from claim to the first
+# row on a healthy node, well past three polls.
+NEVER_STARTED_AFTER=300
+
+hold_node() {
+  printf '%s\n' "$3" > "$1/hold-$2.txt"
+}
+
+# Puts a node back on the frontier for a FRESH dispatch. The worker behind it is
+# gone and the driver contract only ever creates a new workspace; the old one is
+# kept on disk and its path logged, so partial work stays reachable by hand.
+retry_node() {
+  local dir="$1" id="$2" why="$3" wt
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && log_line "$dir" "$id previous workspace kept at $wt"
+  node_set "$dir" "$id" 6 pending
+  node_set "$dir" "$id" 7 ""
+  node_set "$dir" "$id" 8 ""
+  node_set "$dir" "$id" 10 ""
+  # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
+  # the stall cap on its first poll of the new run.
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt"
+  log_line "$dir" "$id → pending ($why; attempt $(node_field "$dir" "$id" 9) kept)"
+}
+
+# --- PR state ----------------------------------------------------------------
+
+# The forge client is resolved through a variable so a test can point it at a
+# stub, and so a repo whose client is wrapped keeps working.
+GH="${GH_BIN:-gh}"
+
+# There is a forge gate only when there is a forge to gate on: node PRs enabled,
+# a client on PATH, and a remote for it to talk about. Without all three nothing
+# will ever report a PR merged, and holding every dependent behind a signal that
+# cannot arrive would deadlock a perfectly good local run.
+forge_gate_on() {
+  local dir="$1"
+  node_pr_on "$dir" || return 1
+  command -v "$GH" >/dev/null 2>&1 || return 1
+  [ -n "$(git remote 2>/dev/null | head -1)" ] || return 1
+  return 0
+}
+
+pr_status_file() { printf '%s/pr-status.tsv' "$1"; }
+
+pr_status_get() {
+  local dir="$1" id="$2" col="$3" f
+  f="$(pr_status_file "$dir")"
+  [ -f "$f" ] || { printf ''; return 0; }
+  awk -F'\t' -v id="$id" -v c="$col" '$1 == id { print $c; exit }' "$f"
+}
+
+pr_status_set() {
+  local dir="$1" id="$2" number="$3" state="$4" url="$5" armed="${6:-no}" mstate="${7:-}" f tmp
+  f="$(pr_status_file "$dir")"
+  tmp="$dir/.pr-status.tmp"
+  touch "$f"
+  awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" -v a="$armed" -v m="$mstate" '
+    $1 == id { print id, n, s, u, a, m; done = 1; next }
+    { print }
+    END { if (!done) print id, n, s, u, a, m }
+  ' "$f" > "$tmp"
+  mv "$tmp" "$f"
+}
+
+# The forge's own verdict on whether the PR can merge right now: CLEAN, BLOCKED
+# (checks running or a review required), BEHIND, DIRTY (conflicts), UNKNOWN.
+pr_merge_state() {
+  local dir="$1" id="$2" branch out
+  branch="$(node_field "$dir" "$id" 8)"
+  out="$("$GH" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
+  json_field "$out" mergeStateStatus
+}
+
+pr_try_merge() {
+  local dir="$1" id="$2" branch
+  branch="$(node_field "$dir" "$id" 8)"
+  "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id.log" 2>&1
+}
+
+json_field() {
+  printf '%s' "$1" | tr -d ' \n' | sed -n "s/.*\"$2\":\"\{0,1\}\([^,\"}]*\).*/\1/p" | head -1
+}
+
+# Asks the forge what actually happened to this node's PR. Nothing here is
+# inferred from local git: a branch being an ancestor of the base proves a
+# rebase, not a merge, and that difference is the whole point of this gate.
+#
+# Prints "<state>\t<number>\t<url>\t<armed>". state is the forge's own (OPEN,
+# MERGED, CLOSED), or `none` when the client found no PR for that branch. armed
+# is `yes` when /ship:pr already requested GitHub's native auto-merge on this PR
+# (that request lives on the forge, so it survives even if this run of the
+# graph never issued it) — it decides whether an OPEN PR still needs a human.
+pr_probe() {
+  local dir="$1" id="$2" branch out armed
+  branch="$(node_field "$dir" "$id" 8)"
+  [ -n "$branch" ] || { printf 'none\t\t\tno'; return 0; }
+  out="$("$GH" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
+  [ -n "$out" ] || { printf 'none\t\t\tno'; return 0; }
+  armed=no
+  case "$(printf '%s' "$out" | tr -d ' \n')" in
+    *'"autoMergeRequest":null'*) armed=no ;;
+    *'"autoMergeRequest"'*) armed=yes ;;
+  esac
+  printf '%s\t%s\t%s\t%s' \
+    "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)" "$armed"
+}
+
+# --- nodes -------------------------------------------------------------------
+
+node_field() {
+  local dir="$1" id="$2" col="$3"
+  awk -F'\t' -v id="$id" -v c="$col" '$1 == id { print $c; exit }' "$dir/nodes.tsv"
+}
+
+node_exists() {
+  local dir="$1" id="$2"
+  awk -F'\t' -v id="$id" '$1 == id { found = 1; exit } END { exit !found }' "$dir/nodes.tsv"
+}
+
+node_set() {
+  local dir="$1" id="$2" col="$3" value="$4" tmp
+  tmp="$dir/.nodes.tmp"
+  awk -F'\t' -v OFS='\t' -v target="$id" -v c="$col" -v v="$value" '
+    $1 == target { $c = v }
+    { print }
+  ' "$dir/nodes.tsv" > "$tmp"
+  mv "$tmp" "$dir/nodes.tsv"
+}
+
+nodes_with_status() {
+  local dir="$1" status="$2"
+  awk -F'\t' -v s="$status" '$6 == s { print $1 }' "$dir/nodes.tsv" | sort
+}
+
+count_status() {
+  nodes_with_status "$1" "$2" | sed '/^$/d' | wc -l | tr -d ' '
+}
+
+# Tab is IFS *whitespace*, so `IFS=$'\t' read` silently collapses runs of it and
+# an empty repo/deps field shifts every later column. Rows are therefore always
+# fed through this first. US (\037) is not IFS whitespace, so empty fields
+# survive — and unlike \001 it is not the byte bash reserves internally (CTLESC),
+# which makes \001 unusable as an IFS delimiter.
+US="$(printf '\037')"
+
+nodes_rows() {
+  tr '\t' '\037' < "$1/nodes.tsv"
+}
+
+log_line() {
+  local dir="$1" msg="$2"
+  printf -- '- %s — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >> "$dir/graph-log.md"
+}
+
+# --- JSON --------------------------------------------------------------------
+
+# Minimal reader for the nodes.json contract: a flat array of objects whose
+# values are strings, string arrays, numbers or null. Emits one TSV row per
+# object (id, repo, title, deps, files) — deps/files as comma-joined lists.
+# Deliberately not a general JSON parser: the contract is produced by /ship:graph
+# itself, and a linear scan stays testable in CI without jq/python/node.
+parse_nodes_json() {
+  awk '
+    function readstr(p,   out, ch) {
+      p++
+      out = ""
+      while (p <= n) {
+        ch = substr(buf, p, 1)
+        if (ch == "\\") {
+          p++
+          ch = substr(buf, p, 1)
+          if (ch == "n" || ch == "t" || ch == "r") { out = out " "; p++ }
+          else if (ch == "u") { out = out "?"; p += 5 }
+          else { out = out ch; p++ }
+          continue
+        }
+        if (ch == "\"") { p++; break }
+        out = out ch
+        p++
+      }
+      S = out
+      return p
+    }
+    function setfield(k, v) {
+      if (k == "id") id = v
+      else if (k == "repo") repo = v
+      else if (k == "title") title = v
+      else if (k == "deps") deps = v
+      else if (k == "files") files = v
+    }
+    { buf = buf $0 "\n" }
+    END {
+      n = length(buf)
+      i = 1
+      depth = 0
+      while (i <= n) {
+        c = substr(buf, i, 1)
+        if (c == "{") {
+          depth++
+          if (depth == 1) { id = ""; repo = ""; title = ""; deps = ""; files = "" }
+          i++
+          continue
+        }
+        if (c == "}") {
+          if (depth == 1) printf "%s\t%s\t%s\t%s\t%s\n", id, repo, title, deps, files
+          depth--
+          i++
+          continue
+        }
+        if (c == "\"" && depth == 1) {
+          i = readstr(i)
+          key = S
+          while (i <= n && substr(buf, i, 1) ~ /[ \t\r\n:]/) i++
+          c2 = substr(buf, i, 1)
+          if (c2 == "\"") {
+            i = readstr(i)
+            setfield(key, S)
+          } else if (c2 == "[") {
+            i++
+            arr = ""
+            while (i <= n) {
+              c3 = substr(buf, i, 1)
+              if (c3 == "]") { i++; break }
+              if (c3 == "\"") { i = readstr(i); arr = (arr == "" ? S : arr "," S); continue }
+              i++
+            }
+            setfield(key, arr)
+          } else {
+            v = ""
+            while (i <= n && substr(buf, i, 1) !~ /[,}\]\r\n\t ]/) { v = v substr(buf, i, 1); i++ }
+            if (v == "null") v = ""
+            setfield(key, v)
+          }
+          continue
+        }
+        i++
+      }
+    }
+  '
+}
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+json_str_or_null() {
+  if [ -z "$1" ]; then printf 'null'; else printf '"%s"' "$(json_escape "$1")"; fi
+}
+
+json_array() {
+  local csv="$1" out="" item
+  [ -z "$csv" ] && { printf '[]'; return 0; }
+  local IFS=','
+  for item in $csv; do
+    [ -z "$item" ] && continue
+    out="$out, \"$(json_escape "$item")\""
+  done
+  printf '[%s]' "${out#, }"
+}
+
+# graph.json is the readable, shareable projection of nodes.tsv + meta.tsv —
+# re-rendered on every mutation so it never drifts from the state it describes.
+render_json() {
+  local dir="$1" out="$dir/.graph.json.tmp"
+  {
+    printf '{\n'
+    printf '  "version": 1,\n'
+    printf '  "feature": "%s",\n' "$(json_escape "$(meta_get "$dir" feature)")"
+    printf '  "mode": "%s",\n' "$(json_escape "$(meta_get "$dir" mode)")"
+    printf '  "driver": "%s",\n' "$(json_escape "$(meta_get "$dir" driver)")"
+    printf '  "base_branch": "%s",\n' "$(json_escape "$(meta_get "$dir" base_branch)")"
+    printf '  "max_in_flight": %s,\n' "$(meta_get "$dir" max_in_flight)"
+    printf '  "admission": "%s",\n' "$(json_escape "$(admission_of "$dir")")"
+    printf '  "merge_policy": "%s",\n' "$(merge_policy_of "$dir")"
+    printf '  "max_attempts": %s,\n' "$(max_attempts_of "$dir")"
+    printf '  "nodes": [\n'
+    local first=1 id repo title deps files status wt branch attempts blocked
+    while IFS="$US" read -r id repo title deps files status wt branch attempts blocked; do
+      [ -n "$id" ] || continue
+      [ "$first" -eq 1 ] || printf ',\n'
+      first=0
+      printf '    {\n'
+      printf '      "id": "%s",\n' "$(json_escape "$id")"
+      printf '      "repo": %s,\n' "$(json_str_or_null "$repo")"
+      printf '      "title": %s,\n' "$(json_str_or_null "$title")"
+      printf '      "deps": %s,\n' "$(json_array "$deps")"
+      printf '      "files": %s,\n' "$(json_array "$files")"
+      printf '      "status": "%s",\n' "$(json_escape "$status")"
+      printf '      "worktree": %s,\n' "$(json_str_or_null "$wt")"
+      printf '      "branch": %s,\n' "$(json_str_or_null "$branch")"
+      printf '      "attempts": %s,\n' "${attempts:-0}"
+      printf '      "blocked_by_conflict": %s,\n' "$(json_str_or_null "$blocked")"
+      printf '      "pr": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 2)")"
+      printf '      "pr_state": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 3)")"
+      printf '      "pr_url": %s,\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 4)")"
+      printf '      "pr_automerge": %s\n' "$(json_str_or_null "$(pr_status_get "$dir" "$id" 5)")"
+      printf '    }'
+    done < <(nodes_rows "$dir")
+    [ "$first" -eq 1 ] || printf '\n'
+    printf '  ],\n'
+    printf '  "pr_gate": { "last_merged": %s, "awaiting_merge": %s }\n' \
+      "$(json_str_or_null "$(meta_get "$dir" last_merged)")" \
+      "$(count_status "$dir" landed)"
+    printf '}\n'
+  } > "$out"
+  mv "$out" "$dir/graph.json"
+}
+
+# --- edges -------------------------------------------------------------------
+
+# Footprint overlap: exact path match, or one path being a directory prefix of
+# the other. `src/api` collides with `src/api/routes.ts`; `src/apiv2` does not.
+files_overlap() {
+  local a_csv="$1" b_csv="$2" a b
+  [ -n "$a_csv" ] && [ -n "$b_csv" ] || return 1
+  local old_ifs="$IFS"
+  IFS=','
+  for a in $a_csv; do
+    [ -n "$a" ] || continue
+    a="${a%/}"
+    for b in $b_csv; do
+      [ -n "$b" ] || continue
+      b="${b%/}"
+      if [ "$a" = "$b" ]; then IFS="$old_ifs"; return 0; fi
+      case "$b" in "$a"/*) IFS="$old_ifs"; return 0 ;; esac
+      case "$a" in "$b"/*) IFS="$old_ifs"; return 0 ;; esac
+    done
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+# A dependency is satisfied when its PR is MERGED on the forge — not when its
+# pipeline finished locally. The two came apart in practice: a node whose work
+# only exists on an unmerged branch is not something the next node can build on,
+# and admitting its dependent against a base that does not contain it is how a
+# dependent re-implements or contradicts work that is still in review.
+deps_satisfied() {
+  local dir="$1" id="$2" deps d st
+  deps="$(node_field "$dir" "$id" 4)"
+  [ -n "$deps" ] || return 0
+  local old_ifs="$IFS"
+  IFS=','
+  for d in $deps; do
+    [ -n "$d" ] || continue
+    st="$(node_field "$dir" "$d" 6)"
+    if [ -z "$st" ] || [ "$st" != "merged" ]; then IFS="$old_ifs"; return 1; fi
+  done
+  IFS="$old_ifs"
+  return 0
+}
+
+# --- init --------------------------------------------------------------------
+
+# The base is what every node branches from AND what every node PR targets, so
+# it has to be the branch the forge actually merges into. An ephemeral branch
+# only the coordinator ever sees would make every node PR a PR against a
+# coordinator-local fiction: merging it would land the work nowhere real, and
+# the graph's own "merged" signal would mean nothing outside this machine.
+#
+# The remote's HEAD is the honest answer; the conventional local names and then
+# the checked-out branch are the fallbacks for a repo with no remote.
+remote_name() {
+  local remote
+  remote="$(git config --get "branch.$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true).remote" 2>/dev/null || true)"
+  if [ -z "$remote" ] && git remote get-url origin >/dev/null 2>&1; then remote="origin"; fi
+  if [ -z "$remote" ] && [ "$(git remote 2>/dev/null | awk 'END { print NR + 0 }')" = "1" ]; then
+    remote="$(git remote)"
+  fi
+  printf '%s' "$remote"
+}
+
+# Every node workspace is cut from the LOCAL base ref, and nothing here ever
+# moved it. The graph admits a dependent only once its dependency's PR is MERGED
+# on the forge — but a merge on the forge is not a commit in this clone, so the
+# dependent opened on a trunk that did not contain the very thing it waited for.
+#
+# Measured 2026-09-14: MOB-3461 was admitted on two merged PRs and started 9
+# commits behind origin/main, with neither dependency's code on disk. It caught
+# it only because the planner confronts the plan against the files; a node that
+# did not would have implemented on top of code that was not there.
+#
+# Fast-forward only, and never onto a working tree this does not own: this runs
+# unattended, so it must be incapable of rewriting or discarding anything. A
+# base that diverged locally is a person's call, and it is logged, not resolved.
+sync_base() {
+  local dir="$1" base remote before after
+  base="$(meta_get "$dir" base_branch)"
+  remote="$(remote_name)"
+  [ -n "$base" ] && [ -n "$remote" ] || return 0
+
+  before="$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)"
+  if ! git fetch -q "$remote" "$base" >/dev/null 2>&1; then
+    log_line "$dir" "base sync: could not fetch $remote/$base — workspaces stay on whatever $base is here"
+    return 0
+  fi
+  # Pinned to a sha immediately. A FETCH_HEAD read later is not the same thing:
+  # the ref-moving fetch below is REFUSED whenever $base is checked out
+  # anywhere, and a refused fetch leaves FETCH_HEAD unreadable — "Needed a
+  # single revision". Every check downstream then failed for that reason and
+  # reported a perfectly healthy base as diverged.
+  local tip
+  tip="$(git rev-parse --quiet --verify FETCH_HEAD 2>/dev/null || true)"
+  [ -n "$tip" ] || return 0
+
+  # Moving the ref through fetch touches no working tree, and git refuses it
+  # outright when $base is checked out somewhere — in this worktree or another.
+  # The in-place fast-forward is the fallback for the one case where it is ours.
+  if ! git fetch -q "$remote" "$base:$base" >/dev/null 2>&1; then
+    # Tracked changes only: the graph's own state dir and the caller's
+    # nodes.json are untracked, so a porcelain check is never clean here and
+    # skipped the fast-forward every time. A fast-forward that would clobber an
+    # untracked file is refused by git itself, below.
+    if [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$base" ] \
+      && git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+      git merge --ff-only -q "$tip" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  local after
+  after="$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)"
+  [ -n "$after" ] || return 0
+
+  if [ -n "$before" ] && [ "$before" != "$after" ]; then
+    log_line "$dir" "base sync: $base fast-forwarded to $remote/$base ($(git rev-list --count "$before..$after" 2>/dev/null || echo '?') commit(s)) — new workspaces are cut from it"
+  elif [ "$after" = "$tip" ]; then
+    : # already current, nothing worth a line
+  elif git merge-base --is-ancestor "$after" "$tip" >/dev/null 2>&1; then
+    # The common layout: one clone, many worktrees, $base checked out in the
+    # primary one. Nothing here may move it, and that is fine — each node
+    # fast-forwards its OWN workspace at init, which is the load-bearing half.
+    log_line "$dir" "base sync: $base is behind $remote/$base and is checked out elsewhere, so it was not moved here — each node fast-forwards its own workspace at init"
+  else
+    log_line "$dir" "base sync: local $base has diverged from $remote/$base and was NOT moved — node workspaces may be cut from a stale base"
+  fi
+}
+
+default_branch() {
+  local remote d
+  remote="$(remote_name)"
+  if [ -n "$remote" ]; then
+    d="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s|^$remote/||" || true)"
+    [ -n "$d" ] && { printf '%s' "$d"; return 0; }
+  fi
+  for d in main master; do
+    git show-ref --verify --quiet "refs/heads/$d" && { printf '%s' "$d"; return 0; }
+  done
+  d="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  printf '%s' "${d:-main}"
+}
+
+# Local mode keeps the spec in ship/changes/<feature>/, and /ship:spec leaves it
+# UNCOMMITTED — only /ship:pr ever commits. Every node workspace is branched from
+# the base ref, so an uncommitted spec simply is not there: the node's pipeline
+# reaches its context state, finds no proposal/design/tasks, and stops.
+#
+# Sealing it onto the base once, here, is the only placement that works. Copying
+# it per node instead would have every node commit the same files and collide at
+# merge time.
+seal_spec() {
+  local dir="$1" feature="$2" spec_dir="ship/changes/$feature" head_branch
+  [ -d "$spec_dir" ] || return 0
+  # Sealing means committing onto whatever is checked out here, and the nodes
+  # branch from the BASE. When the two differ the commit would land somewhere no
+  # node ever reads, so say so instead of leaving a silent gap.
+  head_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [ -n "$head_branch" ] && [ "$head_branch" != "$(meta_get "$dir" base_branch)" ]; then
+    log_line "$dir" "spec NOT sealed: HEAD is $head_branch but nodes branch from $(meta_get "$dir" base_branch) — check out the base branch and re-run init if the nodes need the spec"
+    return 0
+  fi
+  git add -- "$spec_dir" >/dev/null 2>&1 || return 0
+  git diff --cached --quiet -- "$spec_dir" 2>/dev/null && return 0
+  git commit -q -m "docs($feature): spec artifacts for the work graph" -- "$spec_dir" >/dev/null 2>&1 || return 0
+  log_line "$dir" "spec sealed onto $(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo HEAD) so node workspaces inherit it"
+}
+
+# --- driver selection --------------------------------------------------------
+
+# With no --driver given, ask every driver whether it can run here and how
+# strongly it wants the job, then take the keenest. The scheduler stays
+# runtime-agnostic: it globs driver files, reads two numbers and picks — it never
+# learns what any of them is. A new driver becomes selectable by existing.
+#
+# This replaces a fixed default of the ONE driver that spawns nothing, so the
+# common case used to be a graph whose every workspace had to be made by hand.
+# Selecting in a script rather than describing the choice in a skill is the point:
+# a rule written as prose is a rule that sometimes does not run.
+# Prints "<name><TAB><workspaces-label>" so the caller can report what the
+# elected driver actually produces without knowing which driver it got. The
+# label is the driver's own words, echoed verbatim.
+autoselect_driver() {
+  local f name out ready prio ws best="" best_prio="" best_ws=""
+  for f in "$HOOK_DIR"/driver-*.sh; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .sh)"
+    name="${name#driver-}"
+    out="$(bash "$f" probe 2>/dev/null || true)"
+    ready="$(printf '%s' "$out" | sed -n 's/^ready=//p' | head -1)"
+    [ "$ready" = "1" ] || continue
+    prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
+    ws="$(printf '%s' "$out" | sed -n 's/^workspaces=//p' | head -1)"
+    # A driver that claims readiness without a usable priority still gets to
+    # run; it just sorts last. Refusing it would make a malformed probe look
+    # like an absent driver.
+    case "$prio" in ''|*[!0-9]*) prio=99 ;; esac
+    if [ -z "$best_prio" ] || [ "$prio" -lt "$best_prio" ]; then
+      best="$name"
+      best_prio="$prio"
+      best_ws="$ws"
+    fi
+  done
+  [ -n "$best" ] || return 0
+  printf '%s\t%s' "$best" "$best_ws"
+}
+
+# A probe-elected driver was elected against the runtimes that answered AT THAT
+# MOMENT. The real cost of never revisiting it was measured: a graph whose first
+# init hit a broken runtime fell back to the driver that spawns nothing, and
+# every later batch — for hours, across sessions, long after the runtime was
+# fixed — kept using it, because the election is written to meta once and the
+# only thing that could revisit it was an operator remembering to. So a run that
+# was supposed to open one app workspace per issue quietly opened none, twice
+# over, and the degradation was invisible in every status it printed.
+#
+# Re-electing here makes recovery automatic instead of remembered. It is safe
+# only while no node is HELD by the current driver — an in-flight node can be
+# collected, waited on and stopped only through the driver that dispatched it —
+# which is the same guard `set --driver` uses.
+#
+# A driver named explicitly by a human is never re-elected: `--driver local` has
+# to mean local, or pinning a runtime would be impossible. An election recorded
+# by a Ship older than this field is treated as a probe, so those graphs heal too.
+reelect_driver() {
+  local dir="$1" cur chosen busy sel best ws
+  cur="$(meta_get "$dir" driver)"
+  chosen="$(meta_get "$dir" driver_chosen_by)"
+  [ "$chosen" != "explicit" ] || return 0
+
+  busy="$(nodes_with_status "$dir" in_flight | tr -d '[:space:]')"
+  [ -z "$busy" ] || return 0
+
+  sel="$(autoselect_driver)"
+  best="${sel%%$'\t'*}"
+  ws="${sel#*$'\t'}"
+  [ -n "$best" ] || return 0
+  meta_set "$dir" driver_workspaces "$ws"
+  [ "$best" != "$cur" ] || return 0
+
+  meta_set "$dir" driver "$best"
+  meta_set "$dir" driver_chosen_by probe
+  log_line "$dir" "driver re-elected $cur → $best (probe; no node held by $cur)"
+}
+
+cmd_init() {
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on" merge_policy="graph"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --from) from="$2"; shift 2 ;;
+      --driver) driver="$2"; shift 2 ;;
+      --keep-workspaces) workspace_cleanup="off"; shift ;;
+      --max-in-flight) max_in_flight="$2"; shift 2 ;;
+      --base-branch) base_branch="$2"; shift 2 ;;
+      --mode) mode="$2"; shift 2 ;;
+      --repo) default_repo="$2"; shift 2 ;;
+      --node-pr) node_pr="$2"; shift 2 ;;
+      --merge-policy) merge_policy="$2"; shift 2 ;;
+      --fresh) fresh=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+
+  [ -n "$feature" ] || die "init: --feature is required"
+  feature="$(slugify_feature "$feature")"
+  [ -n "$from" ] || die "init: --from <nodes.json> is required"
+  [ -f "$from" ] || die "init: nodes file not found: $from"
+  case "$max_in_flight" in
+    ''|*[!0-9]*) die "init: --max-in-flight must be a positive integer: $max_in_flight" ;;
+  esac
+  [ "$max_in_flight" -ge 1 ] || die "init: --max-in-flight must be >= 1"
+  case "$mode" in linear|local) ;; *) die "init: --mode must be linear or local: $mode" ;; esac
+  case "$node_pr" in on|off) ;; *) die "init: --node-pr must be on or off: $node_pr" ;; esac
+  case "$merge_policy" in human|graph) ;; *) die "init: --merge-policy must be human or graph: $merge_policy" ;; esac
+  local driver_workspaces=""
+  if [ -z "$driver" ]; then
+    local sel
+    sel="$(autoselect_driver)"
+    driver="${sel%%$'\t'*}"
+    driver_workspaces="${sel#*$'\t'}"
+    [ -n "$driver" ] || die "init: no driver reported itself ready here — pass --driver <name> explicitly"
+    chosen_by="probe"
+  fi
+  valid_id "$driver" || die "init: invalid driver name: $driver"
+  [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "init: no driver at $HOOK_DIR/driver-$driver.sh"
+  [ -n "$driver_workspaces" ] || driver_workspaces="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
+
+  local dir
+  dir="$(graph_dir "$feature")"
+
+  # A live graph is never silently discarded: the fix-loop counters and the
+  # in-flight node claims live here, and dropping them restarts loops that are
+  # supposed to be capped.
+  #
+  # Reported as RESUME/exit 3 rather than an error, mirroring pipeline.sh init.
+  # A coordinator whose context was compacted mid-run re-invokes /ship:graph and
+  # must rejoin the run; if this failed with "pass --fresh to discard it", the
+  # obvious next move is to pass --fresh — and that is precisely the destructive
+  # one. Exit 3 says "already live, go to the loop" with no such invitation.
+  # Both files, not just nodes.tsv: a half-written directory is debris from a
+  # failed init, not a live graph, and reporting RESUME over it strands the
+  # caller — the corrected init gets refused and only --fresh clears it, which
+  # is the exact reflex the RESUME contract exists to prevent.
+  if [ -f "$dir/nodes.tsv" ] && [ -f "$dir/meta.tsv" ] && [ "$fresh" -eq 0 ]; then
+    printf 'RESUME\n'
+    printf 'feature=%s\n' "$feature"
+    printf 'graph=%s\n' "$dir/graph.json"
+    printf 'nodes=%s\n' "$(awk 'END { print NR }' "$dir/nodes.tsv")"
+    printf 'inflight=%s\n' "$(count_status "$dir" in_flight)"
+    printf 'landed=%s\n' "$(count_status "$dir" landed)"
+    printf 'merged=%s\n' "$(count_status "$dir" merged)"
+    # A re-init almost always means "the driver I picked does not work here" or
+    # "give me more slots" — not "throw the run away". Naming the non-destructive
+    # command here is what keeps the next reflex off --fresh.
+    if [ "$driver" != "$(meta_get "$dir" driver)" ] || [ "$max_in_flight" != "$(meta_get "$dir" max_in_flight)" ]; then
+      printf 'reconfigure=graph.sh set --feature %s --driver %s --max-in-flight %s\n' \
+        "$feature" "$driver" "$max_in_flight"
+    fi
+    exit 3
+  fi
+
+  [ -n "$base_branch" ] || base_branch="$(default_branch)"
+
+  mkdir -p "$dir"
+  # --fresh has to clear EVERY per-run file, not just the two that describe the
+  # graph. Leaving the driver's own state behind means the next run's first
+  # `wait` reports done= for nodes it never dispatched — a fabricated completion
+  # signal surviving a reset, which is exactly what the observe-the-artifact
+  # rule exists to prevent. Stall and progress counters are just as poisonous.
+  if [ "$fresh" -eq 1 ]; then
+    rm -f "$dir"/iteration-*.txt "$dir"/driver-*.txt "$dir"/progress-*.txt "$dir"/progress-at-*.txt \
+          "$dir"/stall-*.txt "$dir"/why-*.txt "$dir"/pr-*.log \
+          "$dir/pr-status.tsv" "$dir/nodes.tsv" "$dir/meta.tsv"
+  fi
+
+  local parsed
+  parsed="$(parse_nodes_json < "$from")"
+  [ -n "$parsed" ] || die "init: no nodes parsed from $from (expected a JSON array of objects with an \"id\")"
+
+  # Staged, never written in place. An init that dies mid-validation must leave
+  # the directory exactly as it found it, or the next init inherits the debris.
+  local staged="$dir/.nodes.staged"
+  : > "$staged"
+  local id repo title deps files seen=""
+  while IFS="$US" read -r id repo title deps files; do
+    [ -n "$id" ] || { rm -f "$staged"; die "init: a node in $from has no \"id\""; }
+    valid_id "$id" || { rm -f "$staged"; die "init: invalid node id (allowed: [a-zA-Z0-9_-]): $id"; }
+    case " $seen " in *" $id "*) rm -f "$staged"; die "init: duplicate node id in $from: $id" ;; esac
+    seen="$seen $id"
+    printf '%s\t%s\t%s\t%s\t%s\tpending\t\t\t0\t\n' "$id" "$repo" "$title" "$deps" "$files" >> "$staged"
+  done < <(printf '%s\n' "$parsed" | tr '\t' '\037')
+
+  # Dangling dependency edges are a spec bug, not a runtime condition: catching
+  # them here beats emitting a deadlock `ask` halfway through the run.
+  local d
+  # Default IFS on purpose: the awk below emits "<id> <deps>" space-separated,
+  # and IFS= would put the whole line in $id, silently skipping every check.
+  while read -r id deps; do
+    [ -n "$deps" ] || continue
+    local old_ifs="$IFS"
+    IFS=','
+    for d in $deps; do
+      [ -n "$d" ] || continue
+      case " $seen " in
+        *" $d "*) ;;
+        *) IFS="$old_ifs"; rm -f "$staged"; die "init: node $id depends on unknown node: $d" ;;
+      esac
+    done
+    IFS="$old_ifs"
+  done < <(awk -F'\t' '{ print $1, $4 }' "$staged")
+
+  # A cycle is the one shape no schedule can ever satisfy, and it used to
+  # surface hours in as a mid-run "deadlock" ask. Found here, before a single
+  # workspace exists, with the cycle spelled out.
+  local cycle
+  cycle="$(awk -F'\t' '
+    { n = $1; ids[++N] = n; deps[n] = $4 }
+    function dfs(u,   k, arr, v, i, j, out, found) {
+      if (done) return
+      color[u] = 1; stack[++sp] = u
+      k = split(deps[u], arr, ",")
+      for (i = 1; i <= k; i++) {
+        v = arr[i]; gsub(/^ +| +$/, "", v)
+        if (v == "") continue
+        if (color[v] == 1) {
+          out = ""; found = 0
+          for (j = 1; j <= sp; j++) {
+            if (stack[j] == v) found = 1
+            if (found) out = out (out == "" ? "" : " -> ") stack[j]
+          }
+          print out " -> " v
+          done = 1
+          return
+        }
+        if (color[v] == 0) dfs(v)
+        if (done) return
+      }
+      color[u] = 2; sp--
+    }
+    END { for (i = 1; i <= N; i++) if (color[ids[i]] == 0) dfs(ids[i]) }
+  ' "$staged")"
+  [ -z "$cycle" ] || { rm -f "$staged"; die "init: dependency cycle — no order can satisfy it: $cycle"; }
+
+  mv "$staged" "$dir/nodes.tsv"
+
+  meta_set "$dir" feature "$feature"
+  meta_set "$dir" mode "$mode"
+  meta_set "$dir" driver "$driver"
+  meta_set "$dir" workspace_cleanup "$workspace_cleanup"
+  # Without this, every election looks the same to a later reader, so a fallback
+  # forced by a broken runtime is indistinguishable from a deliberate pin — and
+  # re-election cannot tell which ones it is allowed to revisit.
+  meta_set "$dir" driver_chosen_by "$chosen_by"
+  meta_set "$dir" driver_workspaces "$driver_workspaces"
+  meta_set "$dir" base_branch "$base_branch"
+  meta_set "$dir" max_in_flight "$max_in_flight"
+  meta_set "$dir" repo "$default_repo"
+  meta_set "$dir" node_pr "$node_pr"
+  meta_set "$dir" merge_policy "$merge_policy"
+  meta_set "$dir" last_merged ""
+
+  mkdir -p "$GRAPH_ROOT"
+  printf '%s\n' "$feature" > "$ACTIVE_POINTER"
+
+  render_json "$dir"
+  log_line "$dir" "init feature=$feature driver=$driver ($chosen_by) mode=$mode max_in_flight=$max_in_flight merge_policy=$merge_policy base=$base_branch nodes=$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
+  # Ahead of seal_spec, which commits onto the base: sealing onto a stale base
+  # and then fast-forwarding would put the spec behind the nodes that need it.
+  sync_base "$dir"
+  [ "$mode" = "local" ] && seal_spec "$dir" "$feature"
+
+  printf 'INIT %s\n' "$feature"
+  printf 'feature=%s\n' "$feature"
+  printf 'graph=%s\n' "$dir/graph.json"
+  printf 'nodes=%s\n' "$(wc -l < "$dir/nodes.tsv" | tr -d ' ')"
+  printf 'driver=%s\n' "$driver"
+  printf 'driver_chosen_by=%s\n' "$chosen_by"
+}
+
+# --- set ---------------------------------------------------------------------
+
+set_usage() {
+  echo "usage: graph.sh set [--feature <f>] [--driver <d>] [--max-in-flight N] [--node-pr on|off] [--admission stream|batch] [--workspace-cleanup on|off]" >&2
+  echo "                    [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
+  echo "  changes a live graph's runtime knobs without touching nodes or counters" >&2
+}
+
+# The escape hatch that has to exist. Before this, the only way to change the
+# driver on a live graph was re-init, which the RESUME guard refuses — leaving
+# --fresh as the sole way through, and --fresh discards the in-flight claims and
+# fix-loop counters the guard exists to protect. A driver that turns out not to
+# work in this environment (no CLI, no permission to dispatch) is discovered
+# AFTER init by construction, so "start over" was the wrong and only answer.
+#
+# Only the knobs that carry no node state are settable. base_branch is not:
+# every workspace is already branched from it and every open node PR already
+# targets it, so changing it mid-run would leave the conflict edges reading
+# against a base the nodes never saw.
+cmd_set() {
+  local feature="" driver="" max_in_flight="" node_pr="" admission="" merge_policy="" max_attempts="" stall_after="" workspace_cleanup="" changed=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --driver) driver="$2"; shift 2 ;;
+      --workspace-cleanup) workspace_cleanup="$2"; shift 2 ;;
+      --max-in-flight) max_in_flight="$2"; shift 2 ;;
+      --node-pr) node_pr="$2"; shift 2 ;;
+      --admission) admission="$2"; shift 2 ;;
+      --merge-policy) merge_policy="$2"; shift 2 ;;
+      --max-attempts) max_attempts="$2"; shift 2 ;;
+      --stall-after) stall_after="$2"; shift 2 ;;
+      -h|--help) set_usage; exit 0 ;;
+      *) set_usage; exit 1 ;;
+    esac
+  done
+  [ -n "$driver" ] || [ -n "$max_in_flight" ] || [ -n "$node_pr" ] || [ -n "$admission" ] \
+    || [ -n "$merge_policy" ] || [ -n "$max_attempts" ] || [ -n "$stall_after" ] \
+    || [ -n "$workspace_cleanup" ] \
+    || die "set: give --driver, --max-in-flight, --node-pr, --admission, --merge-policy, --max-attempts, --stall-after and/or --workspace-cleanup"
+
+  if [ -n "$admission" ]; then
+    case "$admission" in stream|batch) ;; *) die "set: --admission must be stream or batch: $admission" ;; esac
+  fi
+  if [ -n "$merge_policy" ]; then
+    case "$merge_policy" in human|graph) ;; *) die "set: --merge-policy must be human or graph: $merge_policy" ;; esac
+  fi
+  if [ -n "$max_attempts" ]; then
+    case "$max_attempts" in ''|*[!0-9]*) die "set: --max-attempts must be a positive integer: $max_attempts" ;; esac
+    [ "$max_attempts" -ge 1 ] || die "set: --max-attempts must be >= 1"
+  fi
+  if [ -n "$stall_after" ]; then
+    case "$stall_after" in ''|*[!0-9]*) die "set: --stall-after must be a positive integer (seconds): $stall_after" ;; esac
+    [ "$stall_after" -ge 60 ] || die "set: --stall-after must be >= 60 seconds"
+  fi
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  if [ -n "$admission" ]; then
+    meta_set "$dir" admission "$admission"
+    log_line "$dir" "admission → $admission"
+    printf 'admission=%s\n' "$admission"
+    changed=1
+  fi
+  if [ -n "$merge_policy" ]; then
+    meta_set "$dir" merge_policy "$merge_policy"
+    log_line "$dir" "merge_policy → $merge_policy"
+    printf 'merge_policy=%s\n' "$merge_policy"
+    changed=1
+  fi
+  if [ -n "$stall_after" ]; then
+    meta_set "$dir" stall_after "$stall_after"
+    log_line "$dir" "stall_after → ${stall_after}s"
+    printf 'stall_after=%s\n' "$stall_after"
+    changed=1
+  fi
+  if [ -n "$max_attempts" ]; then
+    meta_set "$dir" max_attempts "$max_attempts"
+    log_line "$dir" "max_attempts → $max_attempts"
+    printf 'max_attempts=%s\n' "$max_attempts"
+    changed=1
+  fi
+
+  # Read at claim time, so flipping it mid-run only reaches nodes not yet
+  # claimed — the ones already carrying a pr-mode marker keep the contract they
+  # were dispatched under.
+  if [ -n "$node_pr" ]; then
+    case "$node_pr" in on|off) ;; *) die "set: --node-pr must be on or off: $node_pr" ;; esac
+    meta_set "$dir" node_pr "$node_pr"
+    log_line "$dir" "node_pr → $node_pr"
+    printf 'node_pr=%s\n' "$node_pr"
+    changed=1
+  fi
+
+  if [ -n "$max_in_flight" ]; then
+    case "$max_in_flight" in ''|*[!0-9]*) die "set: --max-in-flight must be a positive integer: $max_in_flight" ;; esac
+    [ "$max_in_flight" -ge 1 ] || die "set: --max-in-flight must be >= 1"
+    meta_set "$dir" max_in_flight "$max_in_flight"
+    log_line "$dir" "max_in_flight → $max_in_flight"
+    printf 'max_in_flight=%s\n' "$max_in_flight"
+    changed=1
+  fi
+
+  if [ -n "$workspace_cleanup" ]; then
+    case "$workspace_cleanup" in
+      on|off) ;;
+      *) die "set: --workspace-cleanup takes on or off: $workspace_cleanup" ;;
+    esac
+    meta_set "$dir" workspace_cleanup "$workspace_cleanup"
+    log_line "$dir" "workspace_cleanup → $workspace_cleanup"
+    printf 'workspace_cleanup=%s\n' "$workspace_cleanup"
+    changed=$((changed + 1))
+  fi
+
+  if [ -n "$driver" ]; then
+    valid_id "$driver" || die "set: invalid driver name: $driver"
+    [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "set: no driver at $HOOK_DIR/driver-$driver.sh"
+    # An in-flight node was dispatched THROUGH the old driver and can only be
+    # collected, waited on and stopped through it. Swapping underneath it orphans
+    # a worker that keeps running and billing with nothing able to reach it.
+    local busy
+    busy="$(nodes_with_status "$dir" in_flight | tr '\n' ' ')"
+    busy="$(printf '%s' "$busy" | sed 's/ *$//')"
+    if [ -n "$busy" ]; then
+      die "set: cannot change the driver while node(s) are still held by the current one: $busy
+    Let them finish, or release them first: graph.sh abort (stops the workers, keeps the workspaces)."
+    fi
+    local prev prev_ws ws
+    prev="$(meta_get "$dir" driver)"
+    prev_ws="$(meta_get "$dir" driver_workspaces)"
+    ws="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
+    meta_set "$dir" driver "$driver"
+    # Naming a driver by hand pins it: re-election must not undo the operator's
+    # choice on the very next `next`.
+    meta_set "$dir" driver_chosen_by explicit
+    meta_set "$dir" driver_workspaces "$ws"
+    log_line "$dir" "driver $prev → $driver (explicit; workspaces: ${ws:-unknown})"
+    printf 'driver=%s\n' "$driver"
+    printf 'previous_driver=%s\n' "$prev"
+    printf 'workspaces=%s\n' "$ws"
+    # Pinning by hand is also opting OUT of automatic recovery, and the run that
+    # made this necessary spent hours on a driver nobody had chosen on purpose.
+    # Saying what changed here is what makes the trade visible at the moment it
+    # is made, in the same transcript the operator is already reading.
+    if [ -n "$prev_ws" ] && [ "$prev_ws" != "$ws" ]; then
+      printf 'previous_workspaces=%s\n' "$prev_ws"
+    fi
+    printf 'note=pinned — this driver is now used regardless of what else becomes available; undo with: graph.sh set --driver <name>\n'
+    changed=1
+  fi
+
+  render_json "$dir"
+  printf 'feature=%s\n' "$(meta_get "$dir" feature)"
+  printf 'changed=%s\n' "$changed"
+}
+
+# --- nodes --from-tasks ------------------------------------------------------
+
+# Local mode's tasks.md → nodes.json conversion. Deterministic on purpose: the
+# `## Files` / `## Deps` blocks /ship:spec emits are already structured, so this
+# needs no model in the loop.
+cmd_nodes() {
+  local tasks=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from-tasks) tasks="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  [ -n "$tasks" ] || die "nodes: --from-tasks <tasks.md> is required"
+  [ -f "$tasks" ] || die "nodes: file not found: $tasks"
+
+  awk '
+    function flush() {
+      if (id == "") return
+      if (out != "") printf ",\n"
+      printf "  { \"id\": \"%s\", \"repo\": \"%s\", \"title\": \"%s\", \"deps\": [%s], \"files\": [%s] }", id, repo, title, deps, files
+      out = "x"
+    }
+    function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+    BEGIN { printf "[\n" }
+    /^###+[[:space:]]/ {
+      flush()
+      line = $0
+      sub(/^###+[[:space:]]*/, "", line)
+      id = line
+      sub(/[[:space:]].*$/, "", id)
+      gsub(/[^a-zA-Z0-9_-]/, "", id)
+      title = line
+      sub(/^[^[:space:]]+[[:space:]]*[-—:]*[[:space:]]*/, "", title)
+      title = esc(title)
+      repo = ""; deps = ""; files = ""; section = ""
+      next
+    }
+    /^##[[:space:]]+Files[[:space:]]*$/ { section = "files"; next }
+    /^##[[:space:]]+Deps[[:space:]]*$/  { section = "deps";  next }
+    /^##[[:space:]]+Repo[[:space:]]*$/  { section = "repo";  next }
+    /^#/ { section = ""; next }
+    # A horizontal rule ends a section. Without this, "---" survives the dep
+    # cleanup as a node id of "--" and every task depends on a node that cannot
+    # exist, which deadlocks the whole graph before it starts.
+    /^[[:space:]]*(-{3,}|\*{3,}|_{3,})[[:space:]]*$/ { section = ""; next }
+    section == "files" {
+      v = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", v)
+      sub(/^[[:space:]]+/, "", v)
+      sub(/^(create|modify|delete|criar|modificar|remover)[[:space:]]+/, "", v)
+      gsub(/`/, "", v)
+      sub(/[[:space:]].*$/, "", v)
+      # Accept only things shaped like a path. The section routinely runs on into
+      # acceptance criteria and Gherkin, and prose swallowed into `files` becomes
+      # a bogus conflict edge that blocks unrelated nodes forever.
+      if (v !~ /^[A-Za-z0-9_.@-]*\/[A-Za-z0-9_.\/@-]+$/ && v !~ /^[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+$/) next
+      files = files (files == "" ? "" : ", ") "\"" esc(v) "\""
+      next
+    }
+    section == "deps" {
+      v = $0
+      gsub(/^[[:space:]]*-?[[:space:]]*|[[:space:]]+$/, "", v)
+      gsub(/`/, "", v)
+      if (v == "" || tolower(v) == "none" || tolower(v) == "nenhuma") next
+      # A dep must look like a task id: alphanumeric with a separator (TASK-001,
+      # ABC-1234). A bare word like `M2` is a milestone name, not a task.
+      if (v !~ /^[A-Za-z0-9]+[-_][A-Za-z0-9_-]+$/) next
+      deps = deps (deps == "" ? "" : ", ") "\"" v "\""
+      next
+    }
+    section == "repo" {
+      v = $0
+      gsub(/^[[:space:]]*-?[[:space:]]*|[[:space:]]+$/, "", v)
+      gsub(/`/, "", v)
+      if (v != "" && repo == "") repo = esc(v)
+      next
+    }
+    END { flush(); printf "\n]\n" }
+  ' "$tasks"
+}
+
+# --- transitions -------------------------------------------------------------
+
+transition() {
+  local dir="$1" id="$2" from_csv="$3" to="$4"
+  node_exists "$dir" "$id" || die "unknown node: $id"
+  local cur
+  cur="$(node_field "$dir" "$id" 6)"
+  case ",$from_csv," in
+    *",$cur,"*) ;;
+    *) die "$id is '$cur' — cannot move to '$to' (expected one of: $from_csv)" ;;
+  esac
+  node_set "$dir" "$id" 6 "$to"
+  log_line "$dir" "$id $cur → $to"
+}
+
+cmd_claim() {
+  local feature="" id="" wt="" branch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --worktree) wt="$2"; shift 2 ;;
+      --branch) branch="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$id" ]; then id="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "claim: <task> is required"
+  [ -n "$wt" ] || die "claim: --worktree <path> is required"
+  [ -n "$branch" ] || die "claim: --branch <ref> is required"
+  [ -d "$wt" ] || die "claim: worktree path does not exist: $wt"
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  node_set "$dir" "$id" 7 "$wt"
+  node_set "$dir" "$id" 8 "$branch"
+  node_set "$dir" "$id" 9 "$(( $(node_field "$dir" "$id" 9) + 1 ))"
+  node_set "$dir" "$id" 10 ""
+  transition "$dir" "$id" "pending,ready" in_flight
+
+  # Federated homolog: the node's pipeline must not stop for a per-task
+  # acceptance prompt — the graph presents every report in one batch at the end.
+  # The marker has to land in the workspace's scratch dir, which only exists once
+  # the workspace does, i.e. here and not a step earlier.
+  local scratch="$wt/.context/ship-run/$id"
+  mkdir -p "$scratch"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+
+  # Tells the node's pipeline it has a coordinator to talk to: instead of an
+  # `ask` no one is there to answer, it posts the question to ask.md in this same
+  # dir and `graph.sh next` brings it up here.
+  printf '%s\n' "$dir" > "$scratch/graph-node.txt"
+  rm -f "$scratch/ask.md" "$scratch/answer.txt"
+
+  # One issue, one PR: the node's own pipeline opens it, from the workspace that
+  # holds the diff, so the commits are the atomic ones /ship:pr writes instead of
+  # the single blob seal_workspace falls back to. The base is the graph's base —
+  # the real trunk — and the node's own /ship:pr syncs onto it before pushing,
+  # with the context of the change it just implemented. A node is only dispatched
+  # once every dependency's PR is merged there, so its diff is its own work alone.
+  local node_pr_state="off"
+  if node_pr_on "$dir"; then
+    node_pr_state="on"
+    {
+      printf 'mode=graph\n'
+      printf 'base=%s\n' "$(meta_get "$dir" base_branch)"
+    } > "$scratch/pr-mode.txt"
+  else
+    rm -f "$scratch/pr-mode.txt"
+  fi
+
+  # Baseline the fingerprint and the quiet clock here, not on the first poll.
+  # Without the baseline the first poll always reads as progress (no previous
+  # value to compare against) and the stall cap silently needs one extra round.
+  # It must be the same function poll compares against: baselining a bare row
+  # count made every first poll differ from every fingerprint.
+  node_fingerprint "$wt" "$id" > "$dir/progress-$id.txt"
+  date +%s > "$dir/progress-at-$id.txt"
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt"
+
+  render_json "$dir"
+
+  printf 'claimed=%s\n' "$id"
+  printf 'worktree=%s\n' "$wt"
+  printf 'branch=%s\n' "$branch"
+  printf 'homolog_mode=defer\n'
+  printf 'node_pr=%s\n' "$node_pr_state"
+}
+
+# /ship:run leaves its work UNCOMMITTED — develop writes to the tree and only
+# /ship:pr ever commits. A node whose branch carries no commit merges nothing, so
+# the graph would integrate an empty change and call it green. Sealing the
+# workspace here, in bash, keeps that off the worker's judgment entirely.
+seal_workspace() {
+  local dir="$1" id="$2" wt title feature
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  git -C "$wt" add -A >/dev/null 2>&1 || true
+  # tasks.md is the one file every node edits (each marks its own task done),
+  # so committing it per node puts N branches in contention over one file for no
+  # gain — the graph already sealed the spec onto the base at init. Per-node
+  # reports are uniquely named and stay in.
+  feature="$(meta_get "$dir" feature)"
+  [ -n "$feature" ] && git -C "$wt" reset -q -- "ship/changes/$feature/tasks.md" >/dev/null 2>&1
+  git -C "$wt" diff --cached --quiet 2>/dev/null && return 0
+  title="$(node_field "$dir" "$id" 3)"
+  git -C "$wt" commit -q -m "feat($id): ${title:-$id}" >/dev/null 2>&1 || true
+  log_line "$dir" "$id workspace sealed into a commit on $(node_field "$dir" "$id" 8)"
+}
+
+# --- workspace lifecycle -----------------------------------------------------
+
+# On unless a run opted out. Graphs created before the flag existed have no meta
+# row, and absent reads as on for them too.
+workspace_cleanup_on() {
+  [ "$(meta_get "$1" workspace_cleanup)" != "off" ]
+}
+
+# What has to survive the workspace. `done` presents every node's homolog report,
+# and those reports live inside the workspace the node ran in — removing it
+# without copying them out first turns the final report into a list of paths that
+# no longer exist. The graph dir outlives every workspace, so they go there.
+harvest_node() {
+  local dir="$1" id="$2" wt src dest
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] || return 0
+  src="$wt/.context/ship-run/$id"
+  [ -d "$src" ] || return 0
+  dest="$dir/artifacts/$id"
+  mkdir -p "$dest"
+  cp -R "$src/." "$dest/" 2>/dev/null || true
+}
+
+# Gives the disk back. Every node holds a whole second checkout of the repo plus
+# whatever its setup installed; nothing ever removed them, so a seventeen-node
+# run left seventeen copies behind and kept them there after the work had been
+# merged. Once a node's PR is merged on the forge, the copy on disk is pure cost.
+#
+# Three things keep a workspace alive, and each one is deliberate:
+#   * the node is not merged — a failed one is exactly what `reset` and a human
+#     go and read, so only merged nodes are ever disposed;
+#   * its tree still holds uncommitted or untracked changes — the forge cannot
+#     have what was never committed, so that workspace is kept and said so;
+#   * --keep-workspaces / `set --workspace-cleanup off`.
+#
+# The third argument is how much the caller is overriding. Empty is the
+# automatic path at a merge and overrides nothing. `explicit` is `sweep`: the
+# operator asked for the disk back, so the standing preference not to clean up
+# automatically no longer applies. `force` is `sweep --force` and also waives
+# the uncommitted-changes guard. Nothing waives the first rule.
+dispose_workspace() {
+  local dir="$1" id="$2" force="${3:-}" wt driver out disposed reason
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] || return 0
+  [ -n "$force" ] || workspace_cleanup_on "$dir" || return 0
+
+  if [ "$force" != "force" ] && [ -d "$wt" ] \
+    && [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+    log_line "$dir" "$id workspace kept at $wt — it still holds uncommitted changes"
+    printf 'workspace_kept=%s\n' "$id"
+    return 0
+  fi
+
+  harvest_node "$dir" "$id"
+  driver="$(meta_get "$dir" driver)"
+  out="$(bash "$HOOK_DIR/driver-$driver.sh" dispose "$id" --state "$dir" --worktree "$wt" 2>/dev/null || true)"
+  disposed="$(printf '%s' "$out" | sed -n 's/^disposed=//p' | head -1)"
+  if [ "$disposed" = "1" ]; then
+    # Cleared, not left pointing at a directory that is gone: every reader of
+    # this column guards on the path existing, and a stale one reads as a
+    # workspace that vanished rather than one that was deliberately freed.
+    node_set "$dir" "$id" 7 ""
+    log_line "$dir" "$id workspace removed ($wt) — reports harvested to $dir/artifacts/$id"
+    printf 'workspace_freed=%s\n' "$id"
+  else
+    reason="$(printf '%s' "$out" | sed -n 's/^reason=//p' | head -1)"
+    log_line "$dir" "$id workspace kept at $wt — ${reason:-the driver removed nothing}"
+    printf 'workspace_kept=%s\n' "$id"
+  fi
+}
+
+poll_usage() {
+  echo "usage: graph.sh poll [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
+}
+
+SETTLE_MERGED=0
+SETTLE_AWAITING=0
+SETTLE_CLOSED=0
+
+# The forge gate. A landed node has finished its pipeline and opened its PR; what
+# happens next happens on the forge, where a human reviews and merges. This reads
+# that outcome and nothing else — it never merges, never pushes, never verifies.
+#
+# A PR closed without merging is a decision, not a pause: leaving the node landed
+# would hold every dependent behind a merge that is never coming.
+settle_landed() {
+  local dir="$1" gated=1 id probe rest rest2 state number url armed
+  SETTLE_MERGED=0
+  SETTLE_AWAITING=0
+  SETTLE_CLOSED=0
+  forge_gate_on "$dir" || gated=0
+
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+
+    if [ "$gated" -eq 0 ]; then
+      pr_status_set "$dir" "$id" "" "no-forge" "" "no"
+      transition "$dir" "$id" landed merged
+      meta_set "$dir" last_merged "$id"
+      log_line "$dir" "$id merged — no forge gate here (node PRs off, no forge client, or no remote)"
+      dispose_workspace "$dir" "$id"
+      printf 'merged=%s\n' "$id"
+      SETTLE_MERGED=$((SETTLE_MERGED + 1))
+      continue
+    fi
+
+    probe="$(pr_probe "$dir" "$id")"
+    state="${probe%%	*}"
+    rest="${probe#*	}"
+    number="${rest%%	*}"
+    rest2="${rest#*	}"
+    url="${rest2%%	*}"
+    armed="${rest2#*	}"
+    pr_status_set "$dir" "$id" "$number" "$state" "$url" "$armed"
+
+    case "$state" in
+      MERGED)
+        transition "$dir" "$id" landed merged
+        meta_set "$dir" last_merged "$id"
+        log_line "$dir" "$id PR #$number merged on the forge — its dependents are free"
+        dispose_workspace "$dir" "$id"
+        printf 'merged=%s\n' "$id"
+        SETTLE_MERGED=$((SETTLE_MERGED + 1))
+        ;;
+      CLOSED)
+        node_set "$dir" "$id" 6 failed
+        node_set "$dir" "$id" 10 ""
+        hold_node "$dir" "$id" "PR #$number closed on the forge without merging"
+        log_line "$dir" "$id → failed: PR #$number was closed without being merged"
+        printf 'pr_closed=%s\n' "$id"
+        SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
+        ;;
+      none)
+        log_line "$dir" "$id landed but the forge reports no PR for $(node_field "$dir" "$id" 8)"
+        printf 'pr_missing=%s\n' "$id"
+        SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
+        ;;
+      *)
+        if [ "$armed" != "yes" ] && [ "$(merge_policy_of "$dir")" = "graph" ]; then
+          local mstate
+          mstate="$(pr_merge_state "$dir" "$id")"
+          pr_status_set "$dir" "$id" "$number" "$state" "$url" "$armed" "$mstate"
+          case "$mstate" in
+            CLEAN)
+              if pr_try_merge "$dir" "$id"; then
+                pr_status_set "$dir" "$id" "$number" "MERGED" "$url" "$armed" "$mstate"
+                transition "$dir" "$id" landed merged
+                meta_set "$dir" last_merged "$id"
+                log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN) — its dependents are free"
+                dispose_workspace "$dir" "$id"
+                printf 'merged=%s\n' "$id"
+                SETTLE_MERGED=$((SETTLE_MERGED + 1))
+                continue
+              fi
+              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed — see pr-$id.log"
+              ;;
+            DIRTY)
+              log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
+              ;;
+            UNSTABLE)
+              log_line "$dir" "$id PR #$number has failing checks (UNSTABLE) — never merged red; needs the CI fixed"
+              ;;
+          esac
+        fi
+        printf 'awaiting_merge=%s\n' "$id"
+        SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
+        ;;
+    esac
+  done < <(nodes_with_status "$dir" landed)
+}
+
+# What "this worker is still working" actually looks like on disk.
+#
+# The row count of dispatch-log.md was the whole signal, and it only moves when a
+# phase is DISPATCHED. Measured live: a develop that ran 3m23s appended nothing,
+# and the post-gate sync-and-open-the-PR step appends nothing at all — so the two
+# longest stretches of a run read exactly like a dead worker, and both were
+# killed there. Every artifact the pipeline writes counts here, and so does the
+# working tree, which is the only thing moving while develop is implementing.
+node_fingerprint() {
+  local wt="$1" id="$2" run_dir="$1/.context/ship-run/$2"
+  printf '%s|%s|%s' \
+    "$(awk 'END { print NR + 0 }' "$run_dir/dispatch-log.md" 2>/dev/null || echo 0)" \
+    "$(find "$run_dir" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | cksum | awk '{print $1 "-" $2}')" \
+    "$( { git -C "$wt" status --porcelain 2>/dev/null; git -C "$wt" diff HEAD --numstat 2>/dev/null; } | cksum | awk '{print $1 "-" $2}')"
+}
+
+# The completion signal, independent of anything a worker chooses to report.
+#
+# A worker can forget to send a message; it cannot forget to have left
+# homolog-approved.txt on disk — pipeline.sh writes that itself, in bash, when
+# the run reaches done. So the graph observes the artifact instead of trusting a
+# handshake. Progress is node_fingerprint: every artifact the pipeline writes
+# plus the working tree it is writing them from. A node is surfaced only once it
+# has gone --stall-max consecutive polls AND --stall-after seconds without
+# touching any of it — polls alone measure the coordinator's turn latency, not
+# the worker's silence, and taking them for the same thing killed two healthy
+# nodes 45 seconds into a develop phase.
+cmd_poll() {
+  local feature="" stall_max=3 stall_after=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --stall-max) stall_max="$2"; shift 2 ;;
+      --stall-after) stall_after="$2"; shift 2 ;;
+      -h|--help) poll_usage; exit 0 ;;
+      *) poll_usage; exit 1 ;;
+    esac
+  done
+  case "$stall_max" in ''|*[!0-9]*) die "poll: --stall-max must be a positive integer: $stall_max" ;; esac
+  if [ -n "$stall_after" ]; then
+    case "$stall_after" in ''|*[!0-9]*) die "poll: --stall-after must be a positive integer (seconds): $stall_after" ;; esac
+  fi
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  [ -n "$stall_after" ] || stall_after="$(stall_after_of "$dir")"
+
+  local id wt fp rows prev stalls since quiet_for now landed=0 stalled=0 working=0
+  now="$(date +%s)"
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    wt="$(node_field "$dir" "$id" 7)"
+    [ -n "$wt" ] && [ -d "$wt" ] || continue
+
+    if [ -f "$wt/.context/ship-run/$id/homolog-approved.txt" ]; then
+      seal_workspace "$dir" "$id"
+      transition "$dir" "$id" "in_flight" landed
+      rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+      printf 'landed=%s\n' "$id"
+      landed=$((landed + 1))
+      continue
+    fi
+
+    # The pipeline's own verdict that this node cannot proceed (a plan that
+    # failed validation on every replan, an aborted dependency gate). Read from
+    # the artifact, like completion: the worker does not get to report it, and
+    # the graph does not wait three polls to notice it.
+    if [ -f "$wt/.context/ship-run/$id/node-failed.txt" ]; then
+      local nf_reason
+      nf_reason="$(head -1 "$wt/.context/ship-run/$id/node-failed.txt")"
+      bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+      node_set "$dir" "$id" 6 failed
+      node_set "$dir" "$id" 10 ""
+      rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+      log_line "$dir" "$id → failed: ${nf_reason:-its pipeline stopped} (reported by the node's own pipeline)"
+      printf 'failed=%s\n' "$id"
+      continue
+    fi
+
+    # No dispatch-log.md at all means the pipeline never ran a single phase in
+    # this workspace — the worker was never started, not "started and slow".
+    # The two are indistinguishable by row count alone (both read 0), and
+    # conflating them is what turns a worker that was never launched into a
+    # silent half-hour wait. Recorded so `next` can name the real cause.
+    if [ ! -f "$wt/.context/ship-run/$id/dispatch-log.md" ]; then
+      printf 'never-started\n' > "$dir/why-$id.txt"
+    else
+      rm -f "$dir/why-$id.txt"
+    fi
+
+    fp="$(node_fingerprint "$wt" "$id")"
+    prev="$(cat "$dir/progress-$id.txt" 2>/dev/null || true)"
+    if [ "$fp" != "$prev" ]; then
+      printf '%s\n' "$fp" > "$dir/progress-$id.txt"
+      printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
+      rm -f "$dir/stall-$id.txt"
+      # Logged, not just printed: graph-log.md is the only place progress is
+      # visible from outside the orchestrator's turn, and a silent poll is
+      # indistinguishable from a stuck run for whoever is watching.
+      rows="$(awk 'END { print NR + 0 }' "$wt/.context/ship-run/$id/dispatch-log.md" 2>/dev/null || echo 0)"
+      log_line "$dir" "$id working — $((rows > 3 ? rows - 3 : 0)) phase(s) dispatched"
+      printf 'working=%s\n' "$id"
+      working=$((working + 1))
+      continue
+    fi
+
+    # Quiet since when, in seconds — not in polls. The poll count alone is a
+    # measure of how fast the coordinator can take a turn, not of how long the
+    # worker has been silent, and the two came apart badly enough to kill two
+    # healthy nodes in 45 seconds.
+    since="$(cat "$dir/progress-at-$id.txt" 2>/dev/null || true)"
+    case "$since" in ''|*[!0-9]*) since="$now"; printf '%s\n' "$now" > "$dir/progress-at-$id.txt" ;; esac
+    quiet_for=$(( now - since ))
+    [ "$quiet_for" -ge 0 ] || quiet_for=0
+
+    stalls=$(( $(cat "$dir/stall-$id.txt" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$stalls" > "$dir/stall-$id.txt"
+    # A never-started node gets the shorter of the two windows: re-dispatching it
+    # is cheap and it has nothing to lose, but it still gets a floor — a worker
+    # reading its spec writes nothing either, and 80s from claim to the first row
+    # is normal on a healthy node.
+    local quiet_gate="$stall_after"
+    if [ -f "$dir/why-$id.txt" ] && [ "$quiet_gate" -gt "$NEVER_STARTED_AFTER" ]; then
+      quiet_gate="$NEVER_STARTED_AFTER"
+    fi
+    if [ "$stalls" -ge "$stall_max" ] && [ "$quiet_for" -ge "$quiet_gate" ]; then
+      if [ -f "$dir/why-$id.txt" ]; then
+        # Never started is not "stuck": the dispatch did not take. A fresh
+        # dispatch is the fix, and the graph can issue one itself by returning
+        # the node to the frontier — bounded by the attempt cap.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+        if [ "$(node_field "$dir" "$id" 9)" -lt "$(max_attempts_of "$dir")" ]; then
+          retry_node "$dir" "$id" "worker never started across $stalls polls — re-dispatching"
+          printf 'retried=%s\n' "$id"
+        else
+          node_set "$dir" "$id" 6 failed
+          node_set "$dir" "$id" 10 ""
+          hold_node "$dir" "$id" "worker never started on $(node_field "$dir" "$id" 9) attempt(s)"
+          rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt"
+          log_line "$dir" "$id → failed: worker never started on $(node_field "$dir" "$id" 9) attempt(s) (attempt cap reached)"
+          printf 'failed=%s\n' "$id"
+        fi
+      elif [ ! -f "$dir/resumed-$id.txt" ]; then
+        # A worker that stopped advancing has, every time it was measured, ended
+        # its turn: a wait it never returned from, a question it thinks is still
+        # open. One nudge through the driver restarts it from its own state file
+        # — its counters and ledger are on disk, so nothing is redone. Once.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" resume "$id" \
+          "No phase progress observed — re-run pipeline.sh next $id and continue from its state." \
+          --state "$dir" >/dev/null 2>&1 || true
+        printf 'resumed\n' > "$dir/resumed-$id.txt"
+        printf '0\n' > "$dir/stall-$id.txt"
+        # The nudge is only worth anything if the worker gets a whole window to
+        # answer it. Leaving the quiet clock where it was means the next three
+        # polls fail the node no matter what it does — which is the loop this
+        # whole change exists to break.
+        printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
+        log_line "$dir" "$id quiet for $stalls polls — worker resumed once through the driver"
+        printf 'resumed=%s\n' "$id"
+      else
+        # Resumed once already and still not moving: the node is failed, its
+        # workspace kept, and the run goes on without it. Reported at done.
+        bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+        node_set "$dir" "$id" 6 failed
+        node_set "$dir" "$id" 10 ""
+        rm -f "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/resumed-$id.txt"
+        log_line "$dir" "$id → failed: no phase progress across $stalls polls after a resume (workspace kept: $wt)"
+        printf 'failed=%s\n' "$id"
+      fi
+    else
+      log_line "$dir" "$id quiet (${quiet_for}s of ${quiet_gate}s with nothing written; $stalls/$stall_max polls)"
+      printf 'quiet=%s\n' "$id"
+    fi
+  done < <(nodes_with_status "$dir" in_flight)
+
+  settle_landed "$dir"
+
+  render_json "$dir"
+  printf 'summary=landed:%s working:%s stalled:%s merged:%s awaiting_merge:%s\n' \
+    "$landed" "$working" "$stalled" "$SETTLE_MERGED" "$SETTLE_AWAITING"
+}
+
+cmd_land() {
+  local feature="" id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$id" ]; then id="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "land: <task> is required"
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  seal_workspace "$dir" "$id"
+  transition "$dir" "$id" "in_flight" landed
+  render_json "$dir"
+  printf 'landed=%s\n' "$id"
+}
+
+cmd_complete() {
+  local feature="" id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$id" ]; then id="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "complete: <task> is required"
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  # The manual counterpart of the forge gate: a node whose work reached the base
+  # by a route the forge cannot report (merged by hand, landed in another PR).
+  transition "$dir" "$id" "landed" merged
+  meta_set "$dir" last_merged "$id"
+  dispose_workspace "$dir" "$id"
+  render_json "$dir"
+  printf 'completed=%s\n' "$id"
+}
+
+cmd_fail() {
+  local feature="" id="" reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$id" ]; then id="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "fail: <task> is required"
+  [ -n "$reason" ] || die "fail: --reason <r> is required"
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  node_exists "$dir" "$id" || die "unknown node: $id"
+  node_set "$dir" "$id" 6 failed
+  node_set "$dir" "$id" 10 ""
+  # A failure a person asked for is never retried behind their back.
+  hold_node "$dir" "$id" "failed by the operator: $reason"
+  log_line "$dir" "$id → failed: $reason"
+  render_json "$dir"
+  printf 'failed=%s\n' "$id"
+  printf 'reason=%s\n' "$reason"
+}
+
+# The reply half of the node → coordinator channel. Writing the answer clears the
+# question in the same call, so a node can never be handed an answer to a gate it
+# has already moved past.
+cmd_answer() {
+  local feature="" id="" answer=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *)
+        if [ -z "$id" ]; then id="$1"
+        elif [ -z "$answer" ]; then answer="$1"
+        else usage; exit 1; fi
+        shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "answer: <task> is required"
+  [ -n "$answer" ] || die "answer: <answer> is required"
+  local dir wt scratch
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  node_exists "$dir" "$id" || die "unknown node: $id"
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && [ -d "$wt" ] || die "answer: $id has no workspace yet"
+  scratch="$wt/.context/ship-run/$id"
+  [ -f "$scratch/ask.md" ] || die "answer: $id has no pending question"
+  printf '%s\n' "$answer" > "$scratch/answer.txt"
+  rm -f "$scratch/ask.md"
+  # The stall counter and the quiet clock have both been running the whole time
+  # the node waited on this, so clear them — otherwise the answer arrives and the
+  # cap kills the node anyway.
+  rm -f "$dir/stall-$id.txt"
+  date +%s > "$dir/progress-at-$id.txt"
+  log_line "$dir" "$id answered: $answer"
+  # The file alone wakes nobody: the worker ended its turn when it asked. Measured
+  # live, three nodes sat on an answered question for 15+ minutes each until a
+  # human typed into their panes. The driver is the only thing that can reach it.
+  local resumed
+  resumed="$(bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" resume "$id" \
+    "The coordinator answered your question ($answer) — it is in $scratch/answer.txt. Re-run pipeline.sh next $id and continue." \
+    --state "$dir" 2>/dev/null || true)"
+  printf 'answered=%s\n' "$id"
+  printf 'answer=%s\n' "$answer"
+  printf 'resumed=%s\n' "$(printf '%s' "$resumed" | sed -n 's/^resumed=//p' | head -1)"
+  printf '%s\n' "$resumed" | grep '^instruction=' || true
+  printf 'note=The node consumes it on its next pipeline.sh next and resumes.\n'
+}
+
+reset_usage() {
+  echo "usage: graph.sh reset <task>... | --all [--feature <f>]" >&2
+  echo "  returns failed node(s) to pending so they can be dispatched again" >&2
+}
+
+# `failed` used to be terminal, and a run frozen by it had exactly two ways out:
+# abandon it, or hand-edit nodes.tsv — which the graph forbids because it is the
+# only writer of its own state. That is the wrong shape for the common case: a
+# node is failed most often because the operator STOPPED it (abort marks every
+# in-flight node failed), and stopping work is not the same as abandoning it.
+# reset is the missing inverse — it puts the node back on the frontier, which
+# also unfreezes admission for everything else.
+#
+# The retry is a FRESH dispatch, not a resume: the worker behind a failed node is
+# gone, and the driver contract only ever creates a new workspace. The old one is
+# kept on disk and its path recorded in the log before the columns are cleared,
+# so whatever partial work it holds is still reachable by hand.
+cmd_reset() {
+  local feature="" all=0 ids=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --all) all=1; shift ;;
+      -h|--help) reset_usage; exit 0 ;;
+      -*) reset_usage; exit 1 ;;
+      *) ids="$ids $1"; shift ;;
+    esac
+  done
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  if [ "$all" -eq 1 ]; then
+    [ -z "${ids# }" ] || die "reset: --all takes no task ids"
+    ids="$(nodes_with_status "$dir" failed | tr '\n' ' ')"
+    [ -n "${ids# }" ] || die "reset: no failed node to reset"
+  fi
+  [ -n "${ids# }" ] || { reset_usage; exit 1; }
+
+  # Validate every id before touching anything: a typo in the third of three ids
+  # must not leave the graph half-reset.
+  local id cur
+  for id in $ids; do
+    node_exists "$dir" "$id" || die "reset: unknown node: $id"
+    cur="$(node_field "$dir" "$id" 6)"
+    [ "$cur" = "failed" ] || die "reset: $id is '$cur', not 'failed' — only a failed node can be reset (stop a live one with: graph.sh abort)"
+  done
+
+  local n=0
+  for id in $ids; do
+    retry_node "$dir" "$id" "reset by the operator"
+    printf 'reset=%s\n' "$id"
+    n=$((n + 1))
+  done
+
+  render_json "$dir"
+  printf 'count=%s\n' "$n"
+  printf 'remaining_failed=%s\n' "$(count_status "$dir" failed)"
+  printf 'note=run graph.sh next to dispatch them again — the retry gets a fresh workspace\n'
+}
+
+# --- conflicts ---------------------------------------------------------------
+
+footprint_delta() {
+  local old="$1" new="$2" old_n new_n added removed out=""
+  old_n="$(printf '%s\n' "$old" | tr ',' '\n' | sed '/^$/d' | sort -u)"
+  new_n="$(printf '%s\n' "$new" | tr ',' '\n' | sed '/^$/d' | sort -u)"
+  added="$(comm -13 <(printf '%s\n' "$old_n") <(printf '%s\n' "$new_n"))"
+  removed="$(comm -23 <(printf '%s\n' "$old_n") <(printf '%s\n' "$new_n"))"
+  while IFS= read -r f; do [ -n "$f" ] && out="${out:+$out,}+$f"; done <<< "$added"
+  while IFS= read -r f; do [ -n "$f" ] && out="${out:+$out,}-$f"; done <<< "$removed"
+  printf '%s' "$out"
+}
+
+# Recomputes every conflict edge from the real state. Called by `conflicts`
+# and by `next` itself: an edge recorded against a holder that has since merged
+# is stale, and a `next` that trusted it reported "deadlock" over a graph whose
+# frontier was free — measured live, one missed `conflicts` call was enough.
+# Prints refreshed=<n> and blocked=<n>.
+refresh_conflicts() {
+  local dir="$1" base
+  base="$(meta_get "$dir" base_branch)"
+
+  # Real footprint beats declared footprint. If develop touched more than the
+  # spec predicted, the neighbour that shares those files must not be admitted —
+  # this is the edge that appears by evidence rather than by prediction.
+  local id wt real prev refreshed=0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    wt="$(node_field "$dir" "$id" 7)"
+    [ -n "$wt" ] && [ -d "$wt" ] || continue
+    real="$(git -C "$wt" diff --name-only "$base"...HEAD 2>/dev/null | paste -sd, - || true)"
+    [ -n "$real" ] || continue
+    prev="$(node_field "$dir" "$id" 5)"
+    [ "$prev" != "$real" ] || continue
+    node_set "$dir" "$id" 5 "$real"
+    log_line "$dir" "$id footprint delta: $(footprint_delta "$prev" "$real")"
+    refreshed=$((refreshed + 1))
+  done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed)
+
+  # A landed node still counts as active: its PR is open, so its files are not
+  # on the base yet and a neighbour touching them would be writing against a
+  # version of that file the forge is about to replace.
+  local active blocked_count=0 cand cand_files act act_files
+  active="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed; } | sort )"
+
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    cand_files="$(node_field "$dir" "$cand" 5)"
+    local hit=""
+    while IFS= read -r act; do
+      [ -n "$act" ] || continue
+      act_files="$(node_field "$dir" "$act" 5)"
+      if files_overlap "$cand_files" "$act_files"; then hit="$act"; break; fi
+    done <<< "$active"
+    if [ "$(node_field "$dir" "$cand" 10)" != "$hit" ]; then
+      node_set "$dir" "$cand" 10 "$hit"
+      [ -n "$hit" ] && log_line "$dir" "$cand blocked_by_conflict=$hit"
+    fi
+    [ -n "$hit" ] && blocked_count=$((blocked_count + 1))
+  done < <(nodes_with_status "$dir" pending; nodes_with_status "$dir" ready)
+
+  printf 'refreshed=%s\n' "$refreshed"
+  printf 'blocked=%s\n' "$blocked_count"
+}
+
+cmd_conflicts() {
+  local feature=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  refresh_conflicts "$dir"
+  render_json "$dir"
+}
+
+# --- iter --------------------------------------------------------------------
+
+cmd_iter() {
+  local feature="" name="" max=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --max) max="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage; exit 1 ;;
+      *) if [ -z "$name" ]; then name="$1"; else usage; exit 1; fi; shift ;;
+    esac
+  done
+  [ -n "$name" ] || die "iter: <counter-name> is required"
+  valid_id "$name" || die "iter: invalid counter name (allowed: [a-zA-Z0-9_-]): $name"
+  if [ -n "$max" ]; then
+    case "$max" in ''|*[!0-9]*) die "iter: --max must be a positive integer: $max" ;; esac
+  fi
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  mkdir -p "$dir"
+
+  local counter_file="$dir/iteration-$name.txt" current=0
+  [ -f "$counter_file" ] && current="$(cat "$counter_file")"
+  local next=$((current + 1))
+  printf '%s\n' "$next" > "$counter_file"
+
+  printf 'count=%s\n' "$next"
+  if [ -n "$max" ] && [ "$next" -gt "$max" ]; then
+    exit 2
+  fi
+}
+
+# --- status ------------------------------------------------------------------
+
+abort_usage() {
+  echo "usage: graph.sh abort [--feature <f>] [--reason <r>]" >&2
+  echo "  stops every in-flight node's worker and marks it failed; workspaces are kept" >&2
+  echo "  (a stopped node is not lost: graph.sh reset puts it back on the frontier)" >&2
+}
+
+# Killing the orchestrator does NOT stop the workers it dispatched: traps do not
+# run on SIGKILL, and once a temporary repo is de-registered the workers vanish
+# from the runtime's worktree listing while still running and still billing.
+# This is the deliberate way out — stop the agents, record why, keep the
+# workspaces so the work can be inspected before anything is thrown away.
+cmd_abort() {
+  local feature="" reason="aborted by the operator"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
+      -h|--help) abort_usage; exit 0 ;;
+      *) abort_usage; exit 1 ;;
+    esac
+  done
+
+  local dir driver
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  driver="$(meta_get "$dir" driver)"
+
+  local id stopped=0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    bash "$HOOK_DIR/driver-$driver.sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+    node_set "$dir" "$id" 6 failed
+    hold_node "$dir" "$id" "$reason"
+    log_line "$dir" "$id → failed: $reason (worker stopped)"
+    printf 'stopped=%s\n' "$id"
+    stopped=$((stopped + 1))
+  done < <(nodes_with_status "$dir" in_flight)
+
+  render_json "$dir"
+  printf 'aborted=%s\n' "$stopped"
+  printf 'note=workspaces kept; run status to see them\n'
+}
+
+sweep_usage() {
+  echo "usage: graph.sh sweep [--feature <f>] [--force]" >&2
+  echo "  removes the workspace of every node whose PR is already merged" >&2
+  echo "  --force also removes one whose tree still holds uncommitted changes" >&2
+}
+
+# The catch-up half of the lifecycle. Disposal happens at the merge, node by
+# node, but a graph that ran before this existed, one whose driver was down at
+# the moment a node merged, or one started with --keep-workspaces still has the
+# copies on disk — and they are what fills it. This frees them in one call.
+#
+# Only merged nodes, always: a failed node's workspace is the record of what
+# went wrong, and --force does not reach it.
+cmd_sweep() {
+  local feature="" force="explicit"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --force) force="force"; shift ;;
+      -h|--help) sweep_usage; exit 0 ;;
+      *) sweep_usage; exit 1 ;;
+    esac
+  done
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  local id freed=0 kept=0 out
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    [ -n "$(node_field "$dir" "$id" 7)" ] || continue
+    out="$(dispose_workspace "$dir" "$id" "$force")"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if printf '%s' "$out" | grep -q '^workspace_freed='; then
+      freed=$((freed + 1))
+    else
+      kept=$((kept + 1))
+    fi
+  done < <(nodes_with_status "$dir" merged)
+
+  render_json "$dir"
+  printf 'swept=%s\n' "$freed"
+  printf 'kept=%s\n' "$kept"
+  printf 'note=only merged nodes are swept — a failed node keeps its workspace for inspection\n'
+}
+
+cmd_status() {
+  local feature="" as_json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  if [ "$as_json" -eq 1 ]; then
+    cat "$dir/graph.json"
+    return 0
+  fi
+
+  printf 'feature=%s driver=%s mode=%s base=%s max_in_flight=%s awaiting_merge=%s\n' \
+    "$(meta_get "$dir" feature)" "$(meta_get "$dir" driver)" "$(meta_get "$dir" mode)" \
+    "$(meta_get "$dir" base_branch)" "$(meta_get "$dir" max_in_flight)" \
+    "$(count_status "$dir" landed)"
+  printf 'workspaces: %s\n' "$(meta_get "$dir" driver_workspaces)"
+  printf '\n%-16s %-10s %-10s %-10s %s\n' "node" "status" "pr" "blocked-by" "deps"
+  local sid
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    printf '%-16s %-10s %-10s %-10s %s\n' "$sid" "$(node_field "$dir" "$sid" 6)" \
+      "$(pr_status_get "$dir" "$sid" 3)" \
+      "$(printf '%s' "$(node_field "$dir" "$sid" 10)" | sed 's/^$/-/')" \
+      "$(printf '%s' "$(node_field "$dir" "$sid" 4)" | sed 's/^$/-/')"
+  done < <(awk -F'\t' '{ print $1 }' "$dir/nodes.tsv")
+}
+
+# --- next --------------------------------------------------------------------
+
+NEXT_BODY=""
+
+next_body_add() {
+  NEXT_BODY="${NEXT_BODY}$1
+"
+}
+
+# `driver`/`workspaces` ride on every emission so the runtime in force is never
+# something the operator has to go and ask for. A graph silently running on the
+# driver that opens nothing is the failure this whole path exists to prevent;
+# printing it each turn is what makes that visible the first time instead of
+# hours later.
+next_emit() {
+  local state="$1" action="$2" inflight="$3" frontier="$4" log="$5"
+  printf 'state=%s\naction=%s\ninflight=%s\nfrontier=%s\ndriver=%s\nworkspaces=%s\nlog=%s\ninstruction:\n%s\n' \
+    "$state" "$action" "$inflight" "$frontier" "${NEXT_DRIVER:-}" "${NEXT_DRIVER_WORKSPACES:-}" "$log" "$NEXT_BODY"
+  exit 0
+}
+
+cmd_next() {
+  local feature=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+
+  # Before anything reads the driver: a graph that fell back once must not stay
+  # fallen back forever.
+  reelect_driver "$dir"
+
+  local driver max_in_flight log_path
+  driver="$(meta_get "$dir" driver)"
+  NEXT_DRIVER="$driver"
+  NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
+  max_in_flight="$(meta_get "$dir" max_in_flight)"
+  log_path="$dir/graph-log.md"
+
+  # An unreadable slot count must not look like a deadlock. Empty is 0 in bash
+  # arithmetic, so a meta.tsv missing this key silently yields zero free slots
+  # and `next` reports "every remaining node is blocked" over a graph whose
+  # nodes are all free — sending the operator hunting for a dependency cycle
+  # that does not exist.
+  case "$max_in_flight" in
+    ''|*[!0-9]*) log_line "$dir" "max_in_flight unreadable ('$max_in_flight') — falling back to 1"; max_in_flight=1 ;;
+    *) [ "$max_in_flight" -ge 1 ] || max_in_flight=1 ;;
+  esac
+
+  [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "next: meta names driver '$driver' but $HOOK_DIR/driver-$driver.sh does not exist — fix it with: graph.sh set --driver <name>"
+
+  local DRIVER_SH="$HOOK_DIR/driver-$driver.sh"
+
+  # A node that failed on its own (stalled, never started, its pipeline gave
+  # up) gets a fresh dispatch while it has attempts left. One that failed by a
+  # person's decision carries a hold marker and waits for reset.
+  local rid
+  while IFS= read -r rid; do
+    [ -n "$rid" ] || continue
+    [ -f "$dir/hold-$rid.txt" ] && continue
+    [ "$(node_field "$dir" "$rid" 9)" -lt "$(max_attempts_of "$dir")" ] || continue
+    retry_node "$dir" "$rid" "automatic retry $(( $(node_field "$dir" "$rid" 9) + 1 )) of $(max_attempts_of "$dir")"
+  done < <(nodes_with_status "$dir" failed)
+
+  local inflight landed failed total merged_n
+  inflight="$(count_status "$dir" in_flight)"
+  landed="$(count_status "$dir" landed)"
+  failed="$(count_status "$dir" failed)"
+  merged_n="$(count_status "$dir" merged)"
+  total="$(awk 'END { print NR }' "$dir/nodes.tsv")"
+
+  # With no forge to report a merge, a landed node would sit there forever and
+  # every dependent behind it with it. Settling those here — not only in `poll` —
+  # keeps a run with no remote moving without inventing a merge that never
+  # happened: nothing is pushed, nothing is integrated, the node is simply not
+  # held behind a signal this environment cannot produce.
+  if [ "$landed" -gt 0 ] && ! forge_gate_on "$dir"; then
+    settle_landed "$dir" >/dev/null
+    landed="$(count_status "$dir" landed)"
+    merged_n="$(count_status "$dir" merged)"
+  fi
+
+  # A failed node no longer freezes the run. Its dependents are held by the
+  # dependency edge itself (they need it MERGED), and everything else keeps
+  # going; the failures are reported at the end, where `reset` can retry them.
+  # Freezing was measured as the opposite of what an unattended run needs: one
+  # bad node parked eighty good ones behind a question nobody was there to answer.
+
+  # Stale edges make false deadlocks. Refreshed here, not only on an explicit
+  # `conflicts` call the executor may skip.
+  refresh_conflicts "$dir" >/dev/null
+
+  # --- frontier --------------------------------------------------------------
+  local slots=$((max_in_flight - inflight))
+  # Batch admission: a freed slot stays empty until the whole set has closed.
+  [ "$(admission_of "$dir")" = "batch" ] && [ "$inflight" -gt 0 ] && slots=0
+  local frontier="" cand cand_files picked_files=""
+  if [ "$slots" -gt 0 ]; then
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      [ "$slots" -gt 0 ] || break
+      deps_satisfied "$dir" "$cand" || continue
+      [ -z "$(node_field "$dir" "$cand" 10)" ] || continue
+      cand_files="$(node_field "$dir" "$cand" 5)"
+      # Lowest id wins the slot; the loser stays pending with the winner recorded
+      # in blocked_by_conflict — a scheduling decision, never an error state.
+      if files_overlap "$cand_files" "$picked_files"; then
+        node_set "$dir" "$cand" 10 "$(printf '%s' "$frontier" | awk '{print $NF}')"
+        continue
+      fi
+      frontier="$frontier $cand"
+      picked_files="$picked_files${picked_files:+,}$cand_files"
+      slots=$((slots - 1))
+    done < <(nodes_with_status "$dir" pending; nodes_with_status "$dir" ready)
+  fi
+  frontier="${frontier# }"
+  render_json "$dir"
+
+  if [ -n "$frontier" ]; then
+    # Before any workspace is cut, not after: the whole point is what the next
+    # node opens on.
+    sync_base "$dir"
+    local t repo prompt default_repo
+    # A node carries a repo only in multi-repo graphs. Single-repo runs fall back
+    # to the graph's own, so a coordinator outside a managed workspace still
+    # resolves one instead of leaving the driver to guess from its cwd.
+    default_repo="$(meta_get "$dir" repo)"
+    for t in $frontier; do
+      repo="$(node_field "$dir" "$t" 2)"
+      [ -n "$repo" ] || repo="$default_repo"
+      prompt="/ship:run $t"
+      next_body_add "- bash \"$DRIVER_SH\" dispatch $t \"$prompt\" --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\"${repo:+ --repo \"$repo\"}"
+      # Not every driver can start the worker by itself. Some prepare the
+      # workspace and hand back an `instruction=` line describing the one step
+      # only the caller can take. Leaving that step implicit is how a node gets
+      # claimed in_flight with nothing running behind it: the workspace exists,
+      # the branch exists, and the graph then waits on a worker that was never
+      # started. Making it an ordered, numbered step is the fix.
+      next_body_add "- if that dispatch printed an \`instruction=\` line, CARRY IT OUT NOW, before the next call — for this driver that line is what actually starts the worker, and the node is not running until you have"
+      # ok=0 means the driver could not observe the worker working. Claiming on
+      # that is how a node goes in_flight with an idle agent behind it.
+      next_body_add "- if that dispatch printed \`ok=0\`, STOP for this node: do not collect it and do not claim it — report the reason= line to the user"
+      next_body_add "- bash \"$DRIVER_SH\" collect $t --state \"$dir\" --base \"$(meta_get "$dir" base_branch)\"   → read worktree= and branch= from its output"
+      next_body_add "- bash \"$HOOK_DIR/graph.sh\" claim $t --worktree <worktree> --branch <branch>"
+    done
+    next_body_add "Dispatch ALL of the above in this turn. Do not start a node the instruction did not list."
+    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+    next_emit "frontier" "dispatch" "$inflight" "$frontier" "$((max_in_flight - inflight)) slot(s) free"
+  fi
+
+  # --- questions from the nodes ----------------------------------------------
+  # Checked before the stall cap on purpose: a node waiting on an answer makes no
+  # phase progress, so it reads as stalled and gets reported as stuck when in
+  # fact it asked something and is waiting for this.
+  if [ "$inflight" -gt 0 ]; then
+    local qid qwt qask asked=""
+    while IFS= read -r qid; do
+      [ -n "$qid" ] || continue
+      qwt="$(node_field "$dir" "$qid" 7)"
+      [ -n "$qwt" ] || continue
+      qask="$qwt/.context/ship-run/$qid/ask.md"
+      [ -f "$qask" ] || continue
+      asked="$asked $qid"
+      next_body_add "- $qid asks: $(grep -m1 '^question=' "$qask" | sed 's/^question=//') — full text in $qask"
+    done < <(nodes_with_status "$dir" in_flight)
+    if [ -n "${asked# }" ]; then
+      next_body_add "Read each ask.md above. Inside a graph the node's pipeline decides its own gates, so a question that still reaches here is one it could not decide from its artifacts: present it to the user in the artifact language."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that writes the answer and wakes the worker through the driver."
+      next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+    fi
+  fi
+
+  # --- wait ------------------------------------------------------------------
+  # A node that stopped advancing is handled inside poll: resumed once through
+  # the driver, then failed; one whose worker never started is returned to the
+  # frontier there. Nothing about a quiet node is left for a person here.
+  if [ "$inflight" -gt 0 ]; then
+    # The graph names what it is waiting FOR; the driver only knows how to
+    # block. pipeline.sh writes each of these in bash the moment it happens,
+    # while the runtime's worker_done is a message the worker sends when it gets
+    # round to it — measured 3m37s apart on a live node, a whole wait window
+    # spent listening to a channel that had nothing on it yet.
+    local wid wwt until_args=""
+    while IFS= read -r wid; do
+      [ -n "$wid" ] || continue
+      wwt="$(node_field "$dir" "$wid" 7)"
+      [ -n "$wwt" ] || continue
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/homolog-approved.txt\""
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/node-failed.txt\""
+      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\""
+    done < <(nodes_with_status "$dir" in_flight)
+    next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"$until_args   → blocks until a node finishes, fails or asks, until a worker reports, or until the wait window closes; a timeout is a checkpoint, not a failure"
+    next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
+    next_body_add "- bash \"$HOOK_DIR/graph.sh\" conflicts"
+    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+    next_emit "wait" "wait" "$inflight" "" "$inflight node(s) in flight"
+  fi
+
+  # --- landed: the forge has the ball ----------------------------------------
+  # Nothing here merges. Each landed node synced itself onto the base and opened
+  # its own PR from the workspace that implemented it — /ship:pr already armed
+  # GitHub's native auto-merge on it, since the gate that produced it was
+  # already green. A PR that is armed needs nobody: it merges itself once the
+  # forge's own required checks pass, so this only asks a human for the ones
+  # that are NOT armed (auto-merge could not be enabled — branch protection
+  # missing, etc.) or whose forge state this script cannot make sense of.
+  if [ "$landed" -gt 0 ]; then
+    local lid lstate lurl lnum larmed lmstate unarmed=""
+    next_body_add "These nodes finished and their PR targets $(meta_get "$dir" base_branch):"
+    while IFS= read -r lid; do
+      [ -n "$lid" ] || continue
+      lstate="$(pr_status_get "$dir" "$lid" 3)"
+      lnum="$(pr_status_get "$dir" "$lid" 2)"
+      lurl="$(pr_status_get "$dir" "$lid" 4)"
+      larmed="$(pr_status_get "$dir" "$lid" 5)"
+      lmstate="$(pr_status_get "$dir" "$lid" 6)"
+      next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}${lmstate:+ merge-state=$lmstate}"
+      [ "$larmed" = "yes" ] && continue
+      # Under merge-policy=graph an unarmed PR is the graph's to merge once the
+      # forge says CLEAN. A conflict (DIRTY) or red checks (UNSTABLE) will never
+      # get there by waiting, so those still need a person — waiting on them
+      # would park the graph with nothing to show for it.
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
+      unarmed="$unarmed $lid"
+    done < <(nodes_with_status "$dir" landed)
+    if [ -n "${unarmed# }" ]; then
+      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
+      next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
+      next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
+      next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
+    else
+      next_body_add "Every landed PR merges without a person: auto-merge is armed, or merge-policy=graph merges it once the forge reports it CLEAN."
+      next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → reads the real PR state from the forge and releases the dependents once one lands"
+      next_body_add "After it returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+      next_emit "landed" "wait" "$inflight" "" "$landed node(s) auto-merging on the forge"
+    fi
+  fi
+
+  # --- done ------------------------------------------------------------------
+  if [ "$merged_n" -eq "$total" ]; then
+    next_body_add "Every node's PR is merged into $(meta_get "$dir" base_branch)."
+    next_body_add "Present the batch homolog: for each node, $dir/artifacts/<task>/homolog-report.md (written by the deferred homolog, harvested when the node merged), in the artifact language."
+    if ! node_pr_on "$dir"; then
+      next_body_add "Then inform: node PRs were off, so each node's branch is still unmerged — run /ship:pr per branch when ready. NEVER auto-invoke /ship:pr."
+    fi
+    next_emit "done" "done" "0" "" "graph complete — $merged_n/$total nodes"
+  fi
+
+  # Nothing left that can run, and some of it failed: the run is over for
+  # everything that could finish. This is the one decision that is genuinely
+  # the operator's — retry the failed ones (reset) or accept the partial result.
+  if [ "$failed" -gt 0 ]; then
+    next_body_add "Every node that could run has: $merged_n merged, $failed failed after $(max_attempts_of "$dir") attempt(s) or by decision, $((total - merged_n - failed)) held behind a failed dependency."
+    next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its last workspace is kept."
+    next_body_add "Present the batch homolog for the merged nodes ($dir/artifacts/<task>/homolog-report.md) and the failed list with reasons, in the artifact language. Then STOP."
+    next_body_add "Mention once: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) puts a failed node back on the frontier with a fresh workspace, and bash \"$HOOK_DIR/graph.sh\" next continues the run."
+    next_emit "done" "done" "0" "" "graph finished — $merged_n merged, $failed failed of $total"
+  fi
+
+  # --- deadlock --------------------------------------------------------------
+  next_body_add "No node can advance: nothing in flight, nothing landed, and every remaining node is blocked."
+  next_body_add "Run \`bash \"$HOOK_DIR/graph.sh\" status\` and present it — a dependency cycle or a permanent conflict edge needs a human call."
+  next_emit "ask" "ask" "0" "" "deadlock — $merged_n/$total nodes merged"
+}
+
+# --- dispatch ----------------------------------------------------------------
+
+if [ $# -lt 1 ]; then
+  usage
+  exit 1
+fi
+
+SUBCOMMAND="$1"
+shift
+
+case "$SUBCOMMAND" in
+  init)      cmd_init "$@" ;;
+  set)       cmd_set "$@" ;;
+  next)      cmd_next "$@" ;;
+  claim)     cmd_claim "$@" ;;
+  land)      cmd_land "$@" ;;
+  poll)      cmd_poll "$@" ;;
+  complete)  cmd_complete "$@" ;;
+  fail)      cmd_fail "$@" ;;
+  answer)    cmd_answer "$@" ;;
+  reset)     cmd_reset "$@" ;;
+  abort)     cmd_abort "$@" ;;
+  sweep)     cmd_sweep "$@" ;;
+  conflicts) cmd_conflicts "$@" ;;
+  status)    cmd_status "$@" ;;
+  iter)      cmd_iter "$@" ;;
+  nodes)     cmd_nodes "$@" ;;
+  *)         usage; exit 1 ;;
+esac

@@ -91,8 +91,6 @@ Each finding: Heuristic ID `<engine>-<name>` (e.g. `mongo-write-concern`), Sever
 
 **Severity:** Critical = write-concern `w:0` (data-loss risk). High = missing indexes/scans/schema hurting perf under load. Medium = suboptimal config/schema, no immediate failure. Low = best-practice gaps.
 
-**Gate:** critical/high → **FAIL**; medium only → **WARN**; low/none only → **PASS**.
-
 ---
 
 ## 3. Write report
@@ -105,11 +103,7 @@ Each finding: Heuristic ID `<engine>-<name>` (e.g. `mongo-write-concern`), Sever
 
 ## 4. Return JSON summary
 
-Output as the **very last content** of the tool result (read directly by `ship:audit:run`, no re-read):
-
-```json
-{"audit":"database","gate":"<PASS|WARN|FAIL>","score":"<A|B|C|D|F>","counts":{"critical":0,"high":0,"medium":0,"low":0},"top_findings":[{"id":"<ID>","severity":"<sev>","title":"<title>","file":"<file:line>"}],"report_path":"ship/audits/database-<YYYY-MM-DD>.md"}
-```
+Emit per @ship/patterns/audit-summary-schema.md#schema-core with `audit=database` and `report_path=ship/audits/database-<YYYY-MM-DD>.md`, as the **very last content** of your response.
 
 
 ---

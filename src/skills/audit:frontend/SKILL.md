@@ -40,6 +40,7 @@ Use the Agent tool with `subagent_type: ship:ship-audit-frontend`. Pass all cont
 Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
+Findings gate script: @@ship/hooks/findings-gate.sh
 
 ## Stack
 Frontend: <framework>

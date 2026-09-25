@@ -57,6 +57,7 @@ Use the Agent tool with `subagent_type: ship:ship-audit-tests`. Pass all context
 Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
+Findings gate script: ${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh
 
 ## Config
 Test Scope:

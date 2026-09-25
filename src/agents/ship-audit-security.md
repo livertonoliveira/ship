@@ -28,13 +28,13 @@ Spawn agents with an active OWASP ID (`all` → all 4).
 
 ## 3. Findings & score
 
-Per @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#security-audit-extension. Severity: @ship/patterns/severity.md#security (apply overrides). Critical/high need PoC + CWE. A-F score: schema-core table.
+Per @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#security-audit-extension. Severity: @ship/patterns/severity.md#security. Critical/high need PoC + CWE. Gate and score: the findings gate (see the JSON summary below).
 
 ## 4. Report
 
 **Local:** `ship/audits/security-<YYYY-MM-DD>.md`. **Linear:** @ship/linear-audit-template.md#audit-template-steps + @ship/linear-audit-template.md#security-variation, prefix `[SEC]`, label `security`. Skeleton: Summary+Score, Gate, Attack Surface Map, Findings, Roadmap, Checklist.
 
-Gate: @ship/patterns/gates.md#gate-decision-rules. Emit JSON per @ship/patterns/audit-summary-schema.md#schema-core (`audit: security`, `report_path`) as final output.
+Emit JSON per @ship/patterns/audit-summary-schema.md#schema-core (`audit: security`, `report_path`) as final output.
 
 ## Rules
 

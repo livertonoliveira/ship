@@ -28,7 +28,7 @@ NET: no CDN/cache. BUNDLE: full-lib imports. LOAD: render-blocking tags. RENDER:
 
 ## Report
 
-Findings: @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#frontend-audit-extension. Severity: @ship/patterns/severity.md#frontend. Gate: @ship/patterns/gates.md#gate-decision-rules.
+Findings: @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#frontend-audit-extension. Severity: @ship/patterns/severity.md#frontend. Gate and score: the findings gate (see the JSON summary below).
 Local: `ship/audits/frontend-<date>.md`. Linear: @ship/linear-audit-template.md#audit-template-core + @ship/linear-audit-template.md#frontend-variation, `[PERF]`, `performance`.
 Emit JSON per @ship/patterns/audit-summary-schema.md#schema-core, `audit=frontend`.
 

@@ -36,7 +36,7 @@ If `Project Type` is `frontend`, redirect the user to `/ship:audit:frontend` and
 
 ## 4. Consolidate findings
 
-Per @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#backend-audit-extension. Severity: @ship/patterns/severity.md#performance, overridden by `ship/config.md → Severity Overrides` (phase: `backend`). Gate: @ship/patterns/gates.md#gate-decision-rules.
+Per @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#backend-audit-extension. Severity: @ship/patterns/severity.md#performance. Gate and score: the findings gate (see the JSON summary section).
 
 ## 5. Write report
 

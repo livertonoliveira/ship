@@ -58,19 +58,7 @@ Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 - **critical**: Will cause visible performance degradation in production (e.g., N+1 on every request, full table scan on large table)
 - **high**: Likely to cause issues under load (e.g., missing pagination on growing dataset)
 - **medium**: Suboptimal but will not cause immediate issues (e.g., missing cache on moderately accessed data)
-- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint), overridden by `ship/config.md → Severity Overrides` (phase: `backend`). Gate: ## Gate Decision Rules {#gate-decision-rules}
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here..
+- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint). Gate and score: the findings gate (see the JSON summary section).
 
 ## 5. Write report
 
@@ -131,8 +119,14 @@ Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool 
 }
 ```
 
-Fields: `audit` type id · `gate` per `the Gate Decision Rules section (included above)` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
 
-### Scoring table
+### Gate and score
 
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical. with `audit=backend` and `report_path=ship/audits/backend-<YYYY-MM-DD>.md`, as the **very last content** of your response.
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
+
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
+
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself. with `audit=backend` and `report_path=ship/audits/backend-<YYYY-MM-DD>.md`, as the **very last content** of your response.

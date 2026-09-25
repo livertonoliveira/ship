@@ -17,21 +17,17 @@ Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool 
 }
 ```
 
-Fields: `audit` type id · `gate` per `@ship/patterns/gates.md#gate-decision-rules` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
 
-### Scoring table
+### Gate and score
 
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical.
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
 
-## Audit-specific notes
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
 
-| Audit | Gate cap | Notes |
-|-------|----------|-------|
-| `backend` | PASS\|WARN\|FAIL | Standard gate |
-| `frontend` | PASS\|WARN\|FAIL | Standard gate |
-| `database` | PASS\|WARN\|FAIL | Standard gate |
-| `security` | PASS\|WARN\|FAIL | Standard gate |
-| `tests` | **PASS\|WARN** | HIGH findings map to WARN, not FAIL — test gaps are a quality issue, not blocking |
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself.
 
 ## Usage in `ship:audit:run`
 
