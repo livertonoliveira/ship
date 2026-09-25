@@ -74,7 +74,7 @@ Format: `### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` and `#### Code Review pipeline (`review.md`) {#review-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` and `#### Code Review pipeline (`ship-review`) {#review-extension}
 
 Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
 ```markdown

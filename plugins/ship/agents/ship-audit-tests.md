@@ -30,7 +30,7 @@ Per enabled layer, Jaccard similarity; confidence >=0.5 covered, 0.3-0.49 uncert
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` + `#### Tests audit (`audit/tests.md`) {#tests-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` + `#### Tests audit (`ship-audit-tests`) {#tests-audit-extension}
 
 Category: `TEST`
 ```markdown

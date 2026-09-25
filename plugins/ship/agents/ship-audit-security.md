@@ -43,7 +43,7 @@ Per ### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Security audit (`audit/security.md`) {#security-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Security audit (`ship-audit-security`) {#security-audit-extension}
 
 Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 ```markdown

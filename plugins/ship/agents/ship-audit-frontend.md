@@ -39,7 +39,7 @@ Findings: ### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Frontend audit (`audit/frontend.md`) {#frontend-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Frontend audit (`ship-audit-frontend`) {#frontend-audit-extension}
 
 Categories: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
 (Next.js: `STRATEGY | BOUNDARY | CACHE | BUNDLE | STREAMING | IMG | FONT | MIDDLEWARE | BUILD | COLD | ARCH`)

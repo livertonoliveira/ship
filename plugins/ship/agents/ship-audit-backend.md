@@ -47,7 +47,7 @@ Per ### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Backend audit (`audit/backend.md`) {#backend-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Backend audit (`ship-audit-backend`) {#backend-audit-extension}
 
 Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 ```markdown
