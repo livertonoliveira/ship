@@ -40,63 +40,12 @@ Core Web Vitals thresholds (Good / Needs Improvement / Poor): LCP ≤2.5s / 2.5-
 
 ## Severity Overrides
 
-Before applying standard gate rules (`critical|high → fail`, `medium → warn`), check if `ship/config.md` contains a `## Severity Overrides` section. If present, apply matching overrides before evaluating the gate.
-
-### Format
+`ship/config.md` may remap a phase's severities before the gate:
 
 ```
 ## Severity Overrides
-- <phase>: <from-severity>→<to-severity>
-```
-
-Where `<phase>` must be one of the valid pipeline phases: `dev`, `test`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`.
-
-### How to apply
-
-1. Read all entries under `## Severity Overrides` in `ship/config.md`.
-2. For each finding in the current phase, check if an override matches (`phase` + `from-severity`).
-3. If matched, replace the finding's effective severity with `to-severity` before the gate decision.
-4. Apply standard gate rules to the (possibly overridden) effective severities.
-
-### Validation
-
-If an override entry references an unknown phase (not in the valid phase list above), emit an error and stop:
-
-```
-Severity override refers to unknown phase: <phase-name>
-```
-
-Do not silently ignore unknown phase overrides — fail fast to prevent misconfiguration.
-
-### Examples
-
-**Example 1 — Downgrade perf high to warn**
-
-Config:
-```
-## Severity Overrides
-- perf: high→warn
-```
-
-Effect: A `high` finding in the `perf` phase becomes effective severity `warn` (medium gate level). Gate decision: WARN instead of FAIL.
-
-**Example 2 — Downgrade frontend-perf high to warn**
-
-Config:
-```
-## Severity Overrides
-- frontend-perf: high→warn
-```
-
-Effect: LCP "Needs Improvement" findings (`high`) in the `frontend-perf` phase generate a WARN gate instead of FAIL. Security, review, and other phases are unaffected.
-
-**Example 3 — Multiple overrides**
-
-Config:
-```
-## Severity Overrides
-- perf: high→warn
+- perf: high→medium
 - security: medium→low
 ```
 
-Effect: `high` perf findings → WARN gate; `medium` security findings → treated as `low` (PASS if no other critical/high). Each phase applies only its own override.
+`<phase>` is one of `dev`, `test`, `perf`, `security`, `review`, `frontend-perf`, `database`, `backend`. `findings-gate.sh` and `pipeline.sh gate` apply the overrides and reject an unknown phase — never tally them yourself.
