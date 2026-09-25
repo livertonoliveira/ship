@@ -77,7 +77,7 @@ Analyze `git diff`/`git status`, group into atomic commits, stage per file (`git
 
 ### 4. Pre-push validation
 
-Run typecheck, tests, and lint per `ship/config.md`. On failure: fix, re-commit, re-run.
+Preflight printed `verified_tree=yes` → skip: the pipeline already passed typecheck, lint and the suite on this exact tree, and commits do not change it. Otherwise run typecheck, tests, and lint per `ship/config.md`; on failure fix, re-commit, re-run.
 
 ### 5. Sync onto the base, then push
 
@@ -88,7 +88,7 @@ bash "${CLAUDE_SKILL_DIR}/hooks/pr-sync.sh" --remote <remote> --base <pr_base>
 `<remote>` and `<pr_base>` are the preflight's — never the literal `origin`/`main`, which are conventions this repo may not follow.
 
 - `result=clean` (or any `skipped-`) → `git push -u <remote> <branch-name>`.
-- `result=conflict` → resolve every `conflict:<path>` **yourself, here**: you implemented this change and hold its intent, so never delegate it and never ask the user to arbitrate what you already know. Keep both sides' behavior; drop nothing you cannot justify. Then `bash "${CLAUDE_SKILL_DIR}/hooks/pr-sync.sh" --continue`, repeating while it still reports `conflict`. Once clean, re-run step 4's validation, then push.
+- `result=conflict` → resolve every `conflict:<path>` **yourself, here**: you implemented this change and hold its intent, so never delegate it and never ask the user to arbitrate what you already know. Keep both sides' behavior; drop nothing you cannot justify. Then `bash "${CLAUDE_SKILL_DIR}/hooks/pr-sync.sh" --continue`, repeating while it still reports `conflict`. Once clean, run step 4's checks in full (the resolution changed the tree, so `verified_tree` no longer applies), then push.
 
 Ask the user only when the conflict encodes a product decision your task never made.
 

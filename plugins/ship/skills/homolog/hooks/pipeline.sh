@@ -21,7 +21,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1930,6 +1930,12 @@ cmd_next() {
       esac
     fi
   fi
+
+  # --- tree proof for /ship:pr -----------------------------------------------------
+  # The gate is resolved and nothing edits the tree from here on. If the last
+  # static and test runs were green, record that exact tree so /ship:pr can skip
+  # re-proving it; any later edit changes the hash and the checks run again.
+  bash "$HOOK_DIR/verified-tree.sh" record "$SCRATCH" >/dev/null 2>&1 || true
 
   # --- node PR (work graph) -------------------------------------------------------
   # Reached only on a green gate: a red one emits `ask` above and never gets

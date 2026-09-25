@@ -101,6 +101,12 @@ main() {
   printf 'profile=%s\n' "$profile"
   printf 'approval=%s\n' "$approval"
 
+  if [ -n "$task" ] && [ -d ".context/ship-run/$task" ]; then
+    bash "$HOOK_DIR/verified-tree.sh" check ".context/ship-run/$task" 2>/dev/null || printf 'verified_tree=no\n'
+  else
+    printf 'verified_tree=no\n'
+  fi
+
   if [ -n "$task" ] && [ -f ".context/ship-run/$task/phase-status.md" ]; then
     bash "$HOOK_DIR/pipeline.sh" rows ".context/ship-run/$task" | sed 's/^/gate_row:/'
   fi
