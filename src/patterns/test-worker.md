@@ -1,15 +1,6 @@
----
-name: ship-test-unit
-description: "Ship unit test worker — generates and runs unit tests for isolated functions, services, and utilities."
-tools: [Read, Glob, Grep, Bash, Edit, Write]
-model: sonnet
----
+# Test Worker Contract
 
-# Ship Test Unit — Unit Test Worker
-
-Generate and run unit tests for the code described in the inline context from the caller. Your `<layer>` is `unit`; the project's unit command is `vitest run --pool=threads <files>` or its equivalent.
-
-**Input:** $ARGUMENTS (task ID, optional `Mode:` line, artifact language, scenarios, file list, source context).
+Shared contract for the `ship-test-{unit,integration,e2e}` workers. Each worker includes these sections and adds only its layer's discovery, scope and fallback coverage. `<layer>` below is the including worker's layer (`unit`, `integration` or `e2e`).
 
 ## Load context {#test-worker-context}
 
@@ -27,27 +18,11 @@ Generate and run unit tests for the code described in the inline context from th
 
 **`Mode: execute`** — skip discovery and generation. Run the injected `## Test Files` with the project's `<layer>` test command. On failure, diagnose test vs. code and fix (up to 2 iterations). Report pass/fail per file and every file edited during a fix, for the caller's post-fix hygiene sweep.
 
-## Discover test patterns
-
-> Skip if `## Source` was injected or `Mode: execute` is active.
-
-Determine: test location, framework (confirm via config.md), describe/it organization, helpers, mocks, setup/teardown, naming style.
-
-## Generate unit tests
-
-Scope: isolated units — services, utilities, pure functions, helpers. Mock/stub every external dependency; anything touching a real dependency or crossing a module boundary is integration scope.
-
 ## Scenarios {#test-worker-scenarios}
 
 The caller strips `@SC-XX`/`@AC-YY` tags, leaving title + steps — iterate by behavior. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` becomes one parameterized test over its `Examples`. Translate Gherkin into the project's native framework, not Cucumber/step definitions unless the project already uses them. Never invent scenarios beyond those given.
 
 Name every test by observable behavior. No spec ID (`SC-XX`, `AC-XX`, `REQ-XX`, `Impl`) or Linear key (`<TEAM>-NNN`) in any suite/group (`describe`, `context`, `@DisplayName`, class name) or case (`it`/`test`, `@Test`, `[Fact]`, `t.Run`, `func TestXxx`) identifier, in any language — `describe('ABC-123 — Redis setup')` becomes `describe('Redis setup')`. No comments in test files; naming carries the meaning.
-
-**Acceptance criteria:** each gets an assertion, including those no scenario covers — tags are a subset, never the whole set. With neither scenarios nor criteria, cover happy path, edge cases (empty/null/boundary/wrong types) and error cases. Beyond these, invent nothing.
-
-**Existing files:** a `## Existing tests` path already asserts behavior — extend it. Never rewrite one whole, never drop a case you did not write.
-
-**Execution (skip in `Mode: generate`):** run the unit command against units created/modified. On failure: diagnose test vs code, fix (up to 2 iterations).
 
 ## Report {#test-worker-report}
 
@@ -60,39 +35,7 @@ Name every test by observable behavior. No spec ID (`SC-XX`, `AC-XX`, `REQ-XX`, 
 - Status: <ENUM>
 ```
 
-`Status` semantics: `## Enum {#worker-status-contract}
-
-Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
-
-```
-Status: <ENUM>
-```
-
-Exactly four states. No fifth state exists.
-
-### DONE
-
-**Trigger:** the worker completed its assigned unit with no caveats.
-
-**Behavior:** orchestrator marks the unit complete and continues to the next unit or phase.
-
-### DONE_WITH_CONCERNS
-
-**Trigger:** the worker completed its assigned unit but hit a non-blocking caveat (e.g. a collision with a denylisted path, a partial fallback applied).
-
-**Behavior:** orchestrator marks the unit complete, records a `warn` entry describing the caveat, and continues.
-
-### NEEDS_CONTEXT
-
-**Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
-
-**Behavior:** name the missing input; the orchestrator re-dispatches with it supplied or treats the unit as `BLOCKED`.
-
-### BLOCKED
-
-**Trigger:** the worker determined the unit is not viable in its current state (e.g. the plan is unworkable, a hard dependency is absent, sibling file ownership conflicts).
-
-**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (already reported in generate mode); `Status` adds the signal, it does not replace the report. `NEEDS_CONTEXT` — required input missing (no scenarios/source injected and the standalone fallback found nothing, or a layer-specific precondition below). Exactly one `Status:` line per report.
+`Status` semantics: `@ship/patterns/worker-status.md#worker-status-contract`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (already reported in generate mode); `Status` adds the signal, it does not replace the report. `NEEDS_CONTEXT` — required input missing (no scenarios/source injected and the standalone fallback found nothing, or a layer-specific precondition below). Exactly one `Status:` line per report.
 
 ## Rules {#test-worker-rules}
 
