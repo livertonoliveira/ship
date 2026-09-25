@@ -38,10 +38,11 @@ Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
 Findings gate script: @@ship/hooks/findings-gate.sh
+Heuristics script: @@ship/hooks/audit-heuristics.sh
 
 ## Config
 Database: <database-type>
 Stack: <stack>
 ```
 
-The agent handles engine routing, 3-agent parallel execution, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
+The agent handles engine routing, candidate scanning and confirmation, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
