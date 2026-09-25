@@ -1397,7 +1397,7 @@ next_fix_dispatch() {
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error., then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
 next_remediation_verify_dispatch() {
