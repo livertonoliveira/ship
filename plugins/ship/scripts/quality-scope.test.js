@@ -128,7 +128,7 @@ test('profile default governs a phase with no explicit Pipeline Phases override'
     '## Pipeline Profile',
     '- profile: standard',
   ].join('\n'));
-  // standard profile: perf/security off by default, review on — see profiles.md
+  // standard profile: perf/security off by default, review on — see docs/profiles.md
   const res = spawnSync('bash', [SCOPE, 'normal', '--phases', ALL, '--config', config], { encoding: 'utf8' });
   const o = parse(res.stdout);
   assert.equal(o.run, 'review');

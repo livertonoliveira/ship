@@ -1,5 +1,7 @@
 # Hygiene Gate — deterministic enforcement for comments, spec IDs & secrets
 
+> Maintainer reference, not loaded by any skill. `src/hooks/hygiene-scan.sh` is the authoritative implementation (develop and test call it); where the steps below differ from the script, the script wins.
+
 > Canonical enforcement of the zero-comments / zero-spec-IDs / zero-secrets rule. The worker
 > prompts forbid comments, spec IDs, and hardcoded secrets, but a prompt is advice, not a
 > guarantee — an LLM occasionally emits them anyway.

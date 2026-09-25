@@ -1,5 +1,7 @@
 # Ship Shared Patterns — Index
 
+> Maintainer reference. Line counts and consumer lists below may lag the source; `grep -rn '@ship/patterns' src` is the ground truth.
+
 Navigation index for human reference. **Do not reference this file from command files** — include only the specific pattern files you need from `ship/patterns/`.
 
 ## Available patterns

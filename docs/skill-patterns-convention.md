@@ -1,5 +1,7 @@
 # SKILL/Agent Pattern Reference Convention
 
+> Maintainer reference for how `@ship/` and `@@ship/` references are resolved by `plugins/ship/scripts/build.js`.
+
 > Rewritten 2026-06-15 — supersedes the MOB-1162 notes, which predated the build-time
 > resolver and the documented `${CLAUDE_SKILL_DIR}` mechanism and were misleading.
 

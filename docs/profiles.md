@@ -1,5 +1,7 @@
 # Pipeline Profiles
 
+> Maintainer reference, not loaded by any skill. Profiles are applied by `src/hooks/quality-scope.sh`.
+
 A profile is a named preset that enables or disables pipeline phases in bulk. It is set in `ship/config.md` under `## Pipeline Profile`.
 
 ## Available profiles

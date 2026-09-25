@@ -1,5 +1,7 @@
 # Parallelism Strategy
 
+> Maintainer reference, not loaded by any skill. Fan-out depth is computed by the hooks and passed to workers as `Fan-out:`.
+
 Parallelism in Ship is **restricted to phases where independent read-only analysis or disjoint test layers amortize the per-agent startup cost**. Everything else runs sequentially, in a single context — implementation especially: modules of one task share conventions and contracts, so one context implementing them in order beats N workers each re-reading the same context.
 
 - **Parallel (the only allowed fan-outs):**
