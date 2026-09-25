@@ -43,11 +43,11 @@ tier split (there is none).
 
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
-| `ship:run`            | Orchestrator — judgment dispatch: diff refresh, surgical re-run scoping, gate eval. Spawns Sonnet leaves for test generation and quality analysis. |
+| `ship:run`            | Executor of `pipeline.sh next` — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
 | `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
-| `ship:audit:run`      | Orchestrator — fans out `audit:*` skills, then a consolidation agent aggregates their reports. |
+| `ship:audit:run`      | Orchestrator — fans out `audit:*` skills and applies the consolidated gate from their JSON summaries in its own context. |
 | `ship:plan`           | Test-aware planning — decomposition + scenario→test mapping. |
 | `ship:spec`           | Deep specification. |
 | `ship:perf`           | Performance analysis. |
@@ -89,7 +89,7 @@ Self-attestation from inside the model context is **not reliable**: the model re
 
 The ground truth lives in two places:
 
-1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the orchestrator's *intent*: which tool was called with which model parameter. Written by `ship:run` itself.
+1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the pipeline's *intent*: which tool was dispatched with which model parameter. Written by `pipeline.sh`.
 
 2. **Claude Code session JSONL** — what the harness *actually executed*. Every API response is logged with the real model ID. Path:
    ```
@@ -108,13 +108,3 @@ The ground truth lives in two places:
    Every orchestrator and sub-agent turn should resolve to a Sonnet model ID. Any Haiku turn is a routing bug.
 
 A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection. Ship does not emit self-attestation banners; use dispatch-log + the session JSONL as described above to verify routing.
-
----
-
-## Pattern classification (skill-patterns-convention.md)
-
-`model-routing.md` is a **bundle pattern** (> 30 lines). Reference in SKILL.md via:
-
-```
-For model routing rules, read the file at ./ship/patterns/model-routing.md completely.
-```
