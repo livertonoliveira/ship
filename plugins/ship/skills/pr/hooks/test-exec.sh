@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only]" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --lint-fix]" >&2
 }
 
 field_from() {
@@ -163,6 +163,37 @@ scope_lint_cmd() {
 
   LINT_CMD="$(printf '%q ' node_modules/.bin/eslint "${args[@]}" "${files[@]}")"
   LINT_CMD="${LINT_CMD% }"
+}
+
+# The lint autofix, scoped to the files develop touched — never repo-wide, so it
+# cannot rewrite code this task does not own. Resolved from `Lint fix` in
+# stack.md/config (it must carry `{files}`), else derived from a lint command
+# scope_lint_cmd already narrowed to those files by appending --fix.
+resolve_lint_fix() {
+  local scratch="$1" config="$2" touched="$scratch/develop-touched-files.txt" f
+  LINT_FIX_CMD="$(field_from "$scratch/stack.md" 'Lint fix')"
+  is_resolved "$LINT_FIX_CMD" || LINT_FIX_CMD="$(field_from "$config" 'Lint fix')"
+  if is_resolved "$LINT_FIX_CMD"; then
+    case "$LINT_FIX_CMD" in
+      *'{files}'*) ;;
+      *) LINT_FIX_CMD=""; return 0 ;;
+    esac
+    local -a files=()
+    if [ -s "$touched" ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] && [ -f "$f" ] && files+=("$f")
+      done < "$touched"
+    fi
+    if [ "${#files[@]}" -eq 0 ]; then LINT_FIX_CMD=""; return 0; fi
+    local q; q="$(printf '%q ' "${files[@]}")"
+    LINT_FIX_CMD="${LINT_FIX_CMD//\{files\}/${q% }}"
+    return 0
+  fi
+  LINT_FIX_CMD=""
+  case "$LINT_CMD" in
+    *' --fix'|*' --fix '*) ;;
+    node_modules/.bin/eslint\ *) LINT_FIX_CMD="$LINT_CMD --fix" ;;
+  esac
 }
 
 start_static_check() {
@@ -411,12 +442,13 @@ write_static_report() {
 }
 
 main() {
-  local scratch="" config="ship/config.md" static_only=0
+  local scratch="" config="ship/config.md" static_only=0 lint_fix=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --config) config="$2"; shift 2 ;;
       --static-only) static_only=1; shift ;;
+      --lint-fix) lint_fix=1; shift ;;
       -h|--help) usage; exit 0 ;;
       -*) usage; exit 1 ;;
       *)
@@ -443,6 +475,20 @@ main() {
   TEST_ENTRIES=""
   LAYER_CMD_WORDS=()
   LAYER_USES_PKG_SCRIPT=0
+
+  # --lint-fix: apply the linter's own fixes to the touched files before anything
+  # records a static result, so mechanical lint errors never reach the
+  # remediation batch. Exit 2 when no scoped fix command resolves.
+  if [ "$lint_fix" -eq 1 ]; then
+    PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
+    is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
+    resolve_static_checks "$scratch" "$config"
+    resolve_lint_fix "$scratch" "$config"
+    is_resolved "$LINT_FIX_CMD" || exit 2
+    bash -c "$LINT_FIX_CMD" >/dev/null 2>&1 || true
+    printf '%s\n' "$LINT_FIX_CMD" > "$scratch/lint-fix.txt"
+    exit 0
+  fi
 
   # --static-only: the pre-verify static gate. Runs typecheck+lint only, needs no
   # test runner. Exit 2 when neither check resolves (repos without them).
