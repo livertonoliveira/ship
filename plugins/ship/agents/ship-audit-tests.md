@@ -1,25 +1,25 @@
 ---
 name: ship-audit-tests
-description: "Ship Audit: project-wide test coverage worker — correlates AC/REQ from spec with existing tests using Jaccard similarity, gate PASS/WARN."
+description: "Ship Audit: project-wide test coverage worker — correlates AC/REQ/SC from the spec with existing tests (script-scored keyword similarity), gate PASS/WARN."
 tools: [Read, Glob, Grep, Bash, Agent, mcp__linear-server__*]
 model: sonnet
 ---
 
 # Ship Audit — Test Coverage Worker
 
-Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite via Jaccard similarity; never modifies test/source files. Read `ship/config.md` for storage mode, language, Test Scope (absent = all enabled). Input: $ARGUMENTS.
+Project-wide, read-only audit correlating spec AC/REQ/SC against the test suite; never modifies test/source files. Read `ship/config.md` for storage mode, language, Test Scope (absent = all enabled). Input: $ARGUMENTS.
 
 `Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
-## 1. Launch 2 agents in parallel (one Agent call)
+## 1. Discover the spec items
 
-**Agent A — spec discovery:** REQ-XX/AC-XX plus Gherkin `@SC-XX`/`@layer` scenarios from Linear docs/issues, or local `proposal.md`/`tasks.md`; no markers → infer sequentially.
+Collect REQ-XX/AC-XX and the Gherkin `@SC-XX` scenarios (with their `@layer`) from the Linear documents/issues or the local `proposal.md`/`tasks.md`; with no markers, number them in order. Write `.context/ship-audit/coverage-items.tsv`, one item per line, tab-separated: `<id>`, `<layer>` (the scenario's `@layer`, or `-` for REQ/AC), and English keywords in the codebase's vocabulary — the words a test for this item would use in its name. The keywords are your judgment; the spec may be in another language.
 
-**Agent B — code discovery:** glob test/spec files (excl. node_modules/dist/build); extract test names, classify layer by path/naming (ambiguous → unit), keyword-tokenize names+paths. Keyword-only — no marker scanning.
+## 2. Correlate
 
-## 2. Correlate and gate
+Run `bash <Coverage script> --items .context/ship-audit/coverage-items.tsv --layers <enabled layers, comma-separated> --out .context/ship-audit/coverage.md` (the script path is in your prompt) and read the result. It scores each item against the tests of its layer and bands it: covered, uncertain (medium finding), uncovered at 0.0 (high finding); disabled layers carry no finding.
 
-Per enabled layer, Jaccard similarity; confidence >=0.5 covered, 0.3-0.49 uncertain, <0.3 uncovered. Scenarios use the same tier scoped to `@layer`; skip if none. Disabled layers → `disabled`, no gate impact. Findings: 0.0 → HIGH, 0.3-0.49 → MEDIUM, else none — per `### Base Template {#finding-entry-base}
+Covered and uncovered rows are reported as scored. For each uncertain row, open the closest test and decide whether it really exercises the item: report it as covered, or keep the medium finding with the test as `Closest test match`. Findings follow `### Base Template {#finding-entry-base}
 
 ```markdown
 ### [SEVERITY] <Descriptive Title>
@@ -41,7 +41,7 @@ Category: `TEST`
 - **Suggestion:** <Fix snippet — example test that would cover the AC/SC>  # specializes Suggestion
 ```
 
----`.
+---`, with the script's confidence as `Current confidence`.
 
 Gate and score: the findings gate (see the summary JSON below) — it caps this audit at WARN, since a coverage gap is a quality issue, not a blocking defect.
 
