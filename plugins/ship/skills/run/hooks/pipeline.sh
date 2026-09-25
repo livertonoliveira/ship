@@ -1370,13 +1370,13 @@ next_fix_dispatch() {
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the COMPLETE list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for EVERY item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error, then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
 next_remediation_verify_dispatch() {
   local scratch="$1" task="$2" lang="$3"
   cmd_dispatch "$scratch" remediation-verify Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set — do NOT audit the code for new problems and do NOT report anything outside the list. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
+  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set: judge only the listed findings and report nothing outside the list — that is what lets the round terminate. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
 }
 
 cmd_next() {
@@ -1561,7 +1561,7 @@ cmd_next() {
     if ! next_dispatched "$SCRATCH" dev; then
       cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
       next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir\""
-      next_body_add "Dispatch develop ALONE — no other tool call this turn."
+      next_body_add "Dispatch develop alone — no other tool call this turn."
       next_common_after
       next_emit "develop" "dispatch" "$RUN" "${resumed}dispatching the implementer"
     fi
@@ -1652,7 +1652,7 @@ cmd_next() {
     done
     printf '%s\n' "${pending# }" > "$SCRATCH/pending.txt"
     if [ -n "${pending# }" ]; then
-      next_body_add "Dispatch ALL of the above concurrently in this turn (synchronous, never backgrounded)."
+      next_body_add "Dispatch all of the above concurrently in this turn (synchronous, never backgrounded)."
       next_common_after
       next_emit "verify-a" "dispatch" "$RUN" "verification fan-out: tests [${layers:-none}]${skipped:+ (skipped: $skipped)} + quality [$qrun]"
     fi
@@ -1919,7 +1919,7 @@ cmd_next() {
   if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
-    next_body_add "Invoke ship:pr via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
+    next_body_add "Invoke ship:pr via the Skill tool in this same context (not forked, not through Agent). Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
     next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (the branch to sync onto and target) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
     next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
     next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
@@ -1936,8 +1936,8 @@ cmd_next() {
       if ! next_dispatched "$SCRATCH" homolog; then
         cmd_dispatch "$SCRATCH" homolog Skill ship:homolog sonnet >/dev/null
       fi
-      next_body_add "Invoke ship:homolog via the Skill tool — same context, NOT forked, never Agent. Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH | Consolidate findings from phase-status.md and present for acceptance\"."
-      next_body_add "MANDATORY STOP while homolog awaits the user. On approval, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> --answer approved. On adjustment requests, apply them and re-invoke ship:homolog first."
+      next_body_add "Invoke ship:homolog via the Skill tool in this same context (not forked, not through Agent). Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH | Consolidate findings from phase-status.md and present for acceptance\"."
+      next_body_add "Stop here while homolog awaits the user. On approval, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> --answer approved. On adjustment requests, apply them and re-invoke ship:homolog first."
       next_emit "homolog" "work" "$RUN" "awaiting user acceptance"
     fi
   fi
@@ -1961,7 +1961,7 @@ cmd_next() {
   fi
   next_body_add "Surface the per-phase wall-clock to the user:"
   next_body_add "$timings"
-  next_body_add "Then inform: task complete — run /ship:pr when ready. NEVER auto-invoke /ship:pr. Multi-task: ask to continue with the next task."
+  next_body_add "Then inform: task complete — run /ship:pr when ready. The user runs /ship:pr; don't invoke it. Multi-task: ask to continue with the next task."
   next_emit "done" "done" "$RUN" "pipeline complete"
 }
 
