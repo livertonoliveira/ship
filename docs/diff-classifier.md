@@ -1,5 +1,7 @@
 # Diff Classifier — Deterministic Heuristic
 
+> Maintainer reference. The classification is computed by `src/hooks/diff-classify.sh` and consumed by `src/hooks/quality-scope.sh`; no model reads this file.
+
 Classifies the diff in `.context/ship-run/<task-id>/diff.md` into one of four classes
 and adjusts which quality agents run in Phase 4 of `/ship:run`.
 
