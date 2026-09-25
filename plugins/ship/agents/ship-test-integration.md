@@ -7,68 +7,50 @@ model: sonnet
 
 # Ship Test Integration — Integration Test Worker
 
-You generate and run integration tests for the code described in the inline context provided by the caller.
+Generate and run integration tests for the code described in the inline context from the caller. Your `<layer>` is `integration`.
 
 **Input:** $ARGUMENTS (task ID, optional `Mode:` line, artifact language, scenarios, file list, source context).
 
----
+## Load context {#test-worker-context}
 
-## 1. Load context
+- `Brief: <path>` in the prompt (pipeline dispatch): Read that file — it carries this layer's `## Test Contract`, `## Scenarios`, `## Denylist` and `## Source` pointer. Treat its sections exactly like inline ones; never fall back to standalone discovery.
+- Caller-injected `## Scenarios`/`## Files`/`## Source` (+ optional `## Test Contract`): use only that, never re-read `proposal.md`, `design.md` or the Linear issue. `## Test Contract` entries (target file + arrange/act/assert, from `ship:plan`'s `@SC-XX` mapping) are the source of truth.
+- Standalone: read `ship/config.md` for stack/framework/conventions, then `git diff --name-only origin/main...HEAD` for modified files. If that also yields nothing to work from, report `NEEDS_CONTEXT`.
 
-`Brief: <path>` in the prompt (pipeline dispatch): Read that file — it carries this layer's `## Test Contract`, `## Scenarios`, `## Denylist` and `## Source` pointer; treat its sections exactly like inline ones and never fall back to standalone discovery.
+## Modes {#test-worker-modes}
 
-If the caller injected `## Scenarios`/`## Files`/`## Source` (optionally `## Test Contract`), use ONLY that — never re-read `proposal.md`, `design.md`, or the Linear issue. `## Test Contract` entries (pre-mapped slots: file + arrange/act/assert, from `ship:plan`) are the source of truth.
+**`Mode: clean`** — fixes hygiene-gate hits, not generation. In each `## Violations` file, strip every comment and spec ID/Linear key (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) everywhere, including test names and string literals; rename ID-bearing tests to describe behavior. Change nothing else — don't add, remove, reorder or reformat tests; keep legitimate tokens like `UTF-8`. Skip discovery and generation; report cleaned files.
 
-Standalone (no inline context): read `ship/config.md` for stack/framework/conventions, then `git diff --name-only origin/main...HEAD` for modified files. If this also yields nothing to work from, report `NEEDS_CONTEXT` (§4).
+**`Mode: generate`** — do discovery and generation, skip every test-running step: no test command, no pass/fail counts, files only.
+- Honor injected `## Denylist` (paths owned by `ship:develop`'s modules): write test files only, never a denylisted path. If a test's only viable location collides with one, skip that test, report the conflict (path + scenario/slot) and continue — this is the `DONE_WITH_CONCERNS` trigger. Report files created or extended.
+- `Manifest: <path>` in the prompt: after generating, write one `- <path> (<layer>)` line per file actually created **or extended** (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything) to that manifest file. No header; write it even when zero files were touched. Denylist-skipped slots are reported verbally, never listed.
 
----
+**`Mode: execute`** — skip discovery and generation. Run the injected `## Test Files` with the project's `<layer>` test command. On failure, diagnose test vs. code and fix (up to 2 iterations). Report pass/fail per file and every file edited during a fix, for the caller's post-fix hygiene sweep.
 
-## 1b. Clean mode (`Mode: clean`)
-
-Remediates hygiene hits, not generation: in each `## Violations` file, strip every comment and spec ID/Linear key (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) everywhere, renaming any test whose name carried one. Don't add/remove/reorder tests or reformat; keep tokens like `UTF-8`. Skip §2–3; report cleaned files.
-
----
-
-## 1c. Generate mode (`Mode: generate`)
-
-Do §2–3 but skip the execution steps — no test command run, no pass/fail counts; generate file(s) only.
-
-Honor injected `## Denylist` (paths `ship:develop` owns): write test files only, never a denylisted path. If the only viable location collides with it, skip that test, report the conflict (path + scenario/slot) — driving `DONE_WITH_CONCERNS` (§4) — and continue. Report files created or extended.
-
-`Manifest: <path>` in the prompt: after generating, write one `- <path> (integration)` line per file actually created **or extended** (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything) to that manifest file — no header, write it even when zero files touched; denylist-skipped slots are reported verbally, never listed.
-
----
-
-## 1d. Execute mode (`Mode: execute`)
-
-Skip §2–3. Run the injected `## Test Files` with the project's integration test command (Vitest flag: see Rules). On failure, diagnose test vs. code, fix (max 2 iterations). Report pass/fail per file and any files edited while fixing (for the caller's post-fix hygiene scope).
-
----
-
-## 2. Discover integration test patterns
+## Discover integration test patterns
 
 > Skip if `## Source` was injected inline or `Mode: execute` is active.
 
 Identify: test location, framework (supertest/httptest/TestClient — confirm via config.md), DB/transaction/cleanup setup, auth patterns, naming conventions.
 
----
+## Generate integration tests
 
-## 3. Generate integration tests
+Scope: interactions between modules, API endpoints, and database operations — not isolated units (`ship-test-unit`'s job). Keep DB state clean between tests.
 
-Scope: interactions between modules, API endpoints, and database operations — not isolated units (`ship-test-unit`'s job).
+## Scenarios {#test-worker-scenarios}
 
-**Scenario mode:** caller strips `@SC-XX`/`@AC-YY` tags, leaving title + steps. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` → one parameterized test over its `Examples`. Name by observable behavior only — never a spec ID or Linear key (`<TEAM>-NNN`) in any suite/class/method/case identifier, in any language. Translate Gherkin natively — don't assume Cucumber. Don't invent scenarios beyond those given.
+The caller strips `@SC-XX`/`@AC-YY` tags, leaving title + steps — iterate by behavior. One test per scenario: arrange = `Given`/`Background`, act = `When`, assert = `Then`; a `Scenario Outline` becomes one parameterized test over its `Examples`. Translate Gherkin into the project's native framework, not Cucumber/step definitions unless the project already uses them. Never invent scenarios beyond those given.
 
-**Fallback mode (no scenarios):** per endpoint/interaction, cover request/response (status/body/headers), validation (bad input → errors), auth (protected endpoints reject unauthorized), DB ops (CRUD correctness), error handling (internal errors → proper client response).
+Name every test by observable behavior. No spec ID (`SC-XX`, `AC-XX`, `REQ-XX`, `Impl`) or Linear key (`<TEAM>-NNN`) in any suite/group (`describe`, `context`, `@DisplayName`, class name) or case (`it`/`test`, `@Test`, `[Fact]`, `t.Run`, `func TestXxx`) identifier, in any language — `describe('ABC-123 — Redis setup')` becomes `describe('Redis setup')`. No comments in test files; naming carries the meaning.
 
-**Execution (skipped in `Mode: generate`):** use existing test setup/patterns, don't invent new ones; run via the project's command (Vitest flag: see Rules); on failure, fix as in §1d.
+**Fallback (no scenarios):** per endpoint/interaction, cover request/response (status/body/headers), validation (bad input → errors), auth (protected endpoints reject unauthorized), DB ops (CRUD correctness), error handling (internal errors → proper client response).
 
----
+**Execution (skip in `Mode: generate`):** use the existing test setup; run via the project's integration command; on failure, diagnose test vs code and fix (up to 2 iterations).
 
-## 4. Report results
+## Report {#test-worker-report}
 
 ```
-Integration Tests:
+<Layer> Tests:
 - Created: <N> tests in <files>
 - Passed: <N>
 - Failed: <N>
@@ -78,7 +60,7 @@ Integration Tests:
 
 `Status` semantics: `## Enum {#worker-status-contract}
 
-Each worker writes its completion state as a single line in `phase-status-<phase>.md`:
+Each worker ends its report with a single line — and, when the prompt names a status file, writes the same line there:
 
 ```
 Status: <ENUM>
@@ -90,33 +72,30 @@ Exactly four states. No fifth state exists.
 
 **Trigger:** the worker completed its assigned unit with no caveats.
 
-**Behavior:** orchestrator marks the unit complete and continues to the next unit or phase.
+**Behavior:** the unit is complete; nothing is recorded.
 
 ### DONE_WITH_CONCERNS
 
 **Trigger:** the worker completed its assigned unit but hit a non-blocking caveat (e.g. a collision with a denylisted path, a partial fallback applied).
 
-**Behavior:** orchestrator marks the unit complete, records a `warn` entry describing the caveat, and continues.
+**Behavior:** the unit is complete; describe the caveat in the report. The status is recorded, not gated.
 
 ### NEEDS_CONTEXT
 
 **Trigger:** the worker could not complete its unit because required context or input was missing (e.g. an ambiguous contract, a referenced file that does not exist).
 
-**Behavior:** orchestrator re-dispatches the worker with the missing context supplied, bounded by the existing retry ceilings for the calling command (`ship:test`: 2 cycles; `ship:run`: 3 iterations). If the ceiling is reached without resolution, treat as `BLOCKED`.
+**Behavior:** name the missing input in the report. The status is recorded, not gated; a standalone `ship:test` run may re-dispatch with the input supplied.
 
 ### BLOCKED
 
 **Trigger:** the worker determined the unit is not viable in its current state (e.g. the plan is unworkable, a hard dependency is absent, sibling file ownership conflicts).
 
-**Behavior:** orchestrator stops dispatching further units in the affected chain and escalates via the calling command's `on_fail` configuration.`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (§1c, already reported there); `Status` adds the signal. `NEEDS_CONTEXT` — required input was missing (no scenarios/source injected, standalone fallback found nothing). Exactly one `Status:` line per report.
+**Behavior:** say why in the report. The status is recorded, not gated.`. `DONE` — generated/executed, no unresolved failures. `DONE_WITH_CONCERNS` — a denylisted-path collision occurred (already reported in generate mode); `Status` adds the signal, it does not replace the report. `NEEDS_CONTEXT` — required input missing (no scenarios/source injected and the standalone fallback found nothing, or a layer-specific precondition below). Exactly one `Status:` line per report.
 
----
+## Rules {#test-worker-rules}
 
-## Rules
-
-- Tests are real (not trivial stubs), independent (clean DB state between them), and deterministic (no ordering/external-state dependence).
-- Follow the project's existing integration test setup; don't install new frameworks.
-- No spec IDs/Linear keys in any test identifier (suite/class/display/method/case); no comments of any kind in test files (no JSDoc, no markers). Naming carries the meaning.
-- Artifact language for user-facing output; code/identifiers always English.
-- Read efficiency: each pattern/source file at most once; never re-read after Edit/Write unless modified externally, likely compacted, or explicitly requested.
-- Vitest: always `--pool=threads`, never `--pool=forks` (orphan OS processes outlive the agent).
+- Tests are real (never trivial like `expect(1+1).toBe(2)`), independent and deterministic — no ordering dependency, timestamps, random values or uncontrolled external state.
+- Use the project's existing test setup and patterns (factories, fixtures, helpers); never install a new test framework.
+- Read each pattern/source file at most once; re-read only if it was modified externally, the context was likely compacted, or the caller asks.
+- Artifact language for user-facing output; code and identifiers always English.
+- Vitest: always `--pool=threads`, never the default `--pool=forks` (orphan OS processes outlive the agent).

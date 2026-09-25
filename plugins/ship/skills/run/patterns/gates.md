@@ -18,7 +18,7 @@ Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (
 
 Every detector reports into a single gate: typecheck/lint (`static`), the suite (`test`), coverage regression (`test-generate`) and the quality phases (`perf`, `security`, `review`). None of them halts the pipeline on its own.
 
-This is deliberate. When static red blocked the fan-out and a red suite blocked the gate, the three detectors never held their results at the same instant, so a complete list of the adjustments a round required could not exist — the pipeline had to discover it across three serialized detect→fix→re-detect cycles.
+This way one round sees every detector's result at once and can list every adjustment it requires.
 
 ## Remediation batch
 
@@ -36,7 +36,7 @@ After the fix returns, the pipeline does **not** re-dispatch the quality workers
 
 The gate then re-evaluates from those refreshed rows.
 
-This is what makes the loop terminate. The old post-fix pass re-dispatched `perf`/`security`/`review` as fresh open-ended audits of code the fix had just written, and an open-ended audit of new code always finds new nits — so the gate never converged on its own and needed a 3-round cap, a finding-identity ledger and a churn guard to stop it. A closed question set cannot mint a finding that was not already in the batch, so the set shrinks or stalls, never grows. All three guards are gone.
+This is what makes the loop terminate: a closed question set cannot add a finding that was not already in the batch, so the set only shrinks or stalls.
 
 ## One automatic round
 
@@ -47,7 +47,7 @@ With residue after that round the gate stops deciding and asks:
 - **FAIL** → `fix now` (another round, explicitly) | fix manually then `--answer defer` | `defer` (proceed, registering pending findings).
 - **WARN** → `fix now` | `pass` (proceed).
 
-Warnings are remediated like failures — a `medium` finding enters the batch exactly as a `critical` one does. What used to make warnings expensive was the open-ended re-audit that regenerated them, not the act of fixing them.
+Warnings are remediated like failures — a `medium` finding enters the batch exactly as a `critical` one does.
 
 ## Edge cases
 

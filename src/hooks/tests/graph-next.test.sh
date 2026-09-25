@@ -640,6 +640,64 @@ test_poll_writes_progress_to_the_log() {
   fi
 }
 
+two_independent_nodes() {
+  printf '%s\n' '[' \
+    '  { "id": "TASK-001", "title": "Schema", "deps": [], "files": ["src/db/schema.ts"] },' \
+    '  { "id": "TASK-005", "title": "Outra", "deps": [], "files": ["src/other.ts"] }' \
+    ']' > nodes.json
+}
+
+test_a_question_does_not_park_the_other_nodes() {
+  local name="a question from one node is presented while the graph keeps waiting on the other in-flight node"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    two_independent_nodes
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    make_workspace "$dir" TASK-005 src/other.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" claim TASK-005 --worktree "wt-TASK-005" --branch ship/TASK-005 >/dev/null
+    printf 'state=gate\nquestion=q\ndetail:\nd\n' > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+    bash "$GRAPH" next > next.txt
+  )
+  out="$(cat "$dir/next.txt")"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "wait" ] \
+    && printf '%s' "$out" | grep -q 'TASK-001 asks' \
+    && printf '%s' "$out" | grep -q -- '--until-file .*TASK-005/ask.md' \
+    && ! printf '%s' "$out" | grep -q -- '--until-file .*TASK-001/ask.md'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_a_question_stops_the_graph_when_nothing_else_runs() {
+  local name="when every in-flight node is waiting on an answer the graph asks and stops"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    two_independent_nodes
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf 'state=gate\nquestion=q\ndetail:\nd\n' > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+    bash "$GRAPH" next > next.txt
+  )
+  out="$(cat "$dir/next.txt")"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "ask" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
 test_answer_wakes_the_worker_through_the_driver() {
   local name="answer writes the file AND resumes the worker through the driver — the file alone wakes nobody"
   local dir out
@@ -1642,6 +1700,8 @@ test_reset_refuses_a_node_that_is_not_failed
 test_reset_is_all_or_nothing
 test_unknown_dep_is_rejected_at_init
 test_answer_wakes_the_worker_through_the_driver
+test_a_question_does_not_park_the_other_nodes
+test_a_question_stops_the_graph_when_nothing_else_runs
 test_batch_admission_holds_a_freed_slot
 test_a_failed_node_does_not_freeze_the_run
 test_a_run_ending_with_failures_reports_them_once

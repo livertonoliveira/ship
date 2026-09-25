@@ -11,7 +11,7 @@ Project-wide AppSec audit of the codebase (not a diff).
 
 **Input:** $ARGUMENTS.
 
-`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
 ## 1. Focus
 
@@ -43,7 +43,7 @@ Per ### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Security audit (`audit/security.md`) {#security-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Security audit (`ship-audit-security`) {#security-audit-extension}
 
 Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 ```markdown
@@ -60,7 +60,7 @@ Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 - **critical**: Remote exploitation without authentication, unrestricted access to sensitive data. Requires immediate fix.
 - **high**: Exploitation possible with authentication or specific conditions. Significant impact risk.
 - **medium**: Hard to exploit but relevant impact, or easy to exploit with limited impact.
-- **low**: Theoretical risk, defense-in-depth, or best practice not followed. (apply overrides). Critical/high need PoC + CWE. A-F score: schema-core table.
+- **low**: Theoretical risk, defense-in-depth, or best practice not followed.. Critical/high need PoC + CWE. Gate and score: the findings gate (see the JSON summary below).
 
 ## 4. Report
 
@@ -80,19 +80,7 @@ Team/Project fields below always come from `ship/config.md → Linear Integratio
 - **Labels**: `security`
 - **Replaces base template** with: `## Vulnerability` (evidence, file:line, OWASP+CWE) · `## Attack Vector` (exploit steps, auth required?) · `## Impact` (what attacker/breach yields) · `## Proof of Concept` (critical/high: exploit payload) · `## Fix` (code change) · `## Acceptance Criteria` (verifiable checklist incl. security tests pass, no regressions) · `## Notes` (Effort, Urgent deploy required Yes|No), prefix `[SEC]`, label `security`. Skeleton: Summary+Score, Gate, Attack Surface Map, Findings, Roadmap, Checklist.
 
-Gate: ## Gate Decision Rules {#gate-decision-rules}
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.. Emit JSON per ## Schema Core {#schema-core}
+Emit JSON per ## Schema Core {#schema-core}
 
 Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool result (`ship:audit:run` reads it directly — no file I/O).
 
@@ -109,11 +97,17 @@ Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool 
 }
 ```
 
-Fields: `audit` type id · `gate` per `the Gate Decision Rules section (included above)` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
 
-### Scoring table
+### Gate and score
 
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical. (`audit: security`, `report_path`) as final output.
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
+
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
+
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself. (`audit: security`, `report_path`) as final output.
 
 ## Rules
 

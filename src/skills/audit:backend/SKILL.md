@@ -1,6 +1,6 @@
 ---
 name: ship:audit:backend
-description: "Ship Audit: project-wide backend performance audit. Detects stack from config and launches 3 parallel agents."
+description: "Ship Audit: project-wide backend performance audit. Detects stack from config, scans for candidates and confirms them."
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true
@@ -28,7 +28,7 @@ Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty fo
 - `Project Type` → backend | fullstack | monorepo (warn and stop if `frontend`)
 - `Stack` → for additional context
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-backend agent
 
@@ -38,6 +38,8 @@ Use the Agent tool with `subagent_type: ship:ship-audit-backend`. Pass all conte
 Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
+Findings gate script: @@ship/hooks/findings-gate.sh
+Heuristics script: @@ship/hooks/audit-heuristics.sh
 Team ID: <team-id or "none">
 
 ## Config
@@ -45,4 +47,4 @@ Project Type: <project-type>
 Stack: <stack>
 ```
 
-The agent handles strategy selection, parallel sub-agents, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
+The agent handles candidate scanning and confirmation, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.

@@ -12,7 +12,7 @@ context: fork
 
 You are the Ship implementer. You write every line of source yourself with Edit/Write — no Agent tool, no leaf workers. One context implements all modules sequentially, so conventions stay consistent across modules and no per-worker context reload is paid.
 
-> **CRITICAL — act, don't narrate.** Describing the plan or reporting status without editing files is a hard failure. A turn ending with a zero-mutation tree makes the caller mark this phase FAILED. Read the plan, then implement.
+Your output is edited files: read the plan, then implement. `pipeline.sh post-develop` fails the phase if the tree is unchanged.
 
 Decomposition already happened in `ship:plan` (`plan.md`); you follow its module boundaries and dependency order, correcting them in place only as step 2 allows — never re-decompose from scratch.
 
@@ -40,11 +40,11 @@ You are the context about to do the work, so act on the answers yourself: extend
 
 ## 3. Mark issue as In Progress
 
-> **MANDATORY — LINEAR MODE ONLY.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
+> **Linear mode only.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `@@ship/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
 
 ---
 
-## 4. Implement modules sequentially — MANDATORY ACTION
+## 4. Implement modules sequentially
 
 Order modules by `Depends on` (dependencies first; `none` in plan order). Implement one module at a time, completely, before starting the next:
 
@@ -66,11 +66,11 @@ Apply the plan's `## Integration` notes — verify cross-module imports/exports 
 
 ---
 
-## 6. Hygiene gate — final sweep (MANDATORY)
+## 6. Hygiene gate — final sweep
 
 Gate on the marker: `test -f .context/ship-run/.hygiene-hit`. Absent → skip `--all`, log "Ship hygiene — sweep skipped (clean phase)." (English literal), straight to step 7.
 
-Present → run as before:
+Present → run:
 
 ```bash
 bash "@@ship/hooks/hygiene-scan.sh" --all 2>&1
@@ -86,12 +86,12 @@ Hits → clean the exact `file:line` hits yourself (remove the comment or rename
 
 ---
 
-## 8. Self-check before returning (MANDATORY)
+## 8. Self-check before returning
 
 1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
 2. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
 
-No phase-status bookkeeping: the caller's `pipeline.sh post-develop` verifies your mutation against the pre-develop snapshot and writes the `dev` row itself — a zero-mutation tree is detected there and fails the phase. Narrating a plan while editing zero files is itself a defect — stop and implement instead.
+No phase-status bookkeeping: the caller's `pipeline.sh post-develop` verifies your mutation against the pre-develop snapshot and writes the `dev` row itself — a zero-mutation tree is detected there and fails the phase.
 
 ## Rules
 

@@ -110,4 +110,3 @@ Write findings to `.context/ship-run/<task-id>/perf-findings.md` (with scratch d
 - Adapt to stack and project type: no React fixes for Vue code; monorepo = per-workspace agents; backend = DB/algo focus; frontend = bundle/render focus.
 - Suggest fixes with code when possible.
 - Language: `Artifact language` for user-facing output; code/variable names always English.
-- Read efficiency: don't re-read files after Edit/Write unless requested or compaction is suspected.

@@ -55,7 +55,7 @@ Turns a Linear issue or free text into a spec + granular tasks (<400 lines each)
 
 ## 6. Create artifacts
 
-Linear: `save_project` (new, never reuse) → id in `ship/config.md ## Linear Project` → `artifact_language` → Proposal+Design docs → milestones → labels → issues (labeled, milestone-linked); issue `description` starts directly at `Context` — never a heading repeating the title or `TASK-NNN` id, the native `title` field already carries it.
+Linear: `save_project` (new, never reuse) → Proposal+Design docs (in the Artifact language) → milestones → labels → issues (labeled, milestone-linked); issue `description` starts directly at `Context` — never a heading repeating the title or `TASK-NNN` id, the native `title` field already carries it.
 Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `### TASK-NNN`) — same content, headings included (single file needs them to tell tasks apart).
 
 - **Proposal:** Source, Why, Scope, Technical Context, Requirements per §4, plus Scenario Index (`SC-XX → AC-YY · layer · title`).

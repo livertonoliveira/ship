@@ -9,11 +9,7 @@ from the user's session choice: a user may pick any session model to economize a
 limit, and Ship still guarantees the **reasoning tier (Sonnet)** on every skill, agent, and
 dispatched sub-agent — including the orchestrators and the pure template/aggregation phases.
 
-Ship does **not** downgrade any unit to Haiku. Earlier revisions ran template/control-flow phases
-(report rendering, findings aggregation, PR expansion, one-shot config setup) on Haiku to save
-cost, but thin Haiku fork-wrappers proved unreliable at *act-not-narrate dispatch*: a Haiku
-wrapper in a forked context would return "completed" without actually running its Sonnet worker,
-silently stranding the pipeline. To eliminate that failure mode, every unit is pinned to Sonnet.
+Ship never pins `haiku`: forked wrappers must reliably dispatch their workers, so every unit runs on Sonnet.
 
 This applies whether a skill is invoked standalone (`/ship:develop`) or as a sub-agent inside
 an orchestrator (`ship:run` dispatching `develop`). Both layers reinforce each other: the
@@ -47,11 +43,11 @@ tier split (there is none).
 
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
-| `ship:run`            | Orchestrator — judgment dispatch: diff refresh, surgical re-run scoping, gate eval. Spawns Sonnet leaves for test generation and quality analysis. |
+| `ship:run`            | Executor of `pipeline.sh next` — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
 | `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
-| `ship:audit:run`      | Orchestrator — fans out `audit:*` skills, then a consolidation agent aggregates their reports. |
+| `ship:audit:run`      | Orchestrator — fans out `audit:*` skills and applies the consolidated gate from their JSON summaries in its own context. |
 | `ship:plan`           | Test-aware planning — decomposition + scenario→test mapping. |
 | `ship:spec`           | Deep specification. |
 | `ship:perf`           | Performance analysis. |
@@ -93,7 +89,7 @@ Self-attestation from inside the model context is **not reliable**: the model re
 
 The ground truth lives in two places:
 
-1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the orchestrator's *intent*: which tool was called with which model parameter. Written by `ship:run` itself.
+1. **`.context/ship-run/<task-id>/dispatch-log.md`** — the pipeline's *intent*: which tool was dispatched with which model parameter. Written by `pipeline.sh`.
 
 2. **Claude Code session JSONL** — what the harness *actually executed*. Every API response is logged with the real model ID. Path:
    ```
@@ -112,13 +108,3 @@ The ground truth lives in two places:
    Every orchestrator and sub-agent turn should resolve to a Sonnet model ID. Any Haiku turn is a routing bug.
 
 A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection. Ship does not emit self-attestation banners; use dispatch-log + the session JSONL as described above to verify routing.
-
----
-
-## Pattern classification (skill-patterns-convention.md)
-
-`model-routing.md` is a **bundle pattern** (> 30 lines). Reference in SKILL.md via:
-
-```
-For model routing rules, read the file at ./ship/patterns/model-routing.md completely.
-```

@@ -26,11 +26,11 @@ Base template. All domains share this structure.
 
 Fields that **replace or add to** the base template per domain. Each consumer pulls `#finding-entry-base` plus only its own domain's extension below.
 
-#### Performance pipeline (`perf.md`) {#perf-extension}
+#### Performance pipeline (`ship-perf`) {#perf-extension}
 
 Categories: `DB | ALGO | MEM | NET | BUNDLE | RENDER | ARCH`. No extra fields — uses base template as-is.
 
-#### Security pipeline (`security.md`) {#security-pipeline-extension}
+#### Security pipeline (`ship-security`) {#security-pipeline-extension}
 
 Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC`
 ```markdown
@@ -42,7 +42,7 @@ Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC`
 - **Fix:** <specific code change with example>                         # replaces Suggestion
 ```
 
-#### Code Review pipeline (`review.md`) {#review-extension}
+#### Code Review pipeline (`ship-review`) {#review-extension}
 
 Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
 ```markdown
@@ -50,7 +50,7 @@ Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEA
 - **Problem:** <what's wrong and why it matters>                      # replaces Description
 ```
 
-#### Frontend audit (`audit/frontend.md`) {#frontend-audit-extension}
+#### Frontend audit (`ship-audit-frontend`) {#frontend-audit-extension}
 
 Categories: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P | ARCH`
 (Next.js: `STRATEGY | BOUNDARY | CACHE | BUNDLE | STREAMING | IMG | FONT | MIDDLEWARE | BUILD | COLD | ARCH`)
@@ -59,7 +59,7 @@ Categories: `NET | BUNDLE | LOAD | RENDER | JS | HYDRAT | IMG | FONT | MEM | 3P 
 - **Effort:** <Hours | Days | Weeks>                                   # adds
 ```
 
-#### Backend audit (`audit/backend.md`) {#backend-audit-extension}
+#### Backend audit (`ship-audit-backend`) {#backend-audit-extension}
 
 Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 ```markdown
@@ -67,7 +67,7 @@ Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 - **Maintenance window:** <Yes | No>                                   # adds
 ```
 
-#### Security audit (`audit/security.md`) {#security-audit-extension}
+#### Security audit (`ship-audit-security`) {#security-audit-extension}
 
 Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 ```markdown
@@ -81,7 +81,7 @@ Categories: `INJ | AUTH | AUTHZ | DATA | CFG | LOGIC | DEPS | PRIV`
 - **Urgent deploy:** <Yes | No>                                        # adds
 ```
 
-#### Database audit (`audit/database.md`) {#database-audit-extension}
+#### Database audit (`ship-audit-database`) {#database-audit-extension}
 
 Categories: `MDL | IDX | QRY | WRT | CFG | SCH | PERF`
 ```markdown
@@ -90,7 +90,7 @@ Categories: `MDL | IDX | QRY | WRT | CFG | SCH | PERF`
 - **Requires migration:** <Yes | No>                                   # adds
 ```
 
-#### Tests audit (`audit/tests.md`) {#tests-audit-extension}
+#### Tests audit (`ship-audit-tests`) {#tests-audit-extension}
 
 Category: `TEST`
 ```markdown
@@ -168,26 +168,22 @@ Base schema. Applies to all domains.
 
 ## Quality Report {#quality-report}
 
-Consolidated from `homolog.md`. Used in both Linear mode (as issue comment) and Local mode (as `report-<task-id>.md`).
+Rendered by `ship:homolog`. Used in both Linear mode (as issue comment) and Local mode (as `report-<task-id>.md`).
 
-Each findings section is rendered using the lazy-load algorithm — see ---
-# Lazy-Load Findings Algorithm
+Each findings section is rendered using the lazy-load algorithm — see # Lazy-Load Findings Algorithm
 
-Canonical algorithm for consolidating phase findings into acceptance and quality reports.
-Referenced by `homolog.md` (both Linear and Local mode).
+Canonical algorithm for consolidating phase findings into acceptance and quality reports (homolog, pr, and the pipeline's gate presentation).
 
-`phase-status.md` is the canonical gate index — it is **always** read first (in step 1.4 of homolog's "Load all artifacts"). The algorithm below assumes it is already in memory; do NOT re-read it.
+The gate index is the per-phase row that `pipeline.sh rows` prints (the caller already has it in context); never re-derive "most recent row per phase" from `phase-status.md` by hand.
 
 ---
 
 ## Algorithm
 
-`phase-status.md` has structured columns: `Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes`.
-
 For each phase (perf, security, review):
 
-1. **Look up the gate** from the `phase-status.md` table — take the **last row** for that phase (most recent run).
-   - If the phase has no row in `phase-status.md`: treat as `FAIL` (safe default)
+1. **Look up the gate** from that phase's row in the gate index.
+   - If the phase has no row: treat as `FAIL` (safe default)
 2. **Branch on gate status:**
 
 ### If gate = PASS
@@ -210,7 +206,7 @@ Open the findings markdown file for this phase, then filter before embedding:
 
 ## Link/reference (always required)
 
-- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (it is posted in step 6 of `homolog.md`), write `(full report will be attached to this issue)`
+- **Linear mode:** URL of the Linear comment containing the full findings; if the comment has not been posted yet (homolog posts it after approval), write `(full report will be attached to this issue)`
 - **Local mode:** relative path `ship/changes/<feature>/report-<task-id>.md`.
 
 ```markdown
@@ -255,7 +251,7 @@ Open the findings markdown file for this phase, then filter before embedding:
 
 ## Acceptance Report {#acceptance-report}
 
-Consolidated from `homolog.md`. Presented to the user during the acceptance phase.
+Rendered by `ship:homolog`. Presented to the user during the acceptance phase.
 
 ```markdown
 ## Acceptance Report — <Feature / Task Title>
@@ -291,7 +287,7 @@ Consolidated from `homolog.md`. Presented to the user during the acceptance phas
 
 ## PR Body Template {#pr-body}
 
-Extracted from `pr.md`. Used by `/ship:pr` to build the pull request description via `gh pr create`.
+Used by `/ship:pr` to build the pull request description via `gh pr create`.
 
 ```markdown
 ## Summary
@@ -338,7 +334,7 @@ Extracted from `pr.md`. Used by `/ship:pr` to build the pull request description
 - [ ] Criterion 2
 
 ---
-Generated by **Ship** | Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Generated by **Ship**
 ```
 
 ---
@@ -348,33 +344,15 @@ Generated by **Ship** | Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@an
 Canonical rendering format for per-phase findings in quality reports and PR descriptions.
 For the decision algorithm (how to determine PASS / WARN / FAIL), see the lazy-load-findings.md pattern (included above).
 
-### Gate = PASS — tabela-resumo
+### Gate = PASS
 
-When a phase gate = PASS, emit only the compact summary table row. **No findings content is embedded.**
-
-Format:
-
-| Fase | Status | Findings críticos/altos |
-|------|--------|------------------------|
-| Performance | ✅ PASS | 0 |
-| Security | ✅ PASS | 0 |
-| Code Review | ✅ PASS | 0 |
-
-Single-phase inline variant (used inside phase subsections):
+The phase appears in the report's Summary table; its findings section is the single line below — no findings content is embedded:
 
 ```
 ✓ <Phase>: PASS (0 critical/high findings) — [see full report](<link or path>)
 ```
 
-**Example — all phases PASS:**
-
-| Fase | Status | Findings críticos/altos |
-|------|--------|------------------------|
-| Performance | ✅ PASS | 0 |
-| Security | ✅ PASS | 0 |
-| Code Review | ✅ PASS | 0 |
-
-### Gate = WARN or FAIL — bloco expandido
+### Gate = WARN or FAIL
 
 When a phase gate = WARN or FAIL, embed findings inline. Apply the filter:
 - **Include in full**: all findings with severity `critical`, `high`, or `medium`

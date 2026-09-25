@@ -12,7 +12,7 @@ model: sonnet
 
 Next.js if config `Frontend:Next.js`/`next.config.*`, else generic. 3 agents, parallel.
 
-`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
 ## Next.js — 5 heuristics (A:A1-A2 B:B1-B2 C:C1)
 
@@ -28,7 +28,7 @@ NET: no CDN/cache. BUNDLE: full-lib imports. LOAD: render-blocking tags. RENDER:
 
 ## Report
 
-Findings: @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#frontend-audit-extension. Severity: @ship/patterns/severity.md#frontend. Gate: @ship/patterns/gates.md#gate-decision-rules.
+Findings: @ship/report-templates.md#finding-entry-base + @ship/report-templates.md#frontend-audit-extension. Severity: @ship/patterns/severity.md#frontend. Gate and score: the findings gate (see the JSON summary below).
 Local: `ship/audits/frontend-<date>.md`. Linear: @ship/linear-audit-template.md#audit-template-core + @ship/linear-audit-template.md#frontend-variation, `[PERF]`, `performance`.
 Emit JSON per @ship/patterns/audit-summary-schema.md#schema-core, `audit=frontend`.
 

@@ -28,7 +28,7 @@ Extract any Linear issue ID from `$ARGUMENTS` (e.g., `MOB-123`). May be empty fo
 - `Project Type` → backend | frontend | fullstack | monorepo
 - `Stack` → runtime, build tool, package manager
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 Routing hint (decides nothing — the agent owns the final routing): if `Frontend: Next.js` or a `next.config.*` file exists at the project root, the agent uses the Next.js path (5 heuristics); otherwise the generic path (11 categories).
 
@@ -40,6 +40,7 @@ Use the Agent tool with `subagent_type: ship:ship-audit-frontend`. Pass all cont
 Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
+Findings gate script: @@ship/hooks/findings-gate.sh
 
 ## Stack
 Frontend: <framework>

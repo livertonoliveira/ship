@@ -73,7 +73,7 @@ All contexts also read `ship/config.md` for stack and conventions.
 
 ## 6. Create artifacts
 
-Linear: `save_project` (new, never reuse) → id in `ship/config.md ## Linear Project` → `artifact_language` → Proposal+Design docs → milestones → labels → issues (labeled, milestone-linked); issue `description` starts directly at `Context` — never a heading repeating the title or `TASK-NNN` id, the native `title` field already carries it.
+Linear: `save_project` (new, never reuse) → Proposal+Design docs (in the Artifact language) → milestones → labels → issues (labeled, milestone-linked); issue `description` starts directly at `Context` — never a heading repeating the title or `TASK-NNN` id, the native `title` field already carries it.
 Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `### TASK-NNN`) — same content, headings included (single file needs them to tell tasks apart).
 
 - **Proposal:** Source, Why, Scope, Technical Context, Requirements per §4, plus Scenario Index (`SC-XX → AC-YY · layer · title`).
@@ -97,7 +97,7 @@ Summarize totals + task tree (per milestone/label, lines, files, project URL if 
 - All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
 - Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
 - LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
+- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), and the `@SC-XX`/`@AC-XX`/`@layer` tags are technical identifiers — always English, never translated
 
 ## Resolving artifact language
 

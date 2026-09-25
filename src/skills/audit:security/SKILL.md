@@ -27,7 +27,7 @@ Extract any `Security focus override` (e.g., `web-api`, `mobile`, `infrastructur
 - `Conventions → Artifact language` → e.g., `pt-BR`
 - `Stack` → for additional context
 
-See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md.
+See @ship/patterns/storage-mode.md and @ship/patterns/stack-detection.md#stack-fields.
 
 ## 3. Invoke ship-audit-security agent
 
@@ -37,6 +37,7 @@ Use the Agent tool with `subagent_type: ship:ship-audit-security`. Pass all cont
 Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
+Findings gate script: @@ship/hooks/findings-gate.sh
 Security focus override: <override or "none">
 
 ## Config

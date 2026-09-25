@@ -7,66 +7,32 @@ model: sonnet
 
 # Ship Test E2E — End-to-End Test Worker
 
-Generate and run e2e tests for critical user flows described in the inline context from the caller.
+Generate and run e2e tests for critical user flows described in the inline context from the caller. Your `<layer>` is `e2e`; the test command is the configured e2e framework's.
 
 **Input:** $ARGUMENTS (task ID, optional `Mode:` line, artifact language, scenarios, files, source context).
 
----
+@ship/patterns/test-worker.md#test-worker-context
 
-## 1. Load context
+@ship/patterns/test-worker.md#test-worker-modes
 
-- `Brief: <path>` in the prompt (pipeline dispatch): Read that file — this layer's `## Test Contract`, `## Scenarios`, `## Denylist`, `## Source` pointer; treat like inline sections, never fall back to standalone discovery.
-- If injected inline, use ONLY `## Scenarios`, `## Files`, `## Source` (+optional `## Test Contract`) — never re-read `proposal.md`, `design.md`, or the Linear issue. `## Test Contract`, when present, is pre-mapped test slots (target file + arrange/act/assert) from `ship:plan`'s `@SC-XX` mapping — source of truth.
-- **Standalone**: read `ship/config.md` for stack/framework/conventions; `git diff --name-only origin/main...HEAD` for modified files.
+## Check e2e framework
 
-**Mode: clean** — hygiene fix, not generation. In each `## Violations` file, strip every comment and spec ID/Linear key (`SC-/AC-/REQ-/IMPL-/TEST-<n>`, `<TEAM>-<n>`) everywhere incl. names/string literals; rename ID-carrying test names to describe behavior. Change nothing else (keep legit tokens like `UTF-8`). Skip §2–3; report cleaned files.
+> Skip if `## Source` was injected inline or `Mode: execute` is active.
 
-**Mode: generate** — do §2–3 minus Execution rules (no test run, no pass/fail counts), files only. Honor injected `## Denylist` (paths owned by `ship:develop` modules): never touch one, write tests only. If a required test's only viable location collides with a denylisted path, skip it, report the conflict (path + scenario/slot), and continue — the `Status: DONE_WITH_CONCERNS` trigger (§4). Report files created or extended. `Manifest: <path>` in the prompt: write one `- <path> (e2e)` line per file actually created **or extended** (an existing flow you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything) to that manifest file — no header, write it even when zero files touched.
+Detect via `ship/config.md` (an explicit framework there wins), else Glob before concluding absence: `playwright.config.{ts,js}`, `cypress.config.{ts,js}`/`.json`, `wdio.conf.{ts,js}`, `nightwatch.conf.{js,ts}`, `testcafe.js`/`.testcaferc.json`, `codecept.conf.{ts,js}`.
 
-**Mode: execute** — runs an already-generated suite, skipping §2–3. Take injected `## Test Files`, run via the e2e command. On failure diagnose test vs. code, fix (up to 2 iterations). Report pass/fail per file and files edited during a fix, for the caller's hygiene sweep.
+No framework detected: generate nothing and report `NEEDS_CONTEXT` — distinct from a config-disabled skip, which the orchestrator handles upstream. Tell the user, in the Artifact language, that e2e was skipped because no framework config was found (name the files checked) and how to enable it.
 
----
+## Generate e2e tests
 
-## 2. Check e2e framework
+Target critical end-to-end user flows, using the project's page objects and selectors.
 
-> Guard: skip if `## Source` was injected inline, or `Mode: execute`.
+@ship/patterns/test-worker.md#test-worker-scenarios
 
-Detect via `ship/config.md`, else Glob before concluding absence: `playwright.config.{ts,js}`, `cypress.config.{ts,js}`/`.json`, `wdio.conf.{ts,js}`, `nightwatch.conf.{js,ts}`, `testcafe.js`/`.testcaferc.json`, `codecept.conf.{ts,js}`. Explicit `ship/config.md` naming wins.
+**Fallback (no scenarios for this layer):** identify the affected critical flows and simulate real user interaction with the existing page-object/selector patterns.
 
-**If NO framework is detected**: do NOT generate tests — `NEEDS_CONTEXT` trigger (§4), distinct from a config-disabled skip (handled upstream by the orchestrator). Report (artifact language):
-> "E2E pulado: nenhum framework e2e detectado no projeto (playwright.config.ts, cypress.config.ts, wdio.conf.ts, etc. não encontrados). Para ativar, configure um framework e2e e atualize ship/config.md."
+**Execution (skip in `Mode: generate`):** follow the existing e2e structure; run via the configured command; on failure, diagnose test vs code and fix (up to 2 iterations). Avoid timing/network flakiness.
 
----
+@ship/patterns/test-worker.md#test-worker-report
 
-## 3. Generate e2e tests
-
-Target critical end-to-end user flows; read each file at most once, never re-Read after Edit/Write.
-
-**Scenario mode (scenarios inline):** orchestrator strips `@SC-XX`/`@AC-YY` tags, leaving title+steps — iterate by behavior, no ID to carry. Per scenario: one e2e test, arrange = `Given`/`Background`, act = `When`, assert = `Then` (`Scenario Outline` → one parameterized test over its `Examples`). Name by **observable behavior** — NEVER put spec IDs or the Linear issue key (`<TEAM>-NNN`) in any suite/case identifier (`describe`/`it`, `t.Run`, `@DisplayName`, `@Test`, `[Fact]`, `func TestXxx`), any language. Forbidden: `it('AC-43: ...')`; correct: `@DisplayName("build passes after install")`. No marker comments. Use the project's page objects/selectors; translate Gherkin into its native framework (never Cucumber); never invent scenarios beyond those given.
-
-**Fallback mode (no scenarios for this layer):** identify affected critical flows, generate tests simulating real user interaction with existing page-object/selector patterns; the standalone-fallback path — if it also finds nothing, `NEEDS_CONTEXT` (§4).
-
-**Execution rules (skip in `Mode: generate`):** follow existing e2e structure; run via the configured command (Vitest: `--pool=threads`, never `--pool=forks`); on failure diagnose test vs. code and fix (up to 2 iterations).
-
----
-
-## 4. Report results
-
-```
-E2E Tests:
-- Created: <N> tests in <files>
-- Passed: <N>
-- Failed: <N>
-- Failures: [<file> (<N> failures), ...]
-- Status: <ENUM>
-```
-
-`Status`: `@ship/patterns/worker-status.md#worker-status-contract`. `DONE` — generated/executed successfully, no unresolved failures. `DONE_WITH_CONCERNS` — denylisted-path collision (generate mode §1); still report the conflict per its own prose, `Status` is an added signal not a replacement. `NEEDS_CONTEXT` — missing required input (no e2e framework, §2; or no scenarios/source and standalone fallback found nothing). Exactly one `Status:` line per report.
-
----
-
-## Rules
-
-- Real user flows only, never trivial tests; independent, deterministic (no timing/network/flakiness dependence).
-- Do not install test frameworks — use what's configured.
-- Artifact language for user-facing output; code always English.
+@ship/patterns/test-worker.md#test-worker-rules

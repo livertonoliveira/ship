@@ -15,7 +15,7 @@ Read Test Scope, resolve scenarios by layer, fan out to named agents in parallel
 
 > **Pipeline note:** inside `/ship:run`, `pipeline.sh next` dispatches the `ship-test-*` workers directly with deterministic per-layer briefs — it never invokes this skill. This is the standalone, user-invoked entry.
 
-> **CRITICAL — act, don't narrate.** No Edit/Write tools; the ONLY way tests get written/run is dispatching `ship-test-*` workers via the **Agent tool**. A plan with zero Agent calls is a **hard failure**. Resolve layers, then dispatch immediately.
+You have no Edit/Write tools: tests are written and run only by the `ship-test-*` workers you dispatch via the Agent tool. Resolve layers, then dispatch.
 
 **Input received:** $ARGUMENTS (task ID as the first token, then optional `Mode:`, artifact language, scenarios, modified files)
 
@@ -27,17 +27,17 @@ Parse `$ARGUMENTS`: `task-id` = first token (absent → derive from branch name 
 
 ## 2. Guard — all layers disabled
 
-`run=` empty → output "Fase de testes pulada — todos os layers estão desabilitados em `Test Scope`..." and stop. Applies to every mode.
+`run=` empty → tell the user, in the Artifact language, that the test phase was skipped because every layer is disabled in `Test Scope`, and stop. Applies to every mode.
 
-## 3. Fan out to named agents (parallel) — MANDATORY ACTION
+## 3. Fan out to named agents (parallel)
 
-For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`; some skipped → log "Layers pulados por configuração: [...]. Para habilitá-los, edite `Test Scope`.").
+For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:ship-test-<layer>` (unit → `ship-test-unit`, integration → `ship-test-integration`, e2e → `ship-test-e2e`). Never dispatch a layer in `skip=` (log `Skipping [layer] tests (disabled in Test Scope)`; some skipped → tell the user, in the Artifact language, which layers were skipped and that `Test Scope` enables them).
 
 **Context slicing — always pass inline, never rely on the agent re-reading:**
 1. Filter scenarios: only `@unit`/`@integration`/`@e2e` tagged for the respective agent — never the full list to all.
-2. Resolve the diff **once**, pass inline as `## Source`: `BASE=$(git merge-base origin/main HEAD); git add -A -N; git diff "$BASE"` (captures untracked; never three-dot committed-only).
+2. Resolve the diff **once**, pass inline as `## Source`: `bash "${CLAUDE_SKILL_DIR}/hooks/capture-diff.sh" .context/ship-run/<task-id>/diff.md --prefer .context/ship-run/<task-id>/diff.md`, then read that file.
 3. Prompt: `Task ID` / `Artifact language` / `## Test Contract` (this layer's slots, omit if none) / `## Scenarios` (filtered) / `## Files` / `## Source`.
-4. **De-identify before injecting** — strip spec-ID tags, keep behavioral steps. `${CLAUDE_SKILL_DIR}/patterns/deidentify-context.md`.
+4. **De-identify before injecting** — pipe the `## Test Contract` and `## Scenarios` text through `bash "${CLAUDE_SKILL_DIR}/hooks/deidentify.sh" --team <Linear team key>` (omit `--team` in local mode) and inject its output; why: `${CLAUDE_SKILL_DIR}/patterns/deidentify-context.md`.
 5. Agents receiving these sections inline MUST NOT fall back to standalone discovery.
 
 **Mode: generate delta** — add `Mode: generate` after `Task ID:`; append `## Denylist` (paths the worker must never touch: `plan.md` module file sets, else the task's `## Files` create/modify paths); workers generate only, no test command, no pass/fail report.
@@ -46,15 +46,15 @@ For each layer in `run=`, dispatch via the Agent tool with `subagent_type: ship:
 
 **Mode: full (default)** — no `Mode:` line, no denylist: each worker runs its full generate+execute cycle.
 
-## 4. Hygiene sweep (MANDATORY after generate/full)
+## 4. Hygiene sweep after generate/full
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/hooks/hygiene-scan.sh" --all 2>&1
 ```
 Hits → dispatch a cleanup worker per flagged file (`Mode: clean`, matching layer type), pass exact `file:line` hits, re-run. Hits remain after 2nd cycle → surface `warn` — never report clean with known hits.
 
-## 5. Self-check before returning (MANDATORY)
+## 5. Self-check before returning
 
-1. Every `run=` layer — issued a `ship-test-*` Agent call? Narrating with zero calls is a defect; dispatch the missing workers now.
+1. Every `run=` layer — issued a `ship-test-*` Agent call? If not, dispatch the missing workers.
 2. `generate`/`full`: hygiene sweep actually ran and hits were remediated?
 3. Report per layer: tests created (and passed/failed for `full`/`execute`).

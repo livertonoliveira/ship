@@ -173,6 +173,48 @@ advance_past_planning() {
   printf '%s' "$out"
 }
 
+linear_graph_node() {
+  local dir="$1" task="$2" graph="$3"
+  sed -i.bak 's/^- Configured: no$/- Configured: yes/' "$dir/ship/config.md"
+  mkdir -p "$dir/.context/ship-run/$task"
+  printf '%s\n' "$graph" > "$dir/.context/ship-run/$task/graph-node.txt"
+}
+
+test_graph_node_reads_cached_project_docs() {
+  local name="a graph node reads the Proposal/Design another node cached instead of fetching them again"
+  local dir graph docs; dir="$(mktemp -d)"; graph="$dir/.context/ship-graph/feat"; docs="$dir/.context/ship-graph-docs/feat"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  linear_graph_node "$dir" GD1 "$graph"
+  mkdir -p "$docs"; echo p > "$docs/proposal.md"; echo d > "$docs/design.md"
+  local out; out="$(next "$dir" GD1)"
+  if printf '%s' "$out" | grep -q "cached for this graph at $docs/proposal.md" \
+    && ! printf '%s' "$out" | grep -q 'list_documents+get_document'; then
+    log_pass "$name"
+  else
+    log_fail "$name ($out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_first_graph_node_caches_project_docs() {
+  local name="the first graph node to stage context is told to cache the Proposal/Design for the others"
+  local dir graph docs; dir="$(mktemp -d)"; graph="$dir/.context/ship-graph/feat"; docs="$dir/.context/ship-graph-docs/feat"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  linear_graph_node "$dir" GD2 "$graph"
+  local out; out="$(next "$dir" GD2)"
+  if printf '%s' "$out" | grep -q 'list_documents+get_document' \
+    && printf '%s' "$out" | grep -q "Save the full Proposal and Design documents to $docs/proposal.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_first_call_asks_for_context_staging() {
   local name="first call inits the scratch dir and asks for context staging (action=work)"
   local dir; dir="$(mktemp -d)"
@@ -459,6 +501,51 @@ test_happy_path_reaches_done_with_status_rows() {
     log_pass "$name"
   else
     log_fail "$name"
+  fi
+  rm -rf "$dir"
+}
+
+test_worker_status_reaches_the_test_generate_row() {
+  local name="a test worker that wrote no status is named BLOCKED in the test-generate row, without changing the gate"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  next "$dir" TW1 >/dev/null
+  local scratch="$dir/.context/ship-run/TW1"
+  one_file_spec > "$scratch/spec.md"
+  advance_past_planning "$dir" TW1 >/dev/null
+  mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
+  next "$dir" TW1 >/dev/null
+  printf -- '- src/b.test.js (unit)\n' > "$scratch/generated-tests-unit.md"
+  next "$dir" TW1 >/dev/null
+  if grep -qE '^\| test-generate \| #1 \|.*\| pass \|.*worker status: unit BLOCKED' "$scratch/phase-status.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(grep '^| test-generate' "$scratch/phase-status.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+test_worker_status_all_done_leaves_notes_empty() {
+  local name="all test workers DONE: the test-generate row carries no worker-status note"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled
+- integration: disabled
+- e2e: disabled' ''
+  next "$dir" TW2 >/dev/null
+  local scratch="$dir/.context/ship-run/TW2"
+  one_file_spec > "$scratch/spec.md"
+  advance_past_planning "$dir" TW2 >/dev/null
+  mkdir -p "$dir/src" && echo 'module.exports=1' > "$dir/src/b.js"
+  next "$dir" TW2 >/dev/null
+  printf -- '- src/b.test.js (unit)\n' > "$scratch/generated-tests-unit.md"
+  printf 'Status: DONE\n' > "$scratch/worker-status-unit.md"
+  next "$dir" TW2 >/dev/null
+  if grep -q '^| test-generate | #1 |' "$scratch/phase-status.md" && ! grep -q 'worker status' "$scratch/phase-status.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(grep '^| test-generate' "$scratch/phase-status.md" 2>/dev/null))"
   fi
   rm -rf "$dir"
 }
@@ -839,6 +926,10 @@ test_static_gate_skip_when_no_checks() {
 }
 
 test_first_call_asks_for_context_staging
+test_graph_node_reads_cached_project_docs
+test_first_graph_node_caches_project_docs
+test_worker_status_reaches_the_test_generate_row
+test_worker_status_all_done_leaves_notes_empty
 test_greenfield_multi_module_runs_planner
 test_invalid_plan_replans_before_asking
 test_invalid_plan_abort_stops

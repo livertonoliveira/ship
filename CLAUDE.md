@@ -18,7 +18,7 @@ Ship is a set of Claude Code slash commands (`/ship:*`) that automates the compl
 | `/ship:homolog` | Final report + user homologation |
 | `/ship:pr` | Create PR with atomic commits and aggregated quality report |
 | `/ship:graph` | Cross-task parallelism: runs a feature's independent tasks in isolated workspaces, one `/ship:run` per node, each opening its own PR against the real trunk; the coordinator only polls whether those PRs actually merged |
-| `/ship:audit:backend` | Project-wide backend performance audit (3 parallel agents) |
+| `/ship:audit:backend` | Project-wide backend performance audit (script-scanned candidates, confirmed by the agent) |
 | `/ship:audit:frontend` | Project-wide frontend performance audit (Next.js 5-layer or generic 11-category) |
 | `/ship:audit:database` | Project-wide database audit (MongoDB / PostgreSQL / MySQL) |
 | `/ship:audit:security` | Project-wide AppSec audit — OWASP Top 10, A-F score, PoC for critical/high |
@@ -87,7 +87,7 @@ ship/
 
 ### Gates
 - `critical` or `high` findings → gate `fail` → pipeline stops
-- `medium` findings → gate `warn` → pipeline pauses, asks user
+- `medium` findings → gate `warn` → remediated in the same automatic round as failures; residue after that round asks the user
 - Only `low` or no findings → gate `pass` → pipeline continues
 
 ### Tracking

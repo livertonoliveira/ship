@@ -132,6 +132,72 @@ test_eslint_package_script_is_scoped_to_touched_files() {
   rm -rf "$d"
 }
 
+test_lint_fix_runs_only_on_touched_files() {
+  local name="--lint-fix runs the configured Lint fix on the touched files only"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint fix: ./fix.sh {files}\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > fix-args.txt\nexit 1\n' > "$d/fix.sh"
+  chmod +x "$d/fix.sh"
+  mkdir -p "$d/src"; : > "$d/src/a.ts"
+  printf 'src/a.ts\nsrc/gone.ts\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --lint-fix >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(tr '\n' '|' < "$d/fix-args.txt")" = "src/a.ts|" ] && [ -s "$d/scratch/lint-fix.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(tr '\n' '|' < "$d/fix-args.txt" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
+test_lint_fix_without_placeholder_never_runs_repo_wide() {
+  local name="a Lint fix without {files} is not run — it could rewrite code outside the task"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf '{}\n' > "$d/package.json"
+  printf -- '- Lint fix: ./fix.sh --all\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\ntouch ran.txt\n' > "$d/fix.sh"
+  chmod +x "$d/fix.sh"
+  mkdir -p "$d/src"; : > "$d/src/a.ts"
+  printf 'src/a.ts\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --lint-fix >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ] && [ ! -f "$d/ran.txt" ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
+  rm -rf "$d"
+}
+
+test_lint_fix_derives_from_a_scoped_eslint() {
+  local name="an eslint lint script scoped to touched files gets --fix appended"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf '{"scripts":{"lint":"eslint src --max-warnings 0"}}\n' > "$d/package.json"
+  mkdir -p "$d/node_modules/.bin" "$d/src"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/node_modules/.bin/eslint"
+  chmod +x "$d/node_modules/.bin/eslint"
+  : > "$d/src/a.ts"
+  printf 'src/a.ts\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --lint-fix >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(tr '\n' '|' < "$d/lint-args.txt")" = "--max-warnings|0|src/a.ts|--fix|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(tr '\n' '|' < "$d/lint-args.txt" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
+test_lint_fix_without_footprint_does_nothing() {
+  local name="--lint-fix with no develop footprint resolves nothing"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint fix: ./fix.sh {files}\n' >> "$d/config.md"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --lint-fix >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
+  rm -rf "$d"
+}
+
 test_lint_runs_unscoped_without_a_footprint() {
   local name="no develop footprint: the configured Lint command runs exactly as written"
   local d; d="$(mktemp -d)"
@@ -153,6 +219,10 @@ test_static_only_records_individual_exits
 test_lint_placeholder_receives_only_existing_touched_files
 test_eslint_package_script_is_scoped_to_touched_files
 test_lint_runs_unscoped_without_a_footprint
+test_lint_fix_runs_only_on_touched_files
+test_lint_fix_without_placeholder_never_runs_repo_wide
+test_lint_fix_derives_from_a_scoped_eslint
+test_lint_fix_without_footprint_does_nothing
 test_full_run_carries_forward_a_red_typecheck
 test_unrecognized_test_framework_fails_with_actionable_message
 

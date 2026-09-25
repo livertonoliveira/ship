@@ -215,6 +215,44 @@ EOF
   fi
 }
 
+test_footprint_ignores_siblings_merged_upstream() {
+  local name="a node synced with the remote trunk is not charged with a merged sibling's files while the local base lags"
+  local dir remote json
+  dir="$(mktemp -d)"
+  remote="$(mktemp -d)"
+  new_repo "$dir"
+  git init -q --bare "$remote"
+  (
+    cd "$dir"
+    git remote add origin "$remote"
+    git push -q origin main
+    printf '%s\n' '[' \
+      '  { "id": "TASK-010", "title": "Em voo", "deps": [], "files": ["src/a.ts"] },' \
+      '  { "id": "TASK-011", "title": "Pendente", "deps": [], "files": ["src/sibling.ts"] }' \
+      ']' > nodes.json
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    git worktree add -q wt-up -b up main
+    mkdir -p wt-up/src && printf 'x\n' > wt-up/src/sibling.ts
+    git -C wt-up add -A && git -C wt-up commit -qm "a merged sibling"
+    git -C wt-up push -q origin up:main
+    git fetch -q origin
+    git worktree add -q wt-010 -b ship/TASK-010 origin/main
+    mkdir -p wt-010/src && printf 'x\n' > wt-010/src/a.ts
+    git -C wt-010 add -A && git -C wt-010 commit -qm "feat: own change"
+    bash "$GRAPH" claim TASK-010 --worktree wt-010 --branch ship/TASK-010 >/dev/null
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir" "$remote"
+  if printf '%s' "$json" | grep -q 'sibling.ts",\|"src/a.ts,src/sibling.ts\|src/sibling.ts,src/a.ts'; then
+    log_fail "$name (merged sibling file in TASK-010's footprint)"
+  elif printf '%s' "$json" | grep -q '"blocked_by_conflict": "TASK-010"'; then
+    log_fail "$name (TASK-011 was held back by a file TASK-010 never touched)"
+  else
+    log_pass "$name"
+  fi
+}
+
 test_conflicts_reports_how_many_it_refreshed() {
   local name="conflicts reports the count of footprints it refreshed and nodes it blocked"
   local dir out still_blocked
@@ -371,6 +409,7 @@ test_sibling_directory_is_not_an_overlap
 test_lowest_id_wins_the_slot_deterministically
 test_loser_is_blocked_by_conflict_not_failed
 test_real_footprint_overrides_the_declared_one
+test_footprint_ignores_siblings_merged_upstream
 test_conflicts_reports_how_many_it_refreshed
 test_conflict_clears_once_the_holder_is_merged
 test_unchanged_footprint_logs_nothing_new

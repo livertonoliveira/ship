@@ -50,7 +50,7 @@ Each audit below fans out to its own sub-agents, and every one of them would oth
 
 ### 3. Launch in parallel
 
-Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently — never sequentially. Each declares `context: fork` + `model: sonnet` and delegates to its `ship-audit-*` agent; do NOT wrap any in an `Agent` call. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
+Announce the plan, then invoke every applicable audit skill via the **Skill tool** in one turn so they fork concurrently. Each declares `context: fork` + `model: sonnet` and delegates to its own `ship-audit-*` agent, so call the skill directly rather than through an `Agent`. Each writes its report to `ship/audits/<type>-<YYYY-MM-DD>.md`.
 
 ### 4. Consolidate
 
@@ -73,37 +73,21 @@ Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool 
 }
 ```
 
-Fields: `audit` type id · `gate` per `## Gate Decision Rules {#gate-decision-rules}
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
 
-Gate decision rules applied after every quality phase:
+### Gate and score
 
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
 
-A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
 
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here.` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
-
-### Scoring table
-
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical.
-
-## Audit-specific notes
-
-| Audit | Gate cap | Notes |
-|-------|----------|-------|
-| `backend` | PASS\|WARN\|FAIL | Standard gate |
-| `frontend` | PASS\|WARN\|FAIL | Standard gate |
-| `database` | PASS\|WARN\|FAIL | Standard gate |
-| `security` | PASS\|WARN\|FAIL | Standard gate |
-| `tests` | **PASS\|WARN** | HIGH findings map to WARN, not FAIL — test gaps are a quality issue, not blocking |
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself.
 
 ## Usage in `ship:audit:run`
 
-After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) — do NOT re-read the report files. Apply the gate logic inline in this context; the summaries already returned here, so a separate consolidation agent only adds a serial round-trip. Never fan out an Agent to aggregate.
+After all parallel audit agents complete, their tool results are already in the orchestrator context. Extract the JSON block from each result — no need to re-open the markdown files. Pass the extracted JSON objects inline to any consolidation step.) ; the report files need not be reopened. Apply the gate here: the summaries are already in context, so a consolidation agent would only add a serial round-trip.
 
 **Gate:** any FAIL → **FAIL**; else any WARN → **WARN**; else **PASS**.
 
@@ -113,7 +97,7 @@ After all parallel audit agents complete, their tool results are already in the 
 
 Include: gate result; per-audit table (severity counts + gate, TOTAL row); all critical/high findings (category, file, description, impact, suggestion) by severity then audit; unified roadmap; condensed medium/low list; links to each report.
 
-### 5. Present
+### 6. Present
 
 Show the gate, critical/high findings with source, and the roadmap.
 - FAIL → "Pipeline is blocked. Resolve critical/high findings before proceeding."
@@ -131,7 +115,7 @@ Show the gate, critical/high findings with source, and the roadmap.
 - All user-facing text during execution (reports, summaries, gate results, status updates, questions) follows the `Artifact language` field from `ship/config.md → Conventions`
 - Code, variable names, file paths, commit messages, branch names, and technical identifiers are always in English
 - LLM system prompts (command files) are always in English — not configurable
-- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), the `@SC-XX`/`@AC-XX`/`@layer` tags, and the `TEST-*`/`IMPL-*` markers are technical identifiers — always English, never translated
+- **Gherkin scenarios**: the natural-language step prose (`Given`/`When`/`Then` bodies, `Scenario`/`Feature` titles) is user-facing and follows the `Artifact language`. The Gherkin **keywords** (`Feature`, `Background`, `Scenario`, `Scenario Outline`, `Examples`, `Given`, `When`, `Then`, `And`, `But`), and the `@SC-XX`/`@AC-XX`/`@layer` tags are technical identifiers — always English, never translated
 
 ## Resolving artifact language
 

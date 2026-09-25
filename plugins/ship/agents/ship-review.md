@@ -74,7 +74,7 @@ Format: `### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` and `#### Code Review pipeline (`review.md`) {#review-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md).` and `#### Code Review pipeline (`ship-review`) {#review-extension}
 
 Categories: `SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | DRY | KISS | CLEAN | CONSISTENCY | TEST`
 ```markdown
@@ -136,4 +136,3 @@ bash "<findings-gate-script>" review \
 - Respect settled Design decisions unless there's a serious problem; no pedantry — only real maintainability/readability/extensibility issues, and accidental duplication isn't a DRY violation.
 - KISS is top priority: don't complicate working simple code for "elegance". Every suggestion needs a concrete code example.
 - User-facing output in `Artifact language`; code/identifiers always English.
-- No re-reads after Edit/Write unless requested or compaction suspected.

@@ -3,7 +3,9 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: findings-gate.sh <phase> (--findings <json> | --critical N --high N --medium N --low N) [options]" >&2
+  echo "usage: findings-gate.sh (<phase> | --audit <type>) (--findings <json> | --critical N --high N --medium N --low N) [options]" >&2
+  echo "  --audit <type>      project-wide audit (backend|frontend|database|security|tests): applies that audit's" >&2
+  echo "                      overrides, caps the tests audit at WARN, prints score=A..F and no phase-status row" >&2
   echo "  --findings <file>   count severities from a JSON array of {\"severity\":...} objects" >&2
   echo "  --critical/--high/--medium/--low N   explicit finding counts (ignored when --findings is given)" >&2
   echo "  --files <str>       Files column value (default '-')" >&2
@@ -14,6 +16,27 @@ usage() {
 }
 
 VALID_PHASES="dev test perf security review frontend-perf database backend"
+VALID_AUDITS="backend frontend database security tests"
+
+# The Severity Overrides phase each audit answers to. The tests audit has none.
+audit_override_phase() {
+  case "$1" in
+    frontend) printf '%s' "frontend-perf" ;;
+    tests) printf '%s' "" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# A none/only-low · B no critical/high, >=1 medium · C no critical, 1-2 high ·
+# D no critical, 3+ high · F >=1 critical.
+audit_score() {
+  if [ "$CRIT" -gt 0 ]; then printf 'F'
+  elif [ "$HIGH" -ge 3 ]; then printf 'D'
+  elif [ "$HIGH" -ge 1 ]; then printf 'C'
+  elif [ "$MED" -ge 1 ]; then printf 'B'
+  else printf 'A'
+  fi
+}
 
 trim() {
   local s="$1"
@@ -81,12 +104,13 @@ apply_overrides() {
 }
 
 main() {
-  local phase="" findings="" files="-" notes="" scratch="" config="ship/config.md" run="#<RUN>"
+  local phase="" audit="" findings="" files="-" notes="" scratch="" config="ship/config.md" run="#<RUN>"
   CRIT="" HIGH="" MED="" LOW=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --findings) findings="$2"; shift 2 ;;
+      --audit) audit="$2"; shift 2 ;;
       --critical) CRIT="$2"; shift 2 ;;
       --high) HIGH="$2"; shift 2 ;;
       --medium) MED="$2"; shift 2 ;;
@@ -104,11 +128,19 @@ main() {
     esac
   done
 
-  if [ -z "$phase" ]; then usage; exit 1; fi
-  case " $VALID_PHASES " in
-    *" $phase "*) ;;
-    *) echo "findings-gate.sh: unknown phase: $phase" >&2; exit 1 ;;
-  esac
+  if [ -n "$audit" ]; then
+    if [ -n "$phase" ]; then usage; exit 1; fi
+    case " $VALID_AUDITS " in
+      *" $audit "*) ;;
+      *) echo "findings-gate.sh: unknown audit: $audit" >&2; exit 1 ;;
+    esac
+  else
+    if [ -z "$phase" ]; then usage; exit 1; fi
+    case " $VALID_PHASES " in
+      *" $phase "*) ;;
+      *) echo "findings-gate.sh: unknown phase: $phase" >&2; exit 1 ;;
+    esac
+  fi
 
   if [ -n "$findings" ]; then
     if [ ! -f "$findings" ]; then
@@ -129,7 +161,13 @@ main() {
     esac
   done
 
-  apply_overrides "$config" "$phase"
+  if [ -n "$audit" ]; then
+    local override_phase
+    override_phase="$(audit_override_phase "$audit")"
+    [ -n "$override_phase" ] && apply_overrides "$config" "$override_phase"
+  else
+    apply_overrides "$config" "$phase"
+  fi
 
   local gate gate_lower
   if [ "$CRIT" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
@@ -138,6 +176,19 @@ main() {
     gate="WARN"; gate_lower="warn"
   else
     gate="PASS"; gate_lower="pass"
+  fi
+
+  if [ -n "$audit" ]; then
+    local score
+    score="$(audit_score)"
+    if [ "$audit" = "tests" ] && [ "$gate" = "FAIL" ]; then gate="WARN"; fi
+    printf 'critical=%s\n' "$CRIT"
+    printf 'high=%s\n' "$HIGH"
+    printf 'medium=%s\n' "$MED"
+    printf 'low=%s\n' "$LOW"
+    printf 'gate=%s\n' "$gate"
+    printf 'score=%s\n' "$score"
+    return 0
   fi
 
   local row

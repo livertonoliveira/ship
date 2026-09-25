@@ -274,10 +274,20 @@ pr_merge_state() {
   json_field "$out" mergeStateStatus
 }
 
+# gh merges on the forge first and tidies up locally afterwards, so a local
+# failure (the branch is checked out in the node's worktree) exits non-zero on
+# a PR that is already merged. The forge is asked right away instead of the
+# node waiting a whole poll — measured at 16s to 17min in 6 of 21 merges — and
+# a merge that really did not happen is retried once.
 pr_try_merge() {
-  local dir="$1" id="$2" branch
+  local dir="$1" id="$2" branch attempt
   branch="$(node_field "$dir" "$id" 8)"
-  "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id.log" 2>&1
+  for attempt in 1 2; do
+    "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
+    [ "$(pr_probe "$dir" "$id" | cut -f1)" = "MERGED" ] && return 0
+    [ "$attempt" = "1" ] && sleep "${GRAPH_MERGE_RETRY_DELAY:-5}"
+  done
+  return 1
 }
 
 json_field() {
@@ -1458,7 +1468,7 @@ settle_landed() {
                 SETTLE_MERGED=$((SETTLE_MERGED + 1))
                 continue
               fi
-              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed — see pr-$id.log"
+              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed twice — see pr-$id-merge.log"
               ;;
             DIRTY)
               log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
@@ -1858,8 +1868,18 @@ footprint_delta() {
 # frontier was free — measured live, one missed `conflicts` call was enough.
 # Prints refreshed=<n> and blocked=<n>.
 refresh_conflicts() {
-  local dir="$1" base
+  local dir="$1" base remote diff_base
   base="$(meta_get "$dir" base_branch)"
+  # The footprint is what the node changed, measured from the trunk it now sits
+  # on. Nodes sync their own branch with $remote/$base, while the local $base is
+  # usually checked out elsewhere and never moves — measured from there, every
+  # merged sibling's files counted as this node's, and each merge widened every
+  # footprint until all pending nodes looked in conflict with all running ones.
+  diff_base="$base"
+  remote="$(remote_name)"
+  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+    diff_base="$remote/$base"
+  fi
 
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
@@ -1869,7 +1889,7 @@ refresh_conflicts() {
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
-    real="$(git -C "$wt" diff --name-only "$base"...HEAD 2>/dev/null | paste -sd, - || true)"
+    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null | paste -sd, - || true)"
     [ -n "$real" ] || continue
     prev="$(node_field "$dir" "$id" 5)"
     [ "$prev" != "$real" ] || continue
@@ -2242,8 +2262,9 @@ cmd_next() {
   # Checked before the stall cap on purpose: a node waiting on an answer makes no
   # phase progress, so it reads as stalled and gets reported as stuck when in
   # fact it asked something and is waiting for this.
+  local asked=""
   if [ "$inflight" -gt 0 ]; then
-    local qid qwt qask asked=""
+    local qid qwt qask
     while IFS= read -r qid; do
       [ -n "$qid" ] || continue
       qwt="$(node_field "$dir" "$qid" 7)"
@@ -2256,7 +2277,14 @@ cmd_next() {
     if [ -n "${asked# }" ]; then
       next_body_add "Read each ask.md above. Inside a graph the node's pipeline decides its own gates, so a question that still reaches here is one it could not decide from its artifacts: present it to the user in the artifact language."
       next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that writes the answer and wakes the worker through the driver."
-      next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+      # Stop only when nothing else is running. A question from one node used
+      # to park the whole graph while its siblings sat finished and unpolled.
+      local asked_n
+      asked_n="$(printf '%s\n' $asked | grep -c . || true)"
+      if [ "$asked_n" -ge "$inflight" ]; then
+        next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
+      fi
+      next_body_add "The other in-flight node(s) keep running: after presenting the question, carry on with the calls below; the answer can come later."
     fi
   fi
 
@@ -2277,7 +2305,10 @@ cmd_next() {
       [ -n "$wwt" ] || continue
       until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/homolog-approved.txt\""
       until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/node-failed.txt\""
-      until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\""
+      case " $asked " in
+        *" $wid "*) ;;
+        *) until_args="$until_args --until-file \"$wwt/.context/ship-run/$wid/ask.md\"" ;;
+      esac
     done < <(nodes_with_status "$dir" in_flight)
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"$until_args   → blocks until a node finishes, fails or asks, until a worker reports, or until the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."

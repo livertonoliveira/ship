@@ -1,6 +1,6 @@
 ---
 name: ship-audit-backend
-description: "Ship audit worker — project-wide backend performance audit. Launches 3 parallel agents (DB+Cache+Locks, I/O+Memory, Network+Security-Adjacent) and produces a structured findings report."
+description: "Ship audit worker — project-wide backend performance audit. Confirms script-scanned candidates (queries, locks, I/O, memory, network, secrets in logs), looks past them, and produces a structured findings report."
 tools: [Read, Glob, Grep, Bash, Agent, mcp__linear-server__*]
 model: sonnet
 ---
@@ -9,7 +9,7 @@ model: sonnet
 
 Project-wide backend performance audit (not diff-scoped). **Input:** $ARGUMENTS (artifact language, storage mode, stack, team ID).
 
-`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself as before.
+`Inventory: <path>` in the prompt → read it first and start from its relevant sections instead of running your own discovery pass, and pass the same line to every sub-agent you spawn. Absent → discover files yourself.
 
 ## 1. Load context
 
@@ -19,20 +19,13 @@ Read `ship/config.md` (or inline `## Config`/`## Stack`) for Linear Integration,
 
 If `Project Type` is `frontend`, redirect the user to `/ship:audit:frontend` and stop.
 
-## 3. Launch 3 agents in parallel (one Agent call), scanning the whole backend tree:
+## 3. Find
 
-**Agent A — DB/Cache/Locks**
-- **A1** N+1 Queries (Medium): async loop (`.forEach(async`/`.map(async`) awaiting `find/query/save` calls inside → prefetch/batch with `Promise.all` or eager-load relations.
-- **A2** Missing Cache (Low): GET route on shared/read-heavy resource with no `Cache-Control`/`@CacheKey` → add caching directive/middleware.
-- **A3** Pessimistic Locks (Medium): `FOR UPDATE` lacking `NOWAIT`/`SKIP LOCKED`/timeout, or outside an explicit transaction → add lock timeout and wrap in transaction.
+Run `bash <Heuristics script> backend --out .context/ship-audit/backend-heuristics.md` (the script path is in your prompt) and read the file. It lists candidates for N+1 queries, uncached read routes, pessimistic locks, blocking I/O, unbounded in-memory caches, requests without a timeout and secrets in logs. Confirm each against its surroundings before reporting it and drop the ones that do not hold.
 
-**Agent B — I/O/Memory**
-- **B1** Blocking I/O (Medium): sync fs/exec calls (`readFileSync`, `execSync`, etc.) inside an async context → use async equivalents (`fs.promises.*`, promisified exec).
-- **B2** Memory Growth (Medium): module-level `Map`/`Set` with no eviction (`.delete`/`.clear`/LRU) anywhere in file → bound with an LRU cache or periodic eviction.
+Then look past the rules across the backend tree: hot paths doing redundant work, missing pagination on growing collections, lock and transaction scope, retry/backoff on outbound calls, and anything else with measurable latency, throughput or memory impact. Every finding carries file:line evidence.
 
-**Agent C — Network/Security-Adjacent**
-- **C1** Request Timeout (Medium): `axios`/`fetch` call with no `timeout`/`AbortController`/`AbortSignal.timeout` → add a timeout.
-- **C2** Secret Leaks (High): log call near a variable named password/token/secret/apiKey/credential → redact or drop from the log.
+A long candidate list may be split across up to 3 sub-agents in one Agent call, each given its slice and the `Inventory:` line.
 
 ## 4. Consolidate findings
 
@@ -47,7 +40,7 @@ Per ### Base Template {#finding-entry-base}
 - **Suggestion:** <specific fix with code example if helpful>
 ```
 
-> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Backend audit (`audit/backend.md`) {#backend-audit-extension}
+> For severity definitions per domain (critical / high / medium / low), see [`ship/patterns/severity.md`](patterns/severity.md). + #### Backend audit (`ship-audit-backend`) {#backend-audit-extension}
 
 Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 ```markdown
@@ -58,19 +51,7 @@ Categories: `DB | NET | CPU | MEM | CONC | CODE | CONF | ARCH`
 - **critical**: Will cause visible performance degradation in production (e.g., N+1 on every request, full table scan on large table)
 - **high**: Likely to cause issues under load (e.g., missing pagination on growing dataset)
 - **medium**: Suboptimal but will not cause immediate issues (e.g., missing cache on moderately accessed data)
-- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint), overridden by `ship/config.md → Severity Overrides` (phase: `backend`). Gate: ## Gate Decision Rules {#gate-decision-rules}
-
-Gate decision rules applied after every quality phase:
-
-- Any `critical` or `high` finding → **FAIL**
-- Any `medium` finding → **WARN**
-- Only `low` or no findings → **PASS**
-
-A phase row whose Gate column reads `fail` also forces **FAIL** even with zero severity counts — that is how a red typecheck or a red suite blocks, since those phases report a failure without minting findings.
-
-Gate behavior on FAIL/WARN is configured in `ship/config.md → Gate Behavior` (`on_fail`, `on_warn`).
-
-> See `worker-status.md` for the orthogonal completion axis (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) — a worker's completion state is independent of the PASS/WARN/FAIL gate result documented here..
+- **low**: Best practice not followed, marginal impact (e.g., synchronous logging in low-traffic endpoint). Gate and score: the findings gate (see the JSON summary section).
 
 ## 5. Write report
 
@@ -131,8 +112,14 @@ Each `ship:audit:*` agent outputs this JSON as the **last content** of its tool 
 }
 ```
 
-Fields: `audit` type id · `gate` per `the Gate Decision Rules section (included above)` · `score` per Scoring table below · `counts` findings by severity · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
+Fields: `audit` type id · `gate`, `score` and `counts` exactly as the findings gate prints them · `top_findings` up to 5 most severe, empty if none · `report_path` relative path to the full report.
 
-### Scoring table
+### Gate and score
 
-`A` none/only-low · `B` no critical/high, ≥1 medium · `C` no critical, 1–2 high · `D` no critical, 3+ high · `F` ≥1 critical. with `audit=backend` and `report_path=ship/audits/backend-<YYYY-MM-DD>.md`, as the **very last content** of your response.
+Count your findings by severity, then run the script passed to you as `Findings gate script:`:
+
+```bash
+bash <findings-gate-script> --audit <type> --critical N --high N --medium N --low N
+```
+
+It applies `ship/config.md → Severity Overrides`, the gate rules and the A–F score (the tests audit's gate is capped at WARN), and prints `critical=`/`high=`/`medium=`/`low=`/`gate=`/`score=`. Use those values in the report and the JSON; never compute the gate or score yourself. with `audit=backend` and `report_path=ship/audits/backend-<YYYY-MM-DD>.md`, as the **very last content** of your response.

@@ -10,15 +10,9 @@
 > workers that read artifacts directly, a Linear key picked up from the branch, comments — which
 > have no input to strip).
 
-## What to strip — when slicing context into a worker prompt
+## What gets stripped
 
-Before you inject `## Scenarios`, `## Test Contract`, `## Module`, or `## Design` into a worker's
-prompt, remove from that **injected text only**:
-
-- Scenario / criterion / requirement tags: `@SC-XX`, `@AC-YY`, `@REQ-XX` (and the already-resolved
-  layer tag `@unit`/`@integration`/`@e2e` — you used it to route; the worker does not need it).
-- Bare spec IDs in prose: `REQ-XX`, `AC-XX`, `SC-XX`, `IMPL-*`, `TEST-*`.
-- The task's Linear issue key (`<TEAM>-<n>`, e.g. `MOB-1734`).
+`src/hooks/deidentify.sh` does the stripping — pipe the text you are about to inject into a worker (`## Scenarios`, `## Test Contract`, `## Module`, `## Design`) through it. It drops tag-only lines, the inline scenario/criterion/requirement and layer tags, bare spec IDs with their separators, and — with `--team`/`--key` — the Linear issue key. Look-alikes such as `UTF-8` stay.
 
 ## What to KEEP — the behavioral content the worker needs
 

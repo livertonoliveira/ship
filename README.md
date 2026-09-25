@@ -202,7 +202,7 @@ These commands analyze the **entire project**, not just the current diff. Use th
 
 | Command | What it does |
 |---------|--------------|
-| `/ship:audit:backend` | Project-wide backend performance audit — 3 parallel agents, stack-aware |
+| `/ship:audit:backend` | Project-wide backend performance audit — script-scanned candidates confirmed by the agent, stack-aware |
 | `/ship:audit:frontend` | Project-wide frontend performance audit — routes to Next.js (5 layers) or generic methodology (11 categories) |
 | `/ship:audit:database` | Project-wide database audit — detects and uses MongoDB, PostgreSQL, or MySQL methodology |
 | `/ship:audit:security` | Full AppSec audit — OWASP Top 10, CWE mapping, A-F score, PoC for critical and high findings |
