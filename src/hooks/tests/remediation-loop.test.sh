@@ -321,6 +321,23 @@ test_graph_node_defers_a_residue_that_stopped_moving() {
   rm -rf "$dir"
 }
 
+test_graph_node_with_on_fail_fix_never_asks() {
+  local name="a graph node configured on_fail: fix still decides its residue itself — the configured fix does not turn into a question"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=fix setup_repo "$dir"; unset ON_FAIL
+  local scratch="$dir/.context/ship-run/G3"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  SEED_FINDING=1 FIX_MODE=noop CONFIRM_VERDICT=unresolved
+  drive "$dir" G3 || true
+  if [ "$LAST_STATE" = "done" ] && [ "$LAST_ACTION" != "ask" ] && [ ! -f "$scratch/ask.md" ] \
+    && grep -q 'deferred' "$scratch/gate-resolved.txt" \
+    && grep -q 'gate FAIL: defer' "$scratch/graph-decisions.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (last=$LAST_STATE/$LAST_ACTION fix=$FIX_DISPATCHES gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(cat "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
 test_graph_node_fixes_again_while_the_residue_moves() {
   local name="a graph node whose round resolved part of the residue gets another round, then proceeds green"
   local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
@@ -345,6 +362,7 @@ test_graph_node_fixes_again_while_the_residue_moves() {
 test_one_batch_one_fix_one_confirmation
 test_graph_node_defers_a_residue_that_stopped_moving
 test_graph_node_fixes_again_while_the_residue_moves
+test_graph_node_with_on_fail_fix_never_asks
 test_static_failure_reaches_the_gate_not_its_own_loop
 test_confirmation_rewrites_rows_and_the_gate_re_decides
 test_residue_asks_instead_of_looping

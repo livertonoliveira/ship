@@ -1869,11 +1869,15 @@ cmd_next() {
       printf 'PASS\n' > "$SCRATCH/gate-resolved.txt"
     else
       local choice="$ANSWER" auto_fix=0
-      [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
+      # A graph node decides from its own artifacts whatever the configured
+      # action says: with on_fail: fix the configured "fix" used to win here,
+      # the round ran, and the residue then became a question nobody inside a
+      # graph could answer — one node held a slot for 139 minutes that way.
       if [ -z "$choice" ] && [ -f "$SCRATCH/graph-node.txt" ]; then
         choice="$(graph_gate_choice "$SCRATCH" "$g_decision")"
         [ "$choice" = "fix" ] && auto_fix=1
       fi
+      [ -z "$choice" ] && [ "$g_action" != "ask" ] && choice="$g_action"
       case "$choice" in
         fix)
           # One automatic remediation round per pipeline. remediation.md is the
