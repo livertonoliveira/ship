@@ -561,6 +561,44 @@ test_several_qualified_dependencies_pass() {
   rm -rf "$dir"
 }
 
+test_none_like_dependencies_mean_no_dependency() {
+  local name="'none' with an annotation, 'None', 'none directly' and an em dash all mean no dependency"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "a" "src/a.ts" "none (leaf module)" "$(scenario_tag 01)")" \
+    "$(module_block "M2" "b" "src/b.ts" "None" "$(scenario_tag 02)")" \
+    "$(module_block "M3" "c" "src/c.ts" "none directly" "$(scenario_tag 03)")" \
+    "$(module_block "M4" "d" "src/d.ts" "—" "$(scenario_tag 04)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.ts")" \
+    "$(contract_slot "$(scenario_tag 02)" unit "src/b.ts")" \
+    "$(contract_slot "$(scenario_tag 03)" unit "src/c.ts")" \
+    "$(contract_slot "$(scenario_tag 04)" unit "src/d.ts")")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
+test_a_comma_inside_an_annotation_is_not_a_dependency() {
+  local name="a comma inside a dependency's annotation does not split off a second dependency"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "lib" "src/a.ts" "none" "$(scenario_tag 01)")" \
+    "$(module_block "M2" "uso" "src/b.ts" "M1 (consumes the DTO, or the fixture import breaks)" "$(scenario_tag 02)")" \
+    "$(module_block "M3" "outro" "src/c.ts" "M1 — reads config.js" "$(scenario_tag 03)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.ts")" \
+    "$(contract_slot "$(scenario_tag 02)" unit "src/b.ts")" \
+    "$(contract_slot "$(scenario_tag 03)" unit "src/c.ts")")"
+
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty_stderr
+  rm -rf "$dir"
+}
+
 test_a_qualifier_does_not_hide_an_unknown_id() {
   local name="an annotated dependency on a module that does not exist still fails"
   local dir plan
@@ -870,6 +908,8 @@ test_invalid_dependency_ref_fails
 test_dependency_with_a_qualifier_passes
 test_several_qualified_dependencies_pass
 test_a_qualifier_does_not_hide_an_unknown_id
+test_none_like_dependencies_mean_no_dependency
+test_a_comma_inside_an_annotation_is_not_a_dependency
 test_scenario_title_with_a_greater_than_is_a_keyed_slot
 test_title_with_gte_is_matched_without_a_scaffold
 test_an_unkeyed_slot_is_still_caught_beside_a_greater_than_title

@@ -74,18 +74,22 @@ module_scenarios() {
   printf '%s\n' "$raw" | tr ',' '\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -E '^@SC-[0-9]+' || true
 }
 
+# The module ids a module depends on. Planners annotate freely — "none (leaf)",
+# "None", "M1 (consumes a, b)", "M2 — reads the DTO" — and every one of those
+# used to fail validation as a dependency on a module called "none" or on the
+# annotation's second half, costing a whole re-plan (the most frequent
+# validation error across recorded runs). Annotations are dropped before the
+# list is split, each entry keeps only its first word, and "none"-like words
+# mean no dependency. An id that names no module still fails.
 module_depends_on() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Depends on")"
   [ -n "$raw" ] || return 0
-  if [ "$raw" = "none" ]; then
-    return 0
-  fi
   printf '%s\n' "$raw" \
-    | tr ',' '\n' \
-    | sed -E 's/[[:space:]]*\(.*$//' \
-    | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
-    | grep -v '^$' || true
+    | sed -E 's/\([^()]*\)//g; s/\(.*$//; s/[[:space:]]+(—|–|-)[[:space:]].*$//' \
+    | tr ',;' '\n\n' \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]].*$//; s/[`*.:]+//g' \
+    | grep -viE '^(none|nenhum|nenhuma|n/a|na|-|—|–)?$' || true
 }
 
 slot_header_re() {

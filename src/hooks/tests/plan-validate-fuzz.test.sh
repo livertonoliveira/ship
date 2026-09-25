@@ -183,10 +183,7 @@ expected_rc_for() {
       esac
       ;;
     'depends_annotation')
-      case "$label" in
-        ',') printf '2' ;;
-        *) printf '0' ;;
-      esac
+      printf '0'
       ;;
     *)
       printf '0'
