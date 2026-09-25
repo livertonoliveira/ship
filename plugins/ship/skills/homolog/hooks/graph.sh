@@ -274,10 +274,20 @@ pr_merge_state() {
   json_field "$out" mergeStateStatus
 }
 
+# gh merges on the forge first and tidies up locally afterwards, so a local
+# failure (the branch is checked out in the node's worktree) exits non-zero on
+# a PR that is already merged. The forge is asked right away instead of the
+# node waiting a whole poll — measured at 16s to 17min in 6 of 21 merges — and
+# a merge that really did not happen is retried once.
 pr_try_merge() {
-  local dir="$1" id="$2" branch
+  local dir="$1" id="$2" branch attempt
   branch="$(node_field "$dir" "$id" 8)"
-  "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id.log" 2>&1
+  for attempt in 1 2; do
+    "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
+    [ "$(pr_probe "$dir" "$id" | cut -f1)" = "MERGED" ] && return 0
+    [ "$attempt" = "1" ] && sleep "${GRAPH_MERGE_RETRY_DELAY:-5}"
+  done
+  return 1
 }
 
 json_field() {
@@ -1458,7 +1468,7 @@ settle_landed() {
                 SETTLE_MERGED=$((SETTLE_MERGED + 1))
                 continue
               fi
-              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed — see pr-$id.log"
+              log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed twice — see pr-$id-merge.log"
               ;;
             DIRTY)
               log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
