@@ -1,6 +1,6 @@
 ---
 name: ship:audit:database
-description: "Ship Audit: project-wide database audit. Routes to MongoDB, PostgreSQL, or MySQL methodology based on ship/config.md. 3 parallel agents."
+description: "Ship Audit: project-wide database audit. Routes to MongoDB, PostgreSQL, or MySQL methodology based on ship/config.md; confirms script-scanned candidates."
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true

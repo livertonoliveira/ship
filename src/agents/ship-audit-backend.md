@@ -1,6 +1,6 @@
 ---
 name: ship-audit-backend
-description: "Ship audit worker — project-wide backend performance audit. Launches 3 parallel agents (DB+Cache+Locks, I/O+Memory, Network+Security-Adjacent) and produces a structured findings report."
+description: "Ship audit worker — project-wide backend performance audit. Confirms script-scanned candidates (queries, locks, I/O, memory, network, secrets in logs), looks past them, and produces a structured findings report."
 tools: [Read, Glob, Grep, Bash, Agent, mcp__linear-server__*]
 model: sonnet
 ---
@@ -19,20 +19,13 @@ Read `ship/config.md` (or inline `## Config`/`## Stack`) for Linear Integration,
 
 If `Project Type` is `frontend`, redirect the user to `/ship:audit:frontend` and stop.
 
-## 3. Launch 3 agents in parallel (one Agent call), scanning the whole backend tree:
+## 3. Find
 
-**Agent A — DB/Cache/Locks**
-- **A1** N+1 Queries (Medium): async loop (`.forEach(async`/`.map(async`) awaiting `find/query/save` calls inside → prefetch/batch with `Promise.all` or eager-load relations.
-- **A2** Missing Cache (Low): GET route on shared/read-heavy resource with no `Cache-Control`/`@CacheKey` → add caching directive/middleware.
-- **A3** Pessimistic Locks (Medium): `FOR UPDATE` lacking `NOWAIT`/`SKIP LOCKED`/timeout, or outside an explicit transaction → add lock timeout and wrap in transaction.
+Run `bash <Heuristics script> backend --out .context/ship-audit/backend-heuristics.md` (the script path is in your prompt) and read the file. It lists candidates for N+1 queries, uncached read routes, pessimistic locks, blocking I/O, unbounded in-memory caches, requests without a timeout and secrets in logs. Confirm each against its surroundings before reporting it and drop the ones that do not hold.
 
-**Agent B — I/O/Memory**
-- **B1** Blocking I/O (Medium): sync fs/exec calls (`readFileSync`, `execSync`, etc.) inside an async context → use async equivalents (`fs.promises.*`, promisified exec).
-- **B2** Memory Growth (Medium): module-level `Map`/`Set` with no eviction (`.delete`/`.clear`/LRU) anywhere in file → bound with an LRU cache or periodic eviction.
+Then look past the rules across the backend tree: hot paths doing redundant work, missing pagination on growing collections, lock and transaction scope, retry/backoff on outbound calls, and anything else with measurable latency, throughput or memory impact. Every finding carries file:line evidence.
 
-**Agent C — Network/Security-Adjacent**
-- **C1** Request Timeout (Medium): `axios`/`fetch` call with no `timeout`/`AbortController`/`AbortSignal.timeout` → add a timeout.
-- **C2** Secret Leaks (High): log call near a variable named password/token/secret/apiKey/credential → redact or drop from the log.
+A long candidate list may be split across up to 3 sub-agents in one Agent call, each given its slice and the `Inventory:` line.
 
 ## 4. Consolidate findings
 

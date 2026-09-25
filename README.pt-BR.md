@@ -202,7 +202,7 @@ Esses comandos analisam o **projeto inteiro**, não apenas o diff atual. Use ant
 
 | Comando | O que faz |
 |---------|-----------|
-| `/ship:audit:backend` | Auditoria de performance de backend em todo o projeto — 3 agentes em paralelo |
+| `/ship:audit:backend` | Auditoria de performance de backend em todo o projeto — candidatos varridos por script e confirmados pelo agente |
 | `/ship:audit:frontend` | Auditoria de performance de frontend — roteia para Next.js (5 camadas) ou metodologia genérica (11 categorias) |
 | `/ship:audit:database` | Auditoria de banco de dados — detecta e usa a metodologia de MongoDB, PostgreSQL ou MySQL |
 | `/ship:audit:security` | Auditoria AppSec completa — OWASP Top 10, mapeamento CWE, nota A-F, PoC para achados críticos e altos |

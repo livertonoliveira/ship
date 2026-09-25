@@ -1,6 +1,6 @@
 ---
 name: ship:audit:backend
-description: "Ship Audit: project-wide backend performance audit. Detects stack from config and launches 3 parallel agents."
+description: "Ship Audit: project-wide backend performance audit. Detects stack from config, scans for candidates and confirms them."
 argument-hint: ""
 allowed-tools: Read, Bash, Agent
 user-invocable: true
@@ -45,6 +45,7 @@ Issue ID: <issue-id or "none">
 Artifact language: <artifact_language>
 Storage mode: <linear|local>
 Findings gate script: ${CLAUDE_SKILL_DIR}/hooks/findings-gate.sh
+Heuristics script: ${CLAUDE_SKILL_DIR}/hooks/audit-heuristics.sh
 Team ID: <team-id or "none">
 
 ## Config
@@ -52,4 +53,4 @@ Project Type: <project-type>
 Stack: <stack>
 ```
 
-The agent handles strategy selection, parallel sub-agents, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
+The agent handles candidate scanning and confirmation, findings consolidation, report writing, and JSON summary output. Return the agent's full output verbatim as your final message so `ship:audit:run` can read the report and JSON summary.
