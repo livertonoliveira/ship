@@ -1445,7 +1445,7 @@ cmd_next() {
     else
       next_body_add "- Read ship/changes/<feature>/proposal.md and design.md per $HOOK_DIR/../patterns/load-artifacts.md."
     fi
-    next_body_add "- Write $SCRATCH/spec.md (per-task slice) and $SCRATCH/design.md per $HOOK_DIR/../patterns/run-context.md (spec slice + scope-index format)."
+    next_body_add "- Write $SCRATCH/spec.md (per-task slice) and $SCRATCH/design.md per $HOOK_DIR/../patterns/run-scratch.md (spec slice + scope-index format)."
     next_common_after
     next_emit "context" "work" "$RUN" "${resumed}task context not yet staged"
   fi

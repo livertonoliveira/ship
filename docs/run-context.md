@@ -1,5 +1,7 @@
 # Run Context — Shared Scratch Between Agents
 
+> Maintainer reference. The model-facing part (the `spec.md`/`design.md` formats written at init) lives in `src/patterns/run-scratch.md`; everything else here is enforced by `pipeline.sh` and its hooks.
+
 Temporary scratch pattern used by the `/ship:run` pipeline to share context
 between phase agents (develop, test workers, perf, security, review).
 The `pipeline.sh next` state machine owns the scratch dir's lifecycle and
@@ -32,13 +34,13 @@ the feature slug (e.g., `my-feature`). The directory is ephemeral — never comm
 | `stack.md` | orchestrator (run) | all agents | detected stack summary — language, runtime, framework, test runner |
 | `diff.md` | orchestrator (run) — baseline at init, refreshed after develop | perf, security, review | working-tree diff of the branch vs the merge-base (incl. untracked) — full diff of new/modified code |
 | `spec.md` | orchestrator (run) — once, in step 1 | plan, develop | per-task slice of the spec: full issue description (Context, What to do, Files section if present, Acceptance Criteria, Scenarios, Deps, Notes) + full text of only the requirement sections (REQ-XX) from the Proposal covering this issue's acceptance criteria + a compact scope index (one line per remaining requirement in the feature not included in full, as `<req-id> — <title> — covered by <issue-id>` — the em-dash keeps each entry a list line rather than a section heading) so later phases know what is out of scope without loading its full text. Written once so phases read it instead of receiving it re-inlined per dispatch |
-| `design.md` | orchestrator (run) — once, in step 1 | plan, develop | full Design document. Written once; `develop` slices it per module when fanning out workers |
+| `design.md` | orchestrator (run) — once, in step 1 | plan, develop | full Design document. Written once; `develop` reads it whole |
 | `plan.md` | plan skill (`ship:plan`); or `develop` (minimal `## Test Contract` only, when the planner was skipped) | develop, test | module map (disjoint file sets, dependencies, scenario→module) + test contract (scenario→layer→file slots) — the single source of truth both develop and test derive from. When the planner is skipped, `develop` still writes the `## Test Contract` so `ship:test` keeps that single source instead of falling back to raw scenarios. The planner is skipped only for a `trivial`/`minor` *baseline* diff — a small change on top of pre-existing work. Greenfield tasks always run the planner. |
 | `test-failures.md` | test agent | perf, security, review, homolog | list of test failures, if any; file absent = all passed |
 | `generated-tests.md` | test agent (generate mode) | test agent (execute mode) | one line per generated test file with its layer |
 | `phase-status.md` | orchestrator only (creates header; consolidates rows) | orchestrator, homolog, pr | accumulated status per phase — run number, timestamp, files analyzed, gate result, finding counts |
 | `phase-status-<phase>.md` | one writer each — quality agents write their own (`perf`, `security`, `review`); `pipeline.sh` writes the deterministic ones (`dev` from post-develop evidence, `test-generate` from the manifests, `test` from test-exec) | `pipeline.sh next` (consolidation only) | scratch row for that phase's most recent dispatch, using `#<RUN>` as a literal placeholder in the Run column — overwritten each dispatch, never appended to by any other agent |
-| `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer — replaces the old `ship:test` orchestrator's inline slicing |
+| `test-brief-<layer>.md` | `pipeline.sh next` | `ship-test-<layer>` worker | deterministic per-layer brief: the layer's Test Contract slots, de-identified scenarios, denylist, and source pointer |
 | `generated-tests-<layer>.md` | `ship-test-<layer>` worker | `pipeline.sh next` | manifest fragment: one `- <path> (<layer>)` line per file the worker actually created (header-free; written even when empty). `next` concatenates fragments into `generated-tests.md` |
 | `pre-quality-snapshot.sha` | orchestrator (run) | — | baseline HEAD SHA before quality phases (diagnostic; nothing commits mid-pipeline, so HEAD does not move and the PR diff is built from the working tree) |
 | `remediation.md` / `remediation-items.txt` | `remediation.sh` | fix agent, `remediation-verify.sh` | the one batch of adjustments a verification round requires, with stable `R<N>` ids |
@@ -117,9 +119,7 @@ A test slot that collides with the denylist is never added here — the worker s
 
 ### `phase-status.md` format
 
-Rows are written **exclusively by the orchestrator** — never directly by a phase agent. This is deliberate: `perf`+`security`+`review` dispatch concurrently in Phase 4 (and again on each surgical re-run round). If those agents each did their own read-modify-write append against the same shared file, two concurrent writers can both read the file before either writes back, and the second write silently discards the first agent's row (lost update) — `homolog` then treats the missing row as an automatic FAIL (`homolog/SKILL.md` → phase-with-no-row rule) even though that phase actually passed.
-
-To avoid this, each phase agent writes its own row to a **private per-phase scratch file** (`phase-status-<phase>.md` — see above) instead of touching the shared file. Only the orchestrator, which runs single-threaded and consolidates immediately after each phase (or concurrent-dispatch barrier) returns (end of Phase 2, end of Phase 4, end of each surgical re-run round), reads those per-phase files and appends their rows into the canonical `phase-status.md`, substituting the literal `#<RUN>` placeholder with the real run number it already tracks (`#1` for the first pass, `#<N>` for surgical re-run round N via `$FIX_ITERATION`). Re-run iterations appear as additional rows with incremented run numbers. Timestamps are ISO-8601 UTC.
+Only `pipeline.sh` writes `phase-status.md`. Each phase's row lands first in its private `phase-status-<phase>.md` (Run = `#<RUN>`), and `pipeline.sh next` consolidates it, substituting the run number. A second run of a phase appears as an additional row with an incremented run number. Timestamps are ISO-8601 UTC.
 
 ```markdown
 # Phase Status
@@ -136,7 +136,7 @@ To avoid this, each phase agent writes its own row to a **private per-phase scra
 
 ### `phase-status-<phase>.md` format
 
-Written by exactly one phase agent (`<phase>` is one of `develop`, `test-generate`, `test`, `perf`, `security`, `review`) — a single line, no header, overwritten (not appended) on every dispatch of that phase:
+Written by exactly one writer — the quality agents (`perf`, `security`, `review`) write their own; `pipeline.sh` writes `dev`, `test-generate` and `test` — a single line, no header, overwritten (not appended) on every dispatch of that phase:
 
 ```markdown
 | perf | #<RUN> | 2026-05-01T10:02:00Z | src/runner.ts | warn | 0 | 0 | 2 | 1 | N+1 query detected |
@@ -156,22 +156,10 @@ a1b2c3d4e5f6...
 
 ## Read/write conventions
 
-- **Orchestrator** (`run.md`): sole owner of **creating** the directory and **writing**
-  `stack.md`, `diff.md`, `spec.md`, `design.md`, and `pre-quality-snapshot.sha` before launching any agent.
-  Also creates `phase-status.md` with the empty header row at pipeline start, and is the **sole
-  writer of `phase-status.md`** thereafter — it consolidates every row from the per-phase
-  `phase-status-<phase>.md` scratch files (see above) immediately after each concurrent-dispatch
-  barrier (end of Phase 2, end of Phase 4, end of each surgical re-run round). The orchestrator
-  **refreshes `diff.md` (and `diff-class.txt`) once more after the develop phase** — it is the
-  only file rewritten mid-pipeline, and only by the orchestrator itself.
+- **`pipeline.sh`**: creates the directory, writes `stack.md`, `diff.md` and `pre-quality-snapshot.sha`, and is the sole writer of `phase-status.md`. It refreshes `diff.md` (and `diff-class.txt`) once after develop — the only file rewritten mid-pipeline. The executor writes `spec.md` and `design.md` at init.
 - **Planner** (`ship:plan`): sole writer of `plan.md`, before develop and test run. It is the
   one phase that produces (rather than only reads) a shared artifact other phases consume.
-- **Phase agents** (develop, test, perf, security, review): **read only** from existing files
-  (develop and test read `plan.md`). The only write allowed is **writing (overwriting) its own
-  row** to its private `.context/ship-run/<task-id>/phase-status-<phase>.md` upon phase
-  completion — never a direct write to the shared `phase-status.md`, since multiple phase agents
-  write concurrently in the same turn (Phase 4's perf/security/review fan-out) and a
-  shared-file append from concurrent agents loses rows.
+- **Phase agents** (develop, test, perf, security, review): read only from existing files (develop and test read `plan.md`); the quality agents' one write is their own `phase-status-<phase>.md`.
 - **Test agent**: always writes `test-failures.md` after execution — bullet items = failures,
   header-only = all tests passed. In `Mode: generate` it instead writes `generated-tests.md`
   (never `test-failures.md`, since nothing ran); in `Mode: execute` it reads `generated-tests.md`
@@ -190,35 +178,8 @@ a1b2c3d4e5f6...
 | Start of `/ship:run` | Orchestrator creates `.context/ship-run/<task-id>/` and populates initial files (baseline `diff.md`) |
 | After develop phase | Orchestrator refreshes `diff.md` + `diff-class.txt` over the post-develop working tree (authoritative) |
 | After the evidence gate passes | `ship:test Mode: generate` runs (writes test files and `generated-tests.md`, never `test-failures.md`), then the deterministic test-exec step runs the suite. If the evidence gate fails, the pipeline stops before this step |
-| During pipeline | Agents read and append as needed |
 | End of `/ship:pr` | Orchestrator removes `.context/ship-run/<task-id>/` (recursive) |
 | `--keep-context` flag in `/ship:pr` | Directory is preserved for manual inspection |
 
 The parent directory `.context/ship-run/` may hold multiple `<task-id>/` subdirs if
 parallel pipelines are running — never remove the parent, only the completed task's subdir.
-
----
-
-## Fan-out token optimization
-
-When an orchestrator dispatches N sub-agents, each opens a fresh conversation with no shared prompt cache. Avoid making the orchestrator **re-emit** a large artifact it already holds — that pays the artifact's token cost once in the orchestrator's output for every child it inlines into. Two mechanisms, chosen by whether each child needs the whole artifact or only a slice:
-
-**(a) Scratch-dir reference (whole artifact, unsliced).** When every child needs the full artifact (e.g. perf/security/review each analyze the full `diff.md`), the orchestrator writes it to the scratch dir **once** and passes only the **path**. Each child reads the file itself — same input cost as inline, but the orchestrator never re-emits the content. This is the default for the `diff` at the `ship:run` → phase dispatch level: the orchestrator does **not** inject `## Diff` inline; the phase agent reads `.context/ship-run/<task-id>/diff.md`.
-
-**(b) Inline slicing (disjoint subsets).** When each child needs only a disjoint subset, the orchestrator reads the artifact **once**, slices it into per-agent subsets, and passes the slice **inline**. The smaller per-child input is the win here; children must not re-read the original file. This applies to the **inner** fan-outs listed in the table below (e.g. `ship:security` slicing the diff by OWASP category to its 3 sub-agents).
-
-### Slicing rules
-
-- Always include enough surrounding context for the agent to understand scope:
-  - For diffs: include the `diff --git a/...` file header + the full `@@ ... @@` hunk header + ±3 surrounding context lines for each included hunk.
-  - For design/proposal docs: include the full subsection (heading + body) relevant to the agent's scope.
-- If a hunk or section does not clearly belong to any agent's scope, include it in **all** agents' slices (conservative fallback).
-- The orchestrator must not truncate content that agents need to make correct decisions — smaller is better, but correctness comes first.
-
-### Which phases use this pattern
-
-| Phase | Shared artifact sliced | Slice dimension |
-|-------|------------------------|-----------------|
-| `ship:security` | diff | by OWASP category (Injection / Auth / Data+Config) |
-| `pipeline.sh next` → `ship-test-*` workers | `plan.md` test contract + spec scenarios (via `test-brief-<layer>.md`) | by test layer (unit / integration / e2e) |
-| `ship:develop` | `plan.md` module map (fallback: Design document) | by module / independent implementation unit |
