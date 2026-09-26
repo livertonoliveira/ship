@@ -488,6 +488,79 @@ FAKE
   rm -rf "$root"
 }
 
+# --- a start that dies after cutting the workspace ----------------------------
+
+# worker-start creates the workspace in its first stage. Measured 2026-09-25: a
+# start that died in a later one left MOB-5294, -2 and -3 on disk, at trunk tip
+# with no commit, because the node never reached `claim` and nothing else knew
+# they existed. A workspace of the same node that was there BEFORE the call (a
+# failed attempt kept as the record) is not this dispatch's to take back.
+new_orphaning_orca() {
+  local root="$1"
+  cat > "$root/bin/orca" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$(printf '%s' "$*" | tr '\n' ' ')" >> "$ORCA_FAKE_LOG"
+case "$1 ${2:-}" in
+  "orchestration run-create")  printf '{ "ok": true, "result": { "run": { "id": "run_x" } } }' ;;
+  "orchestration task-create") printf '{ "ok": true, "result": { "task": { "id": "task_x", "created_by_terminal_handle": "term_c" } } }' ;;
+  "orchestration worker-start")
+    printf '/tmp/ws/N1-2\n' >> "$ORCA_FAKE_WS"
+    printf '{ "ok": false, "result": { "dispatchId": "ctx_x", "failedStage": "agent_launch", "lastError": "pty spawn failed" } }'
+    exit 1 ;;
+  "worktree list")
+    printf '{ "ok": true, "result": { "worktrees": ['
+    while IFS= read -r p; do printf ' { "id": "repo1::%s",\n "path": "%s",\n "displayName": "x" },\n' "$p" "$p"; done < "$ORCA_FAKE_WS"
+    printf ' ] } }' ;;
+  "repo list") printf '{ "ok": true, "result": { "repos": [ { "id": "REPO-ID-HERE", "path": "REPO-PATH-HERE", "displayName": "the-repo" } ] } }' ;;
+  *) printf '{ "ok": true, "result": {} }' ;;
+esac
+exit 0
+FAKE
+  chmod +x "$root/bin/orca"
+  printf '/tmp/ws/N1\n/tmp/ws/N10\n/tmp/ws/other\n' > "$root/ws.txt"
+}
+
+test_a_failed_start_takes_back_the_workspace_it_cut() {
+  local root log
+  root="$(new_case)"; new_orphaning_orca "$root"
+  ORCA_FAKE_WS="$root/ws.txt" run_dispatch "$root" --repo repo-from-cwd
+  log="$(grep '^worktree rm ' "$root/argv.log" || true)"
+  if [ "$(cat "$root/rc.txt")" != "0" ] \
+     && printf '%s' "$log" | grep -q -- '--worktree path:/tmp/ws/N1-2 ' \
+     && [ "$(printf '%s\n' "$log" | grep -c .)" -eq 1 ]; then
+    log_pass "a start that dies after cutting the workspace removes that one workspace and no other"
+  else
+    log_fail "a start that dies after cutting the workspace removes that one workspace and no other (rm calls: $log)"
+  fi
+  rm -rf "$root"
+}
+
+test_a_failed_dispatch_is_recorded_for_the_graph() {
+  local root rec
+  root="$(new_case)"; new_orphaning_orca "$root"
+  ORCA_FAKE_WS="$root/ws.txt" run_dispatch "$root" --repo repo-from-cwd
+  rec="$(cat "$root/state/dispatch-failed-N1.txt" 2>/dev/null || true)"
+  if printf '%s' "$rec" | grep -q 'the runtime refused to start N1' \
+     && printf '%s' "$rec" | grep -q 'pty spawn failed'; then
+    log_pass "a failed dispatch leaves its reason where the graph counts it"
+  else
+    log_fail "a failed dispatch leaves its reason where the graph counts it (got: '$rec')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_confirmed_dispatch_records_no_failure() {
+  local root
+  root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
+  if [ "$(cat "$root/rc.txt")" = "0" ] && [ ! -e "$root/state/dispatch-failed-N1.txt" ] \
+     && ! grep -q '^worktree rm ' "$root/argv.log"; then
+    log_pass "a dispatch that takes removes nothing and records no failure"
+  else
+    log_fail "a dispatch that takes removes nothing and records no failure"
+  fi
+  rm -rf "$root"
+}
+
 # --- the Run is not re-created per node --------------------------------------
 
 test_the_run_is_reused_across_dispatches() {
@@ -744,6 +817,9 @@ test_an_explicit_repo_wins
 test_a_display_name_resolves_to_the_id
 test_an_unknown_repo_is_refused_by_name
 test_a_refused_worker_start_says_so
+test_a_failed_start_takes_back_the_workspace_it_cut
+test_a_failed_dispatch_is_recorded_for_the_graph
+test_a_confirmed_dispatch_records_no_failure
 test_the_run_is_reused_across_dispatches
 test_a_probe_reads_the_runtime_not_just_the_path
 test_a_probe_declares_its_workspaces

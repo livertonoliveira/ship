@@ -316,6 +316,54 @@ confirm_working() {
   ! prompt_holds_text "$handle" && terminal_working "$handle"
 }
 
+# The workspaces Orca holds under this node's name: `<task>` itself, or
+# `<task>-<n>` when the runtime suffixed it because the plain name was taken.
+task_workspaces() {
+  local task="$1" args=(worktree list --limit 1000 --json)
+  [ -n "$REPO" ] && args+=(--repo "id:$REPO")
+  orca "${args[@]}" 2>/dev/null \
+    | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | awk -v t="$task" '{
+        n = $0; sub(/.*\//, "", n)
+        if (n == t) { print; next }
+        if (index(n, t "-") == 1) { s = substr(n, length(t) + 2); if (s ~ /^[0-9]+$/) print }
+      }' || true
+}
+
+# worker-start creates the workspace in its FIRST stage, so a start that dies in
+# a later one leaves it on disk — and a node that never reaches `claim` is one
+# the graph does not know exists, so no dispose or sweep ever takes it back.
+# Measured 2026-09-25: MOB-5294, -2 and -3 were left at trunk tip with no commit
+# before the fourth dispatch took, and five more piled up in a second graph the
+# same way. Only workspaces that appeared DURING this call under this node's
+# name are removed; WS_BEFORE is unset until the snapshot exists, so a failure
+# before any workspace could have been created removes nothing.
+#
+# The failure is also written for the graph to read. The coordinator re-runs a
+# failed dispatch on its next `next`, and without this record the retries were
+# counted nowhere and logged nowhere.
+abandon_dispatch() {
+  local reason="$1" detail="${2:-}" p removed=0
+  echo "driver-orca.sh dispatch: $reason" >&2
+  [ -n "$detail" ] && printf '%s\n' "$detail" >&2
+  if [ -n "${WS_BEFORE+x}" ]; then
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      printf '%s\n' "$WS_BEFORE" | grep -qxF -- "$p" && continue
+      orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 || true
+      if [ -d "$p" ]; then
+        echo "  could not remove the workspace it created: $p" >&2
+      else
+        removed=$((removed + 1))
+      fi
+    done < <(task_workspaces "$DISPATCH_TASK")
+  fi
+  [ "$removed" -gt 0 ] && echo "  removed $removed workspace(s) this dispatch had created" >&2
+  printf '%s%s\n' "$reason" "$(printf '%s' "$detail" | head -1 | sed 's/^ */ — /')" \
+    > "$STATE/dispatch-failed-$DISPATCH_TASK.txt"
+  exit 1
+}
+
 verb_dispatch() {
   local task="${REST[0]:-}" prompt="${REST[1]:-}"
   [ -n "$task" ] || { echo "driver-orca.sh dispatch: <task> is required" >&2; exit 1; }
@@ -323,13 +371,12 @@ verb_dispatch() {
   require_cli
   resolve_repo
   prompt="${prompt:-/ship:run $task}"
+  DISPATCH_TASK="$task"
 
   local run
-  run="$(ensure_run)" || {
-    echo "driver-orca.sh dispatch: could not create an orchestration Run — the runtime is reachable but refused to bind this terminal as coordinator." >&2
-    echo "  Switch runtimes without losing the graph: graph.sh abort, then graph.sh set --driver local" >&2
-    exit 1
-  }
+  run="$(ensure_run)" || abandon_dispatch \
+    "could not create an orchestration Run — the runtime is reachable but refused to bind this terminal as coordinator." \
+    "  Switch runtimes without losing the graph: graph.sh abort, then graph.sh set --driver local"
 
   # The worker's own completion call needs the Run, and its preamble does not
   # carry one. Measured 2026-07-30 from a live worker handle:
@@ -381,11 +428,10 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null || true)"
   rtask="$(printf '%s' "$created" | json_id task_ || true)"
   if [ -z "$rtask" ]; then
-    echo "driver-orca.sh dispatch: the runtime refused to create a task for $task on run $run" >&2
     # Its own words beat a generic "no task id": `consumer_fenced` names a Run
     # collision, and that reads nothing like a parse failure.
-    printf '%s' "$created" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1 >&2
-    exit 1
+    abandon_dispatch "the runtime refused to create a task for $task on run $run" \
+      "$(printf '%s' "$created" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1)"
   fi
   printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
     > "$STATE/driver-orca-coordinator.txt"
@@ -411,6 +457,7 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   # macOS ships bash 3.2, where a bare `local` yields an empty string, so this
   # branch worked on the machine it was written on and died everywhere else.
   local wt_id="" term="" handle=""
+  WS_BEFORE="$(task_workspaces "$task")"
   if [ -n "${SHIP_WORKER_COMMAND:-}" ]; then
     local wt_args=(worktree create --name "$task" --no-parent --setup run --json)
     [ -n "$REPO" ] && wt_args+=(--repo "id:$REPO")
@@ -418,10 +465,10 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     local wt
     wt="$(orca "${wt_args[@]}" 2>/dev/null || true)"
     wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"' || true)"
-    [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: no worktree id in the create response" >&2; exit 1; }
+    [ -n "$wt_id" ] || abandon_dispatch "no worktree id in the create response"
     term="$(orca terminal create --worktree "id:$wt_id" --title "$task" --command "$SHIP_WORKER_COMMAND" --json 2>/dev/null || true)"
     handle="$(printf '%s' "$term" | json_id term_ || true)"
-    [ -n "$handle" ] || { echo "driver-orca.sh dispatch: terminal create returned no handle" >&2; exit 1; }
+    [ -n "$handle" ] || abandon_dispatch "terminal create returned no handle"
     orca terminal wait --terminal "$handle" --for tui-idle --timeout-ms 120000 >/dev/null 2>&1 || true
     start_args+=(--terminal "$handle" --worktree "id:$wt_id")
   else
@@ -446,15 +493,15 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   # measured, a bad --base-branch dies in worktree_create with everything else
   # looking normal.
   if [ "$rc" -ne 0 ] || printf '%s' "$started" | grep -q '"failedStage"'; then
-    echo "driver-orca.sh dispatch: the runtime refused to start $task" >&2
-    printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1 >&2
-    printf '%s' "$started" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1 >&2
-    printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1 >&2
-    printf '%s' "$started" | grep -q . || echo "  the call answered nothing at all — rerun it without 2>/dev/null to see the runtime's own error" >&2
-    exit 1
+    abandon_dispatch "the runtime refused to start $task" "$(
+      printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1
+      printf '%s' "$started" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1
+      printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1
+      printf '%s' "$started" | grep -q . || echo "  the call answered nothing at all — rerun it without 2>/dev/null to see the runtime's own error"
+    )"
   fi
   dispatch_id="$(printf '%s' "$started" | json_id ctx_ || true)"
-  [ -n "$dispatch_id" ] || { echo "driver-orca.sh dispatch: worker-start returned no dispatch id" >&2; exit 1; }
+  [ -n "$dispatch_id" ] || abandon_dispatch "worker-start returned no dispatch id"
 
   # worker-start reports what it created under result.effects; the worktree id is
   # the only <repo-id>::<path> value in the response.
@@ -463,8 +510,8 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   # Named explicitly, because the alternative is what actually happened: an empty
   # selector makes the next call fail, and a failing command substitution under
   # `set -e` exits the driver with no output on either stream at all.
-  [ -n "$wt_id" ] || { echo "driver-orca.sh dispatch: worker-start reported no workspace for $task" >&2; exit 1; }
-  [ -n "$handle" ] || { echo "driver-orca.sh dispatch: worker-start reported no agent terminal for $task" >&2; exit 1; }
+  [ -n "$wt_id" ] || abandon_dispatch "worker-start reported no workspace for $task"
+  [ -n "$handle" ] || abandon_dispatch "worker-start reported no agent terminal for $task"
 
   # The brief as the runtime built it, so a re-delivery sends the same lifecycle
   # preamble the worker was supposed to get — not a bare prompt line.
