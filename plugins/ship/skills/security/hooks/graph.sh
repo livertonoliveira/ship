@@ -221,8 +221,44 @@ retry_node() {
   node_set "$dir" "$id" 10 ""
   # Stall bookkeeping is per-attempt. Carrying it over would let a node trip
   # the stall cap on its first poll of the new run.
-  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt"
+  rm -f "$dir/stall-$id.txt" "$dir/why-$id.txt" "$dir/progress-$id.txt" "$dir/progress-at-$id.txt" "$dir/resumed-$id.txt" "$dir/hold-$id.txt" "$dir/dispatch-fails-$id.txt"
   log_line "$dir" "$id → pending ($why; attempt $(node_field "$dir" "$id" 9) kept)"
+}
+
+# A dispatch that fails never reaches `claim`, so it bumps no attempt and leaves
+# the node pending — and the next `next` dispatches it again, forever, with
+# nothing in the log. Measured 2026-09-25: four dispatches of one node, one
+# workspace left behind by each, not one line in graph-log.md. The driver leaves
+# dispatch-failed-<task>.txt behind; this is where it is counted and logged, and
+# past the cap the node is failed with a hold, so it waits for `reset` instead
+# of being dispatched every turn. The cap is its own and not max_attempts: the
+# same run measured three failed dispatches in a row before the fourth took, so
+# failing the node at the default of two would have given up on a hiccup — and
+# with the driver taking back what each failure created, a retry costs nothing.
+DISPATCH_FAILS_MAX=5
+
+settle_dispatch_failures() {
+  local dir="$1" f id reason n max="$DISPATCH_FAILS_MAX"
+  for f in "$dir"/dispatch-failed-*.txt; do
+    [ -f "$f" ] || continue
+    id="${f##*/dispatch-failed-}"; id="${id%.txt}"
+    reason="$(head -1 "$f")"
+    rm -f "$f"
+    node_exists "$dir" "$id" || continue
+    case "$(node_field "$dir" "$id" 6)" in pending|ready) ;; *) continue ;; esac
+    n="$(cat "$dir/dispatch-fails-$id.txt" 2>/dev/null || echo 0)"
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    n=$((n + 1))
+    printf '%s\n' "$n" > "$dir/dispatch-fails-$id.txt"
+    if [ "$n" -ge "$max" ]; then
+      node_set "$dir" "$id" 6 failed
+      node_set "$dir" "$id" 10 ""
+      hold_node "$dir" "$id" "dispatch failed $n time(s): $reason"
+      log_line "$dir" "$id → failed: dispatch failed $n of $max time(s) — last: $reason"
+    else
+      log_line "$dir" "$id dispatch failed ($n of $max): $reason — dispatching again"
+    fi
+  done
 }
 
 # --- PR state ----------------------------------------------------------------
@@ -1242,6 +1278,7 @@ cmd_claim() {
   node_set "$dir" "$id" 8 "$branch"
   node_set "$dir" "$id" 9 "$(( $(node_field "$dir" "$id" 9) + 1 ))"
   node_set "$dir" "$id" 10 ""
+  rm -f "$dir/dispatch-fails-$id.txt"
   transition "$dir" "$id" "pending,ready" in_flight
 
   # Federated homolog: the node's pipeline must not stop for a per-task
@@ -2171,6 +2208,10 @@ cmd_next() {
     [ "$(node_field "$dir" "$rid" 9)" -lt "$(max_attempts_of "$dir")" ] || continue
     retry_node "$dir" "$rid" "automatic retry $(( $(node_field "$dir" "$rid" 9) + 1 )) of $(max_attempts_of "$dir")"
   done < <(nodes_with_status "$dir" failed)
+
+  # After the retry pass, not before: a node failed here holds, and must not be
+  # handed straight back to the frontier by the loop above.
+  settle_dispatch_failures "$dir"
 
   local inflight landed failed total merged_n
   inflight="$(count_status "$dir" in_flight)"
