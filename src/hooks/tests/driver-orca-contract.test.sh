@@ -342,10 +342,14 @@ test_the_worker_is_told_to_wake_the_coordinator() {
   # --enter` is the push that actually starts a turn on an idle terminal.
   if ! printf '%s' "$line" | grep -q -- 'orca terminal send --terminal'; then
     log_fail "the brief tells the worker to wake the coordinator (got: $line)"
-  elif ! printf '%s' "$line" | grep -q -- '--enter'; then
+  elif ! printf '%s' "$line" | grep -q -- "--text '' --enter"; then
     # Without --enter the text is typed into the TUI input box and never
     # submitted, so the poke looks sent and wakes nobody.
-    log_fail "the wake instruction submits with --enter (got: $line)"
+    log_fail "the wake instruction submits with a separate --enter (got: $line)"
+  elif printf '%s' "$line" | grep -q -- "action=done.' --enter"; then
+    # A paste eats its own trailing newline: text and Enter in one send left
+    # every wake as a draft, appended to the previous one (measured 2026-09-29).
+    log_fail "the wake text is not submitted in the same send as its Enter (got: $line)"
   elif ! printf '%s' "$line" | grep -qE '"/[^"]*/driver-orca-coordinator\.txt"'; then
     # The worker runs in its own workspace; the relative state dir graph.sh
     # passes in resolves to nothing there, so the path has to be absolute.

@@ -410,6 +410,12 @@ verb_dispatch() {
   # as a turn of its own, it answers, and nothing re-enters wait/poll (measured
   # 2026-09-06). That is why the text carries the resume instruction — the poke
   # has to be self-healing, or it trades a 25-minute stall for a permanent one.
+  #
+  # The Enter is its own send, as in resume: `--text ... --enter` in one call is
+  # a paste, and the paste eats its own trailing newline. Measured 2026-09-29 on
+  # a 59-node graph: every wake landed as an unsubmitted draft, each new one
+  # appended to the last, and the coordinator's box filled with a run-on line
+  # until someone pressed Enter by hand in nearly every workspace.
   local spec
   spec="$prompt
 
@@ -418,9 +424,13 @@ When you report completion, your orchestration send MUST carry --run $run in add
 Immediately after that send, wake the coordinator directly — worker_done alone only reaches it if it happens to be inside a wait window:
 
   coord=\$(cat \"$STATE/driver-orca-coordinator.txt\" 2>/dev/null || true)
-  [ -n \"\$coord\" ] && orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Run graph.sh poll, then graph.sh next, and keep the loop going until action=ask or action=done.' --enter
+  if [ -n \"\$coord\" ]; then
+    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Run graph.sh poll, then graph.sh next, and keep the loop going until action=ask or action=done.'
+    sleep 1
+    orca terminal send --terminal \"\$coord\" --text '' --enter
+  fi
 
-Send it once, ignore any failure, and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
+Run all of it exactly as written — the second send is the Enter that submits the first. Send it once, ignore any failure, and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
 
 Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else."
 
