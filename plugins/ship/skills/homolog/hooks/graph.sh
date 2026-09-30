@@ -559,24 +559,62 @@ render_json() {
 
 # Footprint overlap: exact path match, or one path being a directory prefix of
 # the other. `src/api` collides with `src/api/routes.ts`; `src/apiv2` does not.
+# `src/api/**` is the explicit spelling of a whole directory and matches the same.
 files_overlap() {
   local a_csv="$1" b_csv="$2" a b
   [ -n "$a_csv" ] && [ -n "$b_csv" ] || return 1
-  local old_ifs="$IFS"
-  IFS=','
-  for a in $a_csv; do
+  # Arrays, not an unquoted `for`: a `<dir>/**` entry would glob against the cwd.
+  local -a as bs
+  IFS=',' read -ra as <<< "$a_csv"
+  IFS=',' read -ra bs <<< "$b_csv"
+  for a in "${as[@]}"; do
     [ -n "$a" ] || continue
+    a="${a%/\*\*}"
     a="${a%/}"
-    for b in $b_csv; do
+    for b in "${bs[@]}"; do
       [ -n "$b" ] || continue
+      b="${b%/\*\*}"
       b="${b%/}"
-      if [ "$a" = "$b" ]; then IFS="$old_ifs"; return 0; fi
-      case "$b" in "$a"/*) IFS="$old_ifs"; return 0 ;; esac
-      case "$a" in "$b"/*) IFS="$old_ifs"; return 0 ;; esac
+      [ "$a" = "$b" ] && return 0
+      case "$b" in "$a"/*) return 0 ;; esac
+      case "$a" in "$b"/*) return 0 ;; esac
     done
   done
-  IFS="$old_ifs"
   return 1
+}
+
+# A bare directory in a footprint is how a graph serializes itself without anyone
+# deciding it: files_overlap reads it as every path underneath, so one node that
+# declares `src/features` holds back every node touching a file in there.
+# Measured 2026-09-29 on a 160-node graph: 93 nodes declared directories, and of
+# the conflict edges that could be checked against what the nodes really changed,
+# 62% did not exist — slots sat free 85% of the time behind them. `<dir>/**`
+# keeps a whole directory expressible, as a decision rather than an approximation.
+#
+# Only paths that exist as a tree on the base can be told apart from a file yet to
+# be created, and only nodes of this repo can be looked up at all. Prints one
+# "<id>: <path> (<n> files)" line per offender.
+directory_footprints() {
+  local staged="$1" base="$2" remote ref="" id repo files p
+  remote="$(remote_name)"
+  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+    ref="$remote/$base"
+  elif git rev-parse --quiet --verify "$base^{commit}" >/dev/null 2>&1; then
+    ref="$base"
+  fi
+  while IFS="$US" read -r id repo _ _ files _; do
+    [ -n "$files" ] || continue
+    local -a paths
+    IFS=',' read -ra paths <<< "$files"
+    for p in "${paths[@]}"; do
+      case "$p" in ''|*/\*\*) continue ;; esac
+      if [ "${p%/}" != "$p" ]; then
+        printf '%s: %s\n' "$id" "$p"
+      elif [ -z "$repo" ] && [ -n "$ref" ] && [ "$(git cat-file -t "$ref:$p" 2>/dev/null || true)" = "tree" ]; then
+        printf '%s: %s (%s files)\n' "$id" "$p" "$(git ls-tree -r --name-only "$ref" -- "$p" | awk 'END { print NR }')"
+      fi
+    done
+  done < <(tr '\t' '\037' < "$staged")
 }
 
 # A dependency is satisfied when its PR is MERGED on the forge — not when its
@@ -960,6 +998,14 @@ cmd_init() {
     END { for (i = 1; i <= N; i++) if (color[ids[i]] == 0) dfs(ids[i]) }
   ' "$staged")"
   [ -z "$cycle" ] || { rm -f "$staged"; die "init: dependency cycle — no order can satisfy it: $cycle"; }
+
+  local coarse
+  coarse="$(directory_footprints "$staged" "$base_branch")"
+  if [ -n "$coarse" ]; then
+    rm -f "$staged"
+    printf '%s\n' "$coarse" >&2
+    die "init: $(printf '%s\n' "$coarse" | awk 'END { print NR }') footprint path(s) above are directories — list the files each node changes, or write <dir>/** to hold the whole directory on purpose"
+  fi
 
   mv "$staged" "$dir/nodes.tsv"
 
