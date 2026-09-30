@@ -559,24 +559,62 @@ render_json() {
 
 # Footprint overlap: exact path match, or one path being a directory prefix of
 # the other. `src/api` collides with `src/api/routes.ts`; `src/apiv2` does not.
+# `src/api/**` is the explicit spelling of a whole directory and matches the same.
 files_overlap() {
   local a_csv="$1" b_csv="$2" a b
   [ -n "$a_csv" ] && [ -n "$b_csv" ] || return 1
-  local old_ifs="$IFS"
-  IFS=','
-  for a in $a_csv; do
+  # Arrays, not an unquoted `for`: a `<dir>/**` entry would glob against the cwd.
+  local -a as bs
+  IFS=',' read -ra as <<< "$a_csv"
+  IFS=',' read -ra bs <<< "$b_csv"
+  for a in "${as[@]}"; do
     [ -n "$a" ] || continue
+    a="${a%/\*\*}"
     a="${a%/}"
-    for b in $b_csv; do
+    for b in "${bs[@]}"; do
       [ -n "$b" ] || continue
+      b="${b%/\*\*}"
       b="${b%/}"
-      if [ "$a" = "$b" ]; then IFS="$old_ifs"; return 0; fi
-      case "$b" in "$a"/*) IFS="$old_ifs"; return 0 ;; esac
-      case "$a" in "$b"/*) IFS="$old_ifs"; return 0 ;; esac
+      [ "$a" = "$b" ] && return 0
+      case "$b" in "$a"/*) return 0 ;; esac
+      case "$a" in "$b"/*) return 0 ;; esac
     done
   done
-  IFS="$old_ifs"
   return 1
+}
+
+# A bare directory in a footprint is how a graph serializes itself without anyone
+# deciding it: files_overlap reads it as every path underneath, so one node that
+# declares `src/features` holds back every node touching a file in there.
+# Measured 2026-09-29 on a 160-node graph: 93 nodes declared directories, and of
+# the conflict edges that could be checked against what the nodes really changed,
+# 62% did not exist — slots sat free 85% of the time behind them. `<dir>/**`
+# keeps a whole directory expressible, as a decision rather than an approximation.
+#
+# Only paths that exist as a tree on the base can be told apart from a file yet to
+# be created, and only nodes of this repo can be looked up at all. Prints one
+# "<id>: <path> (<n> files)" line per offender.
+directory_footprints() {
+  local staged="$1" base="$2" remote ref="" id repo files p
+  remote="$(remote_name)"
+  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+    ref="$remote/$base"
+  elif git rev-parse --quiet --verify "$base^{commit}" >/dev/null 2>&1; then
+    ref="$base"
+  fi
+  while IFS="$US" read -r id repo _ _ files _; do
+    [ -n "$files" ] || continue
+    local -a paths
+    IFS=',' read -ra paths <<< "$files"
+    for p in "${paths[@]}"; do
+      case "$p" in ''|*/\*\*) continue ;; esac
+      if [ "${p%/}" != "$p" ]; then
+        printf '%s: %s\n' "$id" "$p"
+      elif [ -z "$repo" ] && [ -n "$ref" ] && [ "$(git cat-file -t "$ref:$p" 2>/dev/null || true)" = "tree" ]; then
+        printf '%s: %s (%s files)\n' "$id" "$p" "$(git ls-tree -r --name-only "$ref" -- "$p" | awk 'END { print NR }')"
+      fi
+    done
+  done < <(tr '\t' '\037' < "$staged")
 }
 
 # A dependency is satisfied when its PR is MERGED on the forge — not when its
@@ -960,6 +998,14 @@ cmd_init() {
     END { for (i = 1; i <= N; i++) if (color[ids[i]] == 0) dfs(ids[i]) }
   ' "$staged")"
   [ -z "$cycle" ] || { rm -f "$staged"; die "init: dependency cycle — no order can satisfy it: $cycle"; }
+
+  local coarse
+  coarse="$(directory_footprints "$staged" "$base_branch")"
+  if [ -n "$coarse" ]; then
+    rm -f "$staged"
+    printf '%s\n' "$coarse" >&2
+    die "init: $(printf '%s\n' "$coarse" | awk 'END { print NR }') footprint path(s) above are directories — list the files each node changes, or write <dir>/** to hold the whole directory on purpose"
+  fi
 
   mv "$staged" "$dir/nodes.tsv"
 
@@ -1921,15 +1967,31 @@ refresh_conflicts() {
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
   # this is the edge that appears by evidence rather than by prediction.
-  local id wt real prev refreshed=0
+  #
+  # A node in flight has committed nothing yet — /ship:run leaves its work in the
+  # tree until seal_workspace — so a committed-only diff read empty for the whole
+  # run and the evidence edge only ever appeared at land. In flight, the working
+  # tree is read too, and the footprint only grows: what develop has not reached
+  # yet is still in the declaration. Replacing happens at land, on the sealed diff.
+  local id wt real prev refreshed=0 tasks_md
+  tasks_md="ship/changes/$(meta_get "$dir" feature)/tasks.md"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
-    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null | paste -sd, - || true)"
-    [ -n "$real" ] || continue
+    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null || true)"
     prev="$(node_field "$dir" "$id" 5)"
-    [ "$prev" != "$real" ] || continue
+    if [ "$(node_field "$dir" "$id" 6)" = "in_flight" ]; then
+      # tasks.md is the one file every local-mode node edits, and seal_workspace
+      # never commits it — counted here, it would put every node in conflict.
+      real="$( { printf '%s\n' "$real"; printf '%s\n' "$prev" | tr ',' '\n'
+                 git -C "$wt" diff --name-only HEAD 2>/dev/null
+                 git -C "$wt" ls-files --others --exclude-standard 2>/dev/null
+               } | grep -vxF -e "$tasks_md" -e '' | sort -u || true)"
+    fi
+    real="$(printf '%s\n' "$real" | sed '/^$/d' | paste -sd, - || true)"
+    [ -n "$real" ] || continue
+    [ "$(printf '%s\n' "$prev" | tr ',' '\n' | sed '/^$/d' | sort -u)" != "$(printf '%s\n' "$real" | tr ',' '\n' | sort -u)" ] || continue
     node_set "$dir" "$id" 5 "$real"
     log_line "$dir" "$id footprint delta: $(footprint_delta "$prev" "$real")"
     refreshed=$((refreshed + 1))

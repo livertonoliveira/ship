@@ -403,6 +403,102 @@ EOF
   fi
 }
 
+test_init_refuses_a_directory_that_exists_on_the_base() {
+  local name="init refuses a footprint naming a directory that exists on the base, and leaves no graph behind"
+  local dir err rc=0
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    mkdir -p src/features/agenda
+    printf 'x\n' > src/features/agenda/a.tsx
+    printf 'x\n' > src/features/agenda/b.tsx
+    git add -A && git commit -qm "features"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "Aproximada", "deps": [], "files": ["src/features/agenda"] },
+  { "id": "TASK-004", "title": "Exata", "deps": [], "files": ["src/features/agenda/a.tsx"] }
+]
+EOF
+  )
+  err="$(cd "$dir" && bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main 2>&1 >/dev/null)" || rc=$?
+  local left=0
+  [ -f "$dir/.context/ship-graph/f/nodes.tsv" ] && left=1
+  rm -rf "$dir"
+
+  if [ "$rc" -ne 0 ] && [ "$left" = "0" ] \
+    && printf '%s' "$err" | grep -q 'TASK-002: src/features/agenda (2 files)' \
+    && ! printf '%s' "$err" | grep -q 'TASK-004:'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc left=$left err='$err')"
+  fi
+}
+
+test_explicit_whole_directory_is_accepted_and_collides() {
+  local name="<dir>/** is accepted at init and collides with a file inside the directory"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    mkdir -p src/features/agenda
+    printf 'x\n' > src/features/agenda/a.tsx
+    git add -A && git commit -qm "features"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "Move a pasta", "deps": [], "files": ["src/features/agenda/**"] },
+  { "id": "TASK-004", "title": "Exata", "deps": [], "files": ["src/features/agenda/a.tsx"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next 2>&1)" || true
+  rm -rf "$dir"
+
+  if [ "$(field "$out" frontier)" = "TASK-002" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (frontier='$(field "$out" frontier)')"
+  fi
+}
+
+test_uncommitted_work_enters_an_in_flight_footprint() {
+  local name="an in-flight node's uncommitted edits hold back a neighbour, and its declaration still counts"
+  local dir json
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "Declarou pouco", "deps": [], "files": ["src/api/routes.ts"] },
+  { "id": "TASK-004", "title": "Vizinha", "deps": [], "files": ["src/web/page.tsx"] },
+  { "id": "TASK-006", "title": "Rota", "deps": [], "files": ["src/api/routes.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    git worktree add -q wt-002 -b ship/TASK-002 main
+    bash "$GRAPH" claim TASK-002 --worktree wt-002 --branch ship/TASK-002 >/dev/null
+    mkdir -p wt-002/src/web wt-002/ship/changes/f
+    printf 'x\n' > wt-002/src/web/page.tsx
+    printf 'x\n' > wt-002/ship/changes/f/tasks.md
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir"
+
+  local b4 b6
+  b4="$(printf '%s' "$json" | awk '/"id": "TASK-004"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
+  b6="$(printf '%s' "$json" | awk '/"id": "TASK-006"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
+  if printf '%s' "$b4" | grep -q '"TASK-002"' && printf '%s' "$b6" | grep -q '"TASK-002"' \
+    && ! printf '%s' "$json" | grep -q 'tasks.md'; then
+    log_pass "$name"
+  else
+    log_fail "$name (TASK-004: $b4 | TASK-006: $b6)"
+  fi
+}
+
 test_overlapping_ready_nodes_do_not_share_a_frontier
 test_directory_prefix_counts_as_overlap
 test_sibling_directory_is_not_an_overlap
@@ -414,6 +510,9 @@ test_conflicts_reports_how_many_it_refreshed
 test_conflict_clears_once_the_holder_is_merged
 test_unchanged_footprint_logs_nothing_new
 test_new_file_produces_one_delta_line
+test_init_refuses_a_directory_that_exists_on_the_base
+test_explicit_whole_directory_is_accepted_and_collides
+test_uncommitted_work_enters_an_in_flight_footprint
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
