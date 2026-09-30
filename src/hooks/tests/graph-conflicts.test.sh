@@ -463,6 +463,42 @@ EOF
   fi
 }
 
+test_uncommitted_work_enters_an_in_flight_footprint() {
+  local name="an in-flight node's uncommitted edits hold back a neighbour, and its declaration still counts"
+  local dir json
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "title": "Declarou pouco", "deps": [], "files": ["src/api/routes.ts"] },
+  { "id": "TASK-004", "title": "Vizinha", "deps": [], "files": ["src/web/page.tsx"] },
+  { "id": "TASK-006", "title": "Rota", "deps": [], "files": ["src/api/routes.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    git worktree add -q wt-002 -b ship/TASK-002 main
+    bash "$GRAPH" claim TASK-002 --worktree wt-002 --branch ship/TASK-002 >/dev/null
+    mkdir -p wt-002/src/web wt-002/ship/changes/f
+    printf 'x\n' > wt-002/src/web/page.tsx
+    printf 'x\n' > wt-002/ship/changes/f/tasks.md
+    bash "$GRAPH" conflicts >/dev/null
+  )
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir"
+
+  local b4 b6
+  b4="$(printf '%s' "$json" | awk '/"id": "TASK-004"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
+  b6="$(printf '%s' "$json" | awk '/"id": "TASK-006"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
+  if printf '%s' "$b4" | grep -q '"TASK-002"' && printf '%s' "$b6" | grep -q '"TASK-002"' \
+    && ! printf '%s' "$json" | grep -q 'tasks.md'; then
+    log_pass "$name"
+  else
+    log_fail "$name (TASK-004: $b4 | TASK-006: $b6)"
+  fi
+}
+
 test_overlapping_ready_nodes_do_not_share_a_frontier
 test_directory_prefix_counts_as_overlap
 test_sibling_directory_is_not_an_overlap
@@ -476,6 +512,7 @@ test_unchanged_footprint_logs_nothing_new
 test_new_file_produces_one_delta_line
 test_init_refuses_a_directory_that_exists_on_the_base
 test_explicit_whole_directory_is_accepted_and_collides
+test_uncommitted_work_enters_an_in_flight_footprint
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

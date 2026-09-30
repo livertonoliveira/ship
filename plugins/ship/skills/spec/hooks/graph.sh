@@ -1967,15 +1967,31 @@ refresh_conflicts() {
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
   # this is the edge that appears by evidence rather than by prediction.
-  local id wt real prev refreshed=0
+  #
+  # A node in flight has committed nothing yet — /ship:run leaves its work in the
+  # tree until seal_workspace — so a committed-only diff read empty for the whole
+  # run and the evidence edge only ever appeared at land. In flight, the working
+  # tree is read too, and the footprint only grows: what develop has not reached
+  # yet is still in the declaration. Replacing happens at land, on the sealed diff.
+  local id wt real prev refreshed=0 tasks_md
+  tasks_md="ship/changes/$(meta_get "$dir" feature)/tasks.md"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
-    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null | paste -sd, - || true)"
-    [ -n "$real" ] || continue
+    real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null || true)"
     prev="$(node_field "$dir" "$id" 5)"
-    [ "$prev" != "$real" ] || continue
+    if [ "$(node_field "$dir" "$id" 6)" = "in_flight" ]; then
+      # tasks.md is the one file every local-mode node edits, and seal_workspace
+      # never commits it — counted here, it would put every node in conflict.
+      real="$( { printf '%s\n' "$real"; printf '%s\n' "$prev" | tr ',' '\n'
+                 git -C "$wt" diff --name-only HEAD 2>/dev/null
+                 git -C "$wt" ls-files --others --exclude-standard 2>/dev/null
+               } | grep -vxF -e "$tasks_md" -e '' | sort -u || true)"
+    fi
+    real="$(printf '%s\n' "$real" | sed '/^$/d' | paste -sd, - || true)"
+    [ -n "$real" ] || continue
+    [ "$(printf '%s\n' "$prev" | tr ',' '\n' | sed '/^$/d' | sort -u)" != "$(printf '%s\n' "$real" | tr ',' '\n' | sort -u)" ] || continue
     node_set "$dir" "$id" 5 "$real"
     log_line "$dir" "$id footprint delta: $(footprint_delta "$prev" "$real")"
     refreshed=$((refreshed + 1))
