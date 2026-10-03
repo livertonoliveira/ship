@@ -43,7 +43,7 @@ usage() {
   echo "  conflicts [--feature <f>]" >&2
   echo "  status    [--feature <f>] [--json]" >&2
   echo "  iter      <counter-name> [--max N] [--feature <f>]" >&2
-  echo "  nodes     --from-tasks <tasks.md>" >&2
+  echo "  nodes     --from-tasks <tasks.md> | --from-linear <project name>" >&2
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -1201,24 +1201,15 @@ cmd_set() {
   printf 'changed=%s\n' "$changed"
 }
 
-# --- nodes --from-tasks ------------------------------------------------------
+# --- nodes -------------------------------------------------------------------
 
-# Local mode's tasks.md → nodes.json conversion. Deterministic on purpose: the
-# `## Files` / `## Deps` blocks /ship:spec emits are already structured, so this
-# needs no model in the loop.
-cmd_nodes() {
-  local tasks=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --from-tasks) tasks="$2"; shift 2 ;;
-      -h|--help) usage; exit 0 ;;
-      *) usage; exit 1 ;;
-    esac
-  done
-  [ -n "$tasks" ] || die "nodes: --from-tasks <tasks.md> is required"
-  [ -f "$tasks" ] || die "nodes: file not found: $tasks"
-
-  awk '
+# tasks.md → nodes.json. Deterministic on purpose: the `## Files` / `## Deps`
+# blocks /ship:spec emits are already structured, so this needs no model in the
+# loop. `drop` is a comma-joined list of ids that are not nodes (issues already
+# closed), so a dep naming one is left out instead of dangling.
+tasks_to_nodes() {
+  local tasks="$1" drop="${2:-}"
+  awk -v drop="$drop" '
     function flush() {
       if (id == "") return
       if (out != "") printf ",\n"
@@ -1226,7 +1217,11 @@ cmd_nodes() {
       out = "x"
     }
     function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
-    BEGIN { printf "[\n" }
+    BEGIN {
+      printf "[\n"
+      k = split(drop, d, ",")
+      for (j = 1; j <= k; j++) dropped[d[j]] = 1
+    }
     /^###+[[:space:]]/ {
       flush()
       line = $0
@@ -1250,7 +1245,8 @@ cmd_nodes() {
     /^[[:space:]]*(-{3,}|\*{3,}|_{3,})[[:space:]]*$/ { section = ""; next }
     section == "files" {
       v = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", v)
+      # Linear rewrites a `-` bullet as `*` when it stores the description.
+      sub(/^[[:space:]]*[-*][[:space:]]*/, "", v)
       sub(/^[[:space:]]+/, "", v)
       sub(/^(create|modify|delete|criar|modificar|remover)[[:space:]]+/, "", v)
       gsub(/`/, "", v)
@@ -1264,12 +1260,14 @@ cmd_nodes() {
     }
     section == "deps" {
       v = $0
-      gsub(/^[[:space:]]*-?[[:space:]]*|[[:space:]]+$/, "", v)
+      gsub(/^[[:space:]]*[-*]?[[:space:]]*|[[:space:]]+$/, "", v)
       gsub(/`/, "", v)
       if (v == "" || tolower(v) == "none" || tolower(v) == "nenhuma") next
       # A dep must look like a task id: alphanumeric with a separator (TASK-001,
       # ABC-1234). A bare word like `M2` is a milestone name, not a task.
       if (v !~ /^[A-Za-z0-9]+[-_][A-Za-z0-9_-]+$/) next
+      if ((v in dropped) || ((id, v) in seen)) next
+      seen[id, v] = 1
       deps = deps (deps == "" ? "" : ", ") "\"" v "\""
       next
     }
@@ -1282,6 +1280,173 @@ cmd_nodes() {
     }
     END { flush(); printf "\n]\n" }
   ' "$tasks"
+}
+
+# One page of Linear's GraphQL answer → the same tasks.md shape tasks_to_nodes
+# reads, so both storage modes share a single `## Files` / `## Deps` parser.
+# Records are split on the double quote: every other record is a string, which
+# keeps the scan linear on a multi-megabyte page where a char-by-char walk of
+# the whole buffer is not. Closed issues go to `closed`, never to stdout.
+linear_page_to_tasks() {
+  local page="$1" meta="$2" closed="$3"
+  awk -v meta="$meta" -v closed="$closed" '
+    function unescape(s) {
+      gsub(/\\\\/, "\002", s)
+      gsub(/\\n/, "\001", s)
+      gsub(/\\t/, " ", s)
+      gsub(/\\[rbf]/, "", s)
+      gsub(/\\"/, "\"", s)
+      gsub(/\\\//, "/", s)
+      gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, "?", s)
+      gsub("\002", "\\\\", s)
+      return s
+    }
+    function oneline(s) { gsub("\001", " ", s); return s }
+    function child(   p) {
+      if (depth == 0) return ""
+      if (ctype[depth] == "A") return cpath[depth]
+      p = cpath[depth]
+      return (p == "" ? key : p "." key)
+    }
+    function open(t,   p) {
+      p = child()
+      depth++
+      ctype[depth] = t; cpath[depth] = p; wantkey[depth] = (t == "O")
+      if (t != "O") return
+      if (p == "data.issues") answered = 1
+      else if (p == I) { id = ""; title = ""; desc = ""; state = ""; repo = ""; ndeps = 0 }
+      else if (p == I ".inverseRelations.nodes") { rtype = ""; rid = "" }
+    }
+    function close_(   p, n, i, lines) {
+      p = cpath[depth]
+      if (ctype[depth] == "O") {
+        if (p == I ".inverseRelations.nodes" && rtype == "blocks" && rid != "") deps[++ndeps] = rid
+        else if (p == I && id != "") {
+          if (state == "completed" || state == "canceled") print id >> closed
+          else {
+            printf "### %s — %s\n", id, title
+            if (repo != "") printf "## Repo\n%s\n", repo
+            n = split(desc, lines, "\001")
+            for (i = 1; i <= n; i++) {
+              if (lines[i] ~ /^###+[[:space:]]/) sub(/^#+/, "##", lines[i])
+              print lines[i]
+            }
+            print "## Deps"
+            for (i = 1; i <= ndeps; i++) print deps[i]
+            print ""
+            open_issues++
+          }
+        }
+      }
+      depth--
+    }
+    function scalar(v, isstr,   p) {
+      p = child()
+      if (p == I ".identifier") id = v
+      else if (p == I ".title") title = oneline(v)
+      else if (p == I ".description") { if (isstr) desc = v }
+      else if (p == I ".state.type") state = v
+      else if (p == I ".labels.nodes.name") { if (v ~ /^repo:/ && repo == "") repo = substr(v, 6) }
+      else if (p == I ".inverseRelations.nodes.type") rtype = v
+      else if (p == I ".inverseRelations.nodes.issue.identifier") rid = v
+      else if (p == "data.issues.pageInfo.hasNextPage") more = v
+      else if (p == "data.issues.pageInfo.endCursor") { if (isstr) cursor = v }
+      else if (p == "errors.message" && err == "") err = oneline(v)
+    }
+    function literal() { if (lit != "") { scalar(lit, 0); lit = "" } }
+    function outside(s,   i, n, c) {
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c ~ /[[:space:]]/) continue
+        if (c == "{") open("O")
+        else if (c == "[") open("A")
+        else if (c == "}" || c == "]") { literal(); close_() }
+        else if (c == ":") wantkey[depth] = 0
+        else if (c == ",") { literal(); if (ctype[depth] == "O") wantkey[depth] = 1 }
+        else lit = lit c
+      }
+    }
+    BEGIN { RS = "\""; I = "data.issues.nodes"; instr = 0; depth = 0; open_issues = 0; more = "false" }
+    !instr { outside($0); instr = 1; next }
+    {
+      str = str $0
+      if (match($0, /\\+$/) && RLENGTH % 2 == 1) { str = str "\""; next }
+      if (ctype[depth] == "O" && wantkey[depth]) key = str
+      else scalar(unescape(str), 1)
+      str = ""; instr = 0
+    }
+    END { printf "%s\t%s\t%s\t%s\t%s\n", (answered ? 1 : 0), more, cursor, open_issues, err > meta }
+  ' "$page"
+}
+
+LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
+LINEAR_QUERY='query($p:String!,$a:String){issues(first:50,after:$a,filter:{project:{name:{eq:$p}}}){nodes{identifier title description state{type} labels(first:10){nodes{name}} inverseRelations(first:25){nodes{type issue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
+
+# Linear mode's project → nodes.json conversion, straight from the API. The
+# descriptions never pass through a model: at ~8k tokens an issue, a project of
+# two hundred does not fit in any context, and a graph that size is the case
+# this command exists for. Exit 4 = no credential, the one thing a caller can fix.
+nodes_from_linear() (
+  project="$1"
+  if [ -z "${LINEAR_API_KEY:-}" ]; then
+    echo "graph.sh: nodes: LINEAR_API_KEY is not set — export a personal API key (Linear → Settings → Security & access) to read the project without a model in the loop" >&2
+    exit 4
+  fi
+  command -v curl >/dev/null 2>&1 || die "nodes: curl is required for --from-linear"
+
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/tasks.md"
+  : > "$tmp/closed"
+
+  name="$(printf '%s' "$project" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  after="null" pages=0 total=0
+  while :; do
+    pages=$((pages + 1))
+    [ "$pages" -le 200 ] || die "nodes: Linear kept paginating past 200 pages for project \"$project\""
+    printf '{"query":"%s","variables":{"p":"%s","a":%s}}' "$LINEAR_QUERY" "$name" "$after" > "$tmp/body.json"
+    printf 'header = "Authorization: %s"\n' "$LINEAR_API_KEY" \
+      | curl -sS --max-time 60 -K - -H 'Content-Type: application/json' \
+          --data @"$tmp/body.json" "$LINEAR_API_URL" > "$tmp/page.json" \
+      || die "nodes: the request to Linear failed"
+
+    linear_page_to_tasks "$tmp/page.json" "$tmp/meta" "$tmp/closed" >> "$tmp/tasks.md"
+    IFS="$US" read -r answered more cursor count err < <(tr '\t' '\037' < "$tmp/meta")
+    [ -z "$err" ] || die "nodes: Linear refused the query: $err"
+    [ "$answered" = "1" ] || die "nodes: unexpected answer from Linear: $(head -c 300 "$tmp/page.json")"
+    total=$((total + count))
+    [ "$more" = "true" ] && [ -n "$cursor" ] || break
+    after="\"$cursor\""
+  done
+
+  if [ "$total" -eq 0 ]; then
+    if [ -s "$tmp/closed" ]; then
+      die "nodes: every issue of project \"$project\" is already closed — nothing to run"
+    fi
+    die "nodes: no issue found for a Linear project named \"$project\" — pass the project's exact name"
+  fi
+
+  tasks_to_nodes "$tmp/tasks.md" "$(paste -sd, "$tmp/closed")"
+)
+
+cmd_nodes() {
+  local tasks="" project=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from-tasks) tasks="$2"; shift 2 ;;
+      --from-linear) project="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  if [ -n "$project" ]; then
+    nodes_from_linear "$project"
+    return
+  fi
+  [ -n "$tasks" ] || die "nodes: --from-tasks <tasks.md> or --from-linear <project name> is required"
+  [ -f "$tasks" ] || die "nodes: file not found: $tasks"
+  tasks_to_nodes "$tasks"
 }
 
 # --- transitions -------------------------------------------------------------
