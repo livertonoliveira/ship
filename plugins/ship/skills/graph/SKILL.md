@@ -32,12 +32,12 @@ The input is a whole feature, never a single issue — a graph of one node is ju
 
 Pass that name to `init` as-is — `graph.sh` slugifies it (`Autenticação V2` → `autenticacao-v2`) and echoes `feature=<slug>`, the graph's identity from then on.
 
-## 2. Build `nodes.json` — yourself, no sub-agent
+## 2. Build `nodes.json`
 
-This is the only judgment step. One JSON array; each object is `{ "id", "repo", "title", "deps": [...], "files": [...] }`. `deps` are blocking task IDs, `files` one path per changed file (a whole directory only as `<dir>/**`).
+One JSON array of `{ "id", "repo", "title", "deps": [...], "files": [...] }`, emitted by a script in both modes:
 
-- **Linear:** one `list_issues` (`project` = the name, `limit` 250, `fields` id,title,status,labels,projectMilestone) for the roster — its descriptions are truncated, so then `get_issue` for every issue **in parallel, all in the same turn**, never one per turn and never through a fork or sub-agent (a fork inherits these instructions and has run the whole graph on its own). Issues already in a completed state are not nodes: drop them and any `deps` entry naming them. `id` = issue identifier, `deps` = the `## Deps` block plus any native **blocked by** relation (task ids only, never a milestone name), `files` = `## Files` paths, `repo` = the `repo:<name>` label if present.
-- **Local:** `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" nodes --from-tasks ship/changes/<feature>/tasks.md > nodes.json` — deterministic, no reading required.
+- **Linear:** `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" nodes --from-linear "<project name>" > nodes.json` — reads every issue's `## Deps`, `## Files`, **blocked by** relations and `repo:<name>` label straight from Linear's API, at any project size, and leaves closed issues out. Exit 4 means `LINEAR_API_KEY` is unset — only then build the array yourself: one `list_issues` (`project`, `limit` 250) for the roster, then `get_issue` for every open issue, in parallel in one turn, never through a sub-agent; `deps` = `## Deps` plus **blocked by** (task ids only), `files` = `## Files` paths, `repo` = the `repo:<name>` label.
+- **Local:** `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" nodes --from-tasks ship/changes/<feature>/tasks.md > nodes.json`.
 
 ## 3. Initialize
 
