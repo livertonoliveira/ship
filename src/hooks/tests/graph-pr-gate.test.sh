@@ -213,6 +213,139 @@ test_a_missing_pr_is_surfaced_not_assumed() {
   fi
 }
 
+# A project's issues are not all in one app. The node of another repo opens its
+# PR on that repo's forge, so the stub only knows PRs of the repository it is
+# pointed at with -R; asked without one, it answers for the coordinator's repo,
+# where that branch has no PR.
+make_gh_by_repo() {
+  local dir="$1"
+  cat > "$dir/fake-gh" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"-R https://forge.test/acme/app.git") ;;
+  *) echo 'no pull requests found for branch' >&2; exit 1 ;;
+esac
+if [ "$1 $2" = "pr merge" ]; then exit 0; fi
+printf '{"number":9,"state":"MERGED","url":"https://forge.test/acme/app/pull/9","autoMergeRequest":null}\n'
+EOF
+  chmod +x "$dir/fake-gh"
+}
+
+init_two_repo_graph() {
+  local dir="$1"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-001", "repo": "app", "title": "Tela", "deps": [], "files": ["g.ts"] },
+  { "id": "TASK-002", "repo": "app", "title": "Outra tela", "deps": [], "files": ["h.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+  )
+}
+
+other_repo_landed_node() {
+  local dir="$1" app="$2" task="$3"
+  (
+    cd "$app"
+    git remote get-url origin >/dev/null 2>&1 || {
+      git init -q .
+      git config user.email test@test.com
+      git config user.name test
+      printf 'x\n' > f.txt
+      git add -A
+      git commit -qm init
+      git branch -M main
+      git remote add origin https://forge.test/acme/app.git
+    }
+    git worktree add -q "$app/wt-$task" -b "ship/$task" main
+    printf 'export const x = 1\n' > "$app/wt-$task/g.ts"
+    git -C "$app/wt-$task" add -A
+    git -C "$app/wt-$task" commit -qm "feat: $task"
+  )
+  (
+    cd "$dir"
+    bash "$GRAPH" claim "$task" --worktree "$app/wt-$task" --branch "ship/$task" >/dev/null
+    bash "$GRAPH" land "$task" >/dev/null
+  )
+}
+
+test_a_pr_in_another_repo_is_found_from_the_node_workspace() {
+  local name="a node of another repo is settled by the PR on ITS forge repo, not the coordinator's"
+  local dir app out json
+  dir="$(mktemp -d)"
+  app="$(mktemp -d)"
+  new_repo "$dir"
+  init_two_repo_graph "$dir"
+  other_repo_landed_node "$dir" "$app" TASK-001
+  make_gh_by_repo "$dir"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir" "$app"
+
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && printf '%s' "$json" | grep -q '"pr_url": "https://forge.test/acme/app/pull/9"'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone() {
+  local name="a landed node whose workspace was removed is still settled, through what a sibling of its repo taught the graph"
+  local dir app out
+  dir="$(mktemp -d)"
+  app="$(mktemp -d)"
+  new_repo "$dir"
+  init_two_repo_graph "$dir"
+  other_repo_landed_node "$dir" "$app" TASK-001
+  other_repo_landed_node "$dir" "$app" TASK-002
+  (cd "$dir" && rm -f .context/ship-graph/f/forge-repos.tsv)
+  git -C "$app" worktree remove --force "$app/wt-TASK-001"
+  make_gh_by_repo "$dir"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  rm -rf "$dir" "$app"
+
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && printf '%s' "$out" | grep -q '^merged=TASK-002$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
+test_a_missing_pr_asks_instead_of_waiting_forever() {
+  local name="under merge-policy=graph a landed node with no PR on the forge is an ask with exits, never a wait"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  (
+    cd "$dir"
+    git worktree add -q wt-nopr -b ship/NOPR main
+    printf 'x\n' > wt-nopr/g.txt
+    git -C wt-nopr add -A
+    git -C wt-nopr commit -qm "feat: nopr"
+    bash "$GRAPH" claim TASK-001 --worktree wt-nopr --branch ship/NOPR >/dev/null
+    bash "$GRAPH" land TASK-001 >/dev/null
+  )
+  make_gh "$dir" OPEN
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" state)" = "landed" ] \
+    && [ "$(field "$out" action)" = "ask" ] \
+    && printf '%s' "$out" | grep -q 'no PR found for branch ship/NOPR' \
+    && printf '%s' "$out" | grep -q 'graph.sh" complete' \
+    && printf '%s' "$out" | grep -q 'graph.sh" fail'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
+  fi
+}
+
 test_the_coordinator_checkout_is_never_touched() {
   local name="polling a merged PR merges nothing locally — the coordinator's HEAD stands still"
   local dir before after present=0
@@ -628,6 +761,9 @@ test_init_takes_merge_policy_like_max_in_flight
 test_an_open_pr_keeps_the_node_landed
 test_a_closed_pr_fails_the_node
 test_a_missing_pr_is_surfaced_not_assumed
+test_a_missing_pr_asks_instead_of_waiting_forever
+test_a_pr_in_another_repo_is_found_from_the_node_workspace
+test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone
 test_the_coordinator_checkout_is_never_touched
 test_a_dependent_waits_for_the_real_merge
 test_next_hands_the_open_prs_to_the_user

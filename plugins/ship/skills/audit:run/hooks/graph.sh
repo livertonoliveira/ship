@@ -301,12 +301,66 @@ pr_status_set() {
   mv "$tmp" "$f"
 }
 
+# Which forge repository holds this node's PR. The client resolves the repo from
+# the directory it runs in, and a project's issues are not all in the
+# coordinator's repo: a node of another app opens its PR on that app's forge
+# repo. Asked from the coordinator's directory, every such PR read "no pull
+# requests found" for good.
+#
+# Measured 2026-10-04: 20 nodes across three other repos, 11 landed with their
+# PRs open or already merged, and the graph logged "no PR" 4,111 times over
+# fifteen hours without merging, asking or finishing.
+#
+# The remote is learned from a workspace of that repo and kept per REPO, not
+# per node: five of those eleven workspaces were already gone from disk, and
+# the answer for them is the one a sibling of the same repo gave. A node with
+# no repo of its own is the coordinator's, and is asked about from here.
+forge_repos_file() { printf '%s/forge-repos.tsv' "$1"; }
+
+node_repo() {
+  local repo
+  repo="$(node_field "$1" "$2" 2)"
+  [ -n "$repo" ] || repo="$(meta_get "$1" repo)"
+  printf '%s' "$repo"
+}
+
+learn_forge_repo() {
+  local dir="$1" id="$2" repo wt remote url f
+  repo="$(node_repo "$dir" "$id")"
+  [ -n "$repo" ] || return 0
+  f="$(forge_repos_file "$dir")"
+  [ -f "$f" ] && awk -F'\t' -v r="$repo" '$1 == r { found = 1 } END { exit !found }' "$f" && return 0
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  remote="$(cd "$wt" && remote_name)"
+  [ -n "$remote" ] || return 0
+  url="$(git -C "$wt" remote get-url "$remote" 2>/dev/null || true)"
+  [ -n "$url" ] || return 0
+  printf '%s\t%s\n' "$repo" "$url" >> "$f"
+}
+
+node_forge_repo() {
+  local dir="$1" id="$2" repo f
+  repo="$(node_repo "$dir" "$id")"
+  f="$(forge_repos_file "$dir")"
+  [ -n "$repo" ] && [ -f "$f" ] || return 0
+  awk -F'\t' -v r="$repo" '$1 == r { print $2; exit }' "$f"
+}
+
+# Runs the forge client against the node's own repository.
+node_gh() {
+  local dir="$1" id="$2" forge
+  shift 2
+  forge="$(node_forge_repo "$dir" "$id")"
+  if [ -n "$forge" ]; then "$GH" "$@" -R "$forge"; else "$GH" "$@"; fi
+}
+
 # The forge's own verdict on whether the PR can merge right now: CLEAN, BLOCKED
 # (checks running or a review required), BEHIND, DIRTY (conflicts), UNKNOWN.
 pr_merge_state() {
   local dir="$1" id="$2" branch out
   branch="$(node_field "$dir" "$id" 8)"
-  out="$("$GH" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
+  out="$(node_gh "$dir" "$id" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
   json_field "$out" mergeStateStatus
 }
 
@@ -319,7 +373,7 @@ pr_try_merge() {
   local dir="$1" id="$2" branch attempt
   branch="$(node_field "$dir" "$id" 8)"
   for attempt in 1 2; do
-    "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
+    node_gh "$dir" "$id" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
     [ "$(pr_probe "$dir" "$id" | cut -f1)" = "MERGED" ] && return 0
     [ "$attempt" = "1" ] && sleep "${GRAPH_MERGE_RETRY_DELAY:-5}"
   done
@@ -343,7 +397,7 @@ pr_probe() {
   local dir="$1" id="$2" branch out armed
   branch="$(node_field "$dir" "$id" 8)"
   [ -n "$branch" ] || { printf 'none\t\t\tno'; return 0; }
-  out="$("$GH" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
+  out="$(node_gh "$dir" "$id" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
   [ -n "$out" ] || { printf 'none\t\t\tno'; return 0; }
   armed=no
   case "$(printf '%s' "$out" | tr -d ' \n')" in
@@ -581,6 +635,18 @@ files_overlap() {
     done
   done
   return 1
+}
+
+# A footprint is a set of paths inside ONE repo. Two apps both have a
+# `package.json` and a `src/types/index.ts`, and neither can conflict with the
+# other's. Nodes are in different repos only when both name one and the names
+# differ — a node with no repo of its own is in the graph's.
+nodes_collide() {
+  local dir="$1" a="$2" b="$3" ra rb
+  ra="$(node_repo "$dir" "$a")"
+  rb="$(node_repo "$dir" "$b")"
+  [ -n "$ra" ] && [ -n "$rb" ] && [ "$ra" != "$rb" ] && return 1
+  files_overlap "$(node_field "$dir" "$a" 5)" "$(node_field "$dir" "$b" 5)"
 }
 
 # A bare directory in a footprint is how a graph serializes itself without anyone
@@ -1491,6 +1557,7 @@ cmd_claim() {
   node_set "$dir" "$id" 10 ""
   rm -f "$dir/dispatch-fails-$id.txt"
   transition "$dir" "$id" "pending,ready" in_flight
+  learn_forge_repo "$dir" "$id"
 
   # Federated homolog: the node's pipeline must not stop for a per-task
   # acceptance prompt — the graph presents every report in one batch at the end.
@@ -1653,6 +1720,12 @@ settle_landed() {
   SETTLE_AWAITING=0
   SETTLE_CLOSED=0
   forge_gate_on "$dir" || gated=0
+
+  # A graph claimed before the record existed learns it here, from whichever
+  # workspaces are still on disk, before any PR is asked about.
+  while IFS= read -r id; do
+    [ -n "$id" ] && learn_forge_repo "$dir" "$id"
+  done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed)
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -2123,11 +2196,8 @@ refresh_conflicts() {
   # usually checked out elsewhere and never moves — measured from there, every
   # merged sibling's files counted as this node's, and each merge widened every
   # footprint until all pending nodes looked in conflict with all running ones.
-  diff_base="$base"
-  remote="$(remote_name)"
-  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
-    diff_base="$remote/$base"
-  fi
+  # Resolved in each node's own checkout, below: a node of another repo has its
+  # own remote and its own trunk, and the coordinator's say nothing about them.
 
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
@@ -2144,6 +2214,11 @@ refresh_conflicts() {
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
+    diff_base="$base"
+    remote="$(cd "$wt" && remote_name)"
+    if [ -n "$remote" ] && git -C "$wt" rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+      diff_base="$remote/$base"
+    fi
     real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null || true)"
     prev="$(node_field "$dir" "$id" 5)"
     if [ "$(node_field "$dir" "$id" 6)" = "in_flight" ]; then
@@ -2165,17 +2240,15 @@ refresh_conflicts() {
   # A landed node still counts as active: its PR is open, so its files are not
   # on the base yet and a neighbour touching them would be writing against a
   # version of that file the forge is about to replace.
-  local active blocked_count=0 cand cand_files act act_files
+  local active blocked_count=0 cand act
   active="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed; } | sort )"
 
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
-    cand_files="$(node_field "$dir" "$cand" 5)"
     local hit=""
     while IFS= read -r act; do
       [ -n "$act" ] || continue
-      act_files="$(node_field "$dir" "$act" 5)"
-      if files_overlap "$cand_files" "$act_files"; then hit="$act"; break; fi
+      if nodes_collide "$dir" "$cand" "$act"; then hit="$act"; break; fi
     done <<< "$active"
     if [ "$(node_field "$dir" "$cand" 10)" != "$hit" ]; then
       node_set "$dir" "$cand" 10 "$hit"
@@ -2472,22 +2545,24 @@ cmd_next() {
   local slots=$((max_in_flight - inflight))
   # Batch admission: a freed slot stays empty until the whole set has closed.
   [ "$(admission_of "$dir")" = "batch" ] && [ "$inflight" -gt 0 ] && slots=0
-  local frontier="" cand cand_files picked_files=""
+  local frontier="" cand picked winner
   if [ "$slots" -gt 0 ]; then
     while IFS= read -r cand; do
       [ -n "$cand" ] || continue
       [ "$slots" -gt 0 ] || break
       deps_satisfied "$dir" "$cand" || continue
       [ -z "$(node_field "$dir" "$cand" 10)" ] || continue
-      cand_files="$(node_field "$dir" "$cand" 5)"
       # Lowest id wins the slot; the loser stays pending with the winner recorded
       # in blocked_by_conflict — a scheduling decision, never an error state.
-      if files_overlap "$cand_files" "$picked_files"; then
-        node_set "$dir" "$cand" 10 "$(printf '%s' "$frontier" | awk '{print $NF}')"
+      winner=""
+      for picked in $frontier; do
+        if nodes_collide "$dir" "$cand" "$picked"; then winner="$picked"; break; fi
+      done
+      if [ -n "$winner" ]; then
+        node_set "$dir" "$cand" 10 "$winner"
         continue
       fi
       frontier="$frontier $cand"
-      picked_files="$picked_files${picked_files:+,}$cand_files"
       slots=$((slots - 1))
     done < <(nodes_with_status "$dir" pending; nodes_with_status "$dir" ready)
   fi
@@ -2609,11 +2684,12 @@ cmd_next() {
       # forge says CLEAN. A conflict (DIRTY) or red checks (UNSTABLE) will never
       # get there by waiting, so those still need a person — waiting on them
       # would park the graph with nothing to show for it.
-      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
+      # So does a PR the forge cannot find: there is nothing there to turn CLEAN.
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lstate" != "none" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
       unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
-      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
+      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, no PR found for the branch, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
       next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
       next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
       next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
