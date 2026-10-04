@@ -2670,11 +2670,12 @@ cmd_next() {
       # forge says CLEAN. A conflict (DIRTY) or red checks (UNSTABLE) will never
       # get there by waiting, so those still need a person — waiting on them
       # would park the graph with nothing to show for it.
-      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
+      # So does a PR the forge cannot find: there is nothing there to turn CLEAN.
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lstate" != "none" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
       unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
-      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
+      next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, no PR found for the branch, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
       next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
       next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
       next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"

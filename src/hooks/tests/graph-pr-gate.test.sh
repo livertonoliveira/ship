@@ -315,6 +315,37 @@ test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone() {
   fi
 }
 
+test_a_missing_pr_asks_instead_of_waiting_forever() {
+  local name="under merge-policy=graph a landed node with no PR on the forge is an ask with exits, never a wait"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  (
+    cd "$dir"
+    git worktree add -q wt-nopr -b ship/NOPR main
+    printf 'x\n' > wt-nopr/g.txt
+    git -C wt-nopr add -A
+    git -C wt-nopr commit -qm "feat: nopr"
+    bash "$GRAPH" claim TASK-001 --worktree wt-nopr --branch ship/NOPR >/dev/null
+    bash "$GRAPH" land TASK-001 >/dev/null
+  )
+  make_gh "$dir" OPEN
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" state)" = "landed" ] \
+    && [ "$(field "$out" action)" = "ask" ] \
+    && printf '%s' "$out" | grep -q 'no PR found for branch ship/NOPR' \
+    && printf '%s' "$out" | grep -q 'graph.sh" complete' \
+    && printf '%s' "$out" | grep -q 'graph.sh" fail'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
+  fi
+}
+
 test_the_coordinator_checkout_is_never_touched() {
   local name="polling a merged PR merges nothing locally — the coordinator's HEAD stands still"
   local dir before after present=0
@@ -730,6 +761,7 @@ test_init_takes_merge_policy_like_max_in_flight
 test_an_open_pr_keeps_the_node_landed
 test_a_closed_pr_fails_the_node
 test_a_missing_pr_is_surfaced_not_assumed
+test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace
 test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone
 test_the_coordinator_checkout_is_never_touched
