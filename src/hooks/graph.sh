@@ -301,12 +301,66 @@ pr_status_set() {
   mv "$tmp" "$f"
 }
 
+# Which forge repository holds this node's PR. The client resolves the repo from
+# the directory it runs in, and a project's issues are not all in the
+# coordinator's repo: a node of another app opens its PR on that app's forge
+# repo. Asked from the coordinator's directory, every such PR read "no pull
+# requests found" for good.
+#
+# Measured 2026-10-04: 20 nodes across three other repos, 11 landed with their
+# PRs open or already merged, and the graph logged "no PR" 4,111 times over
+# fifteen hours without merging, asking or finishing.
+#
+# The remote is learned from a workspace of that repo and kept per REPO, not
+# per node: five of those eleven workspaces were already gone from disk, and
+# the answer for them is the one a sibling of the same repo gave. A node with
+# no repo of its own is the coordinator's, and is asked about from here.
+forge_repos_file() { printf '%s/forge-repos.tsv' "$1"; }
+
+node_repo() {
+  local repo
+  repo="$(node_field "$1" "$2" 2)"
+  [ -n "$repo" ] || repo="$(meta_get "$1" repo)"
+  printf '%s' "$repo"
+}
+
+learn_forge_repo() {
+  local dir="$1" id="$2" repo wt remote url f
+  repo="$(node_repo "$dir" "$id")"
+  [ -n "$repo" ] || return 0
+  f="$(forge_repos_file "$dir")"
+  [ -f "$f" ] && awk -F'\t' -v r="$repo" '$1 == r { found = 1 } END { exit !found }' "$f" && return 0
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  remote="$(cd "$wt" && remote_name)"
+  [ -n "$remote" ] || return 0
+  url="$(git -C "$wt" remote get-url "$remote" 2>/dev/null || true)"
+  [ -n "$url" ] || return 0
+  printf '%s\t%s\n' "$repo" "$url" >> "$f"
+}
+
+node_forge_repo() {
+  local dir="$1" id="$2" repo f
+  repo="$(node_repo "$dir" "$id")"
+  f="$(forge_repos_file "$dir")"
+  [ -n "$repo" ] && [ -f "$f" ] || return 0
+  awk -F'\t' -v r="$repo" '$1 == r { print $2; exit }' "$f"
+}
+
+# Runs the forge client against the node's own repository.
+node_gh() {
+  local dir="$1" id="$2" forge
+  shift 2
+  forge="$(node_forge_repo "$dir" "$id")"
+  if [ -n "$forge" ]; then "$GH" "$@" -R "$forge"; else "$GH" "$@"; fi
+}
+
 # The forge's own verdict on whether the PR can merge right now: CLEAN, BLOCKED
 # (checks running or a review required), BEHIND, DIRTY (conflicts), UNKNOWN.
 pr_merge_state() {
   local dir="$1" id="$2" branch out
   branch="$(node_field "$dir" "$id" 8)"
-  out="$("$GH" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
+  out="$(node_gh "$dir" "$id" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
   json_field "$out" mergeStateStatus
 }
 
@@ -319,7 +373,7 @@ pr_try_merge() {
   local dir="$1" id="$2" branch attempt
   branch="$(node_field "$dir" "$id" 8)"
   for attempt in 1 2; do
-    "$GH" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
+    node_gh "$dir" "$id" pr merge "$branch" --squash --delete-branch >>"$dir/pr-$id-merge.log" 2>&1 && return 0
     [ "$(pr_probe "$dir" "$id" | cut -f1)" = "MERGED" ] && return 0
     [ "$attempt" = "1" ] && sleep "${GRAPH_MERGE_RETRY_DELAY:-5}"
   done
@@ -343,7 +397,7 @@ pr_probe() {
   local dir="$1" id="$2" branch out armed
   branch="$(node_field "$dir" "$id" 8)"
   [ -n "$branch" ] || { printf 'none\t\t\tno'; return 0; }
-  out="$("$GH" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
+  out="$(node_gh "$dir" "$id" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
   [ -n "$out" ] || { printf 'none\t\t\tno'; return 0; }
   armed=no
   case "$(printf '%s' "$out" | tr -d ' \n')" in
@@ -1491,6 +1545,7 @@ cmd_claim() {
   node_set "$dir" "$id" 10 ""
   rm -f "$dir/dispatch-fails-$id.txt"
   transition "$dir" "$id" "pending,ready" in_flight
+  learn_forge_repo "$dir" "$id"
 
   # Federated homolog: the node's pipeline must not stop for a per-task
   # acceptance prompt — the graph presents every report in one batch at the end.
@@ -1653,6 +1708,12 @@ settle_landed() {
   SETTLE_AWAITING=0
   SETTLE_CLOSED=0
   forge_gate_on "$dir" || gated=0
+
+  # A graph claimed before the record existed learns it here, from whichever
+  # workspaces are still on disk, before any PR is asked about.
+  while IFS= read -r id; do
+    [ -n "$id" ] && learn_forge_repo "$dir" "$id"
+  done < <(nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed)
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
