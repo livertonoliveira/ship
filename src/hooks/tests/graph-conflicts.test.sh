@@ -68,6 +68,62 @@ EOF
   fi
 }
 
+test_the_same_path_in_two_repos_is_not_a_conflict() {
+  local name="nodes of different repos share a frontier even when their footprints name the same path"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "repo": "api", "title": "Contrato", "deps": [], "files": ["src/types/index.ts"] },
+  { "id": "TASK-004", "repo": "web", "title": "Consumo", "deps": [], "files": ["src/types/index.ts"] },
+  { "id": "TASK-006", "repo": "web", "title": "Outro consumo", "deps": [], "files": ["src/types/index.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 4 --base-branch main >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" frontier)" = "TASK-002 TASK-004" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (frontier='$(field "$out" frontier)', expected TASK-002 TASK-004)"
+  fi
+}
+
+test_an_active_node_of_another_repo_blocks_nothing() {
+  local name="an in-flight node only blocks pending nodes of its own repo"
+  local dir out json
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-002", "repo": "api", "title": "Contrato", "deps": [], "files": ["package.json"] },
+  { "id": "TASK-004", "repo": "web", "title": "Consumo", "deps": [], "files": ["package.json"] },
+  { "id": "TASK-006", "repo": "api", "title": "Mesmo app", "deps": [], "files": ["package.json"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 4 --base-branch main >/dev/null
+    git worktree add -q wt-2 -b ship/TASK-002 main
+    bash "$GRAPH" claim TASK-002 --worktree wt-2 --branch ship/TASK-002 >/dev/null
+  )
+  out="$(cd "$dir" && bash "$GRAPH" next)"
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir"
+
+  if [ "$(field "$out" frontier)" = "TASK-004" ] \
+    && printf '%s' "$json" | tr -d '\n' | grep -q '"id": "TASK-006".*"blocked_by_conflict": "TASK-002"'; then
+    log_pass "$name"
+  else
+    log_fail "$name (frontier='$(field "$out" frontier)')"
+  fi
+}
+
 test_directory_prefix_counts_as_overlap() {
   local name="a declared directory collides with a file inside it"
   local dir out
@@ -501,6 +557,8 @@ EOF
 
 test_overlapping_ready_nodes_do_not_share_a_frontier
 test_directory_prefix_counts_as_overlap
+test_the_same_path_in_two_repos_is_not_a_conflict
+test_an_active_node_of_another_repo_blocks_nothing
 test_sibling_directory_is_not_an_overlap
 test_lowest_id_wins_the_slot_deterministically
 test_loser_is_blocked_by_conflict_not_failed

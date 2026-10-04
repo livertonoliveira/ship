@@ -637,6 +637,18 @@ files_overlap() {
   return 1
 }
 
+# A footprint is a set of paths inside ONE repo. Two apps both have a
+# `package.json` and a `src/types/index.ts`, and neither can conflict with the
+# other's. Nodes are in different repos only when both name one and the names
+# differ — a node with no repo of its own is in the graph's.
+nodes_collide() {
+  local dir="$1" a="$2" b="$3" ra rb
+  ra="$(node_repo "$dir" "$a")"
+  rb="$(node_repo "$dir" "$b")"
+  [ -n "$ra" ] && [ -n "$rb" ] && [ "$ra" != "$rb" ] && return 1
+  files_overlap "$(node_field "$dir" "$a" 5)" "$(node_field "$dir" "$b" 5)"
+}
+
 # A bare directory in a footprint is how a graph serializes itself without anyone
 # deciding it: files_overlap reads it as every path underneath, so one node that
 # declares `src/features` holds back every node touching a file in there.
@@ -2184,11 +2196,8 @@ refresh_conflicts() {
   # usually checked out elsewhere and never moves — measured from there, every
   # merged sibling's files counted as this node's, and each merge widened every
   # footprint until all pending nodes looked in conflict with all running ones.
-  diff_base="$base"
-  remote="$(remote_name)"
-  if [ -n "$remote" ] && git rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
-    diff_base="$remote/$base"
-  fi
+  # Resolved in each node's own checkout, below: a node of another repo has its
+  # own remote and its own trunk, and the coordinator's say nothing about them.
 
   # Real footprint beats declared footprint. If develop touched more than the
   # spec predicted, the neighbour that shares those files must not be admitted —
@@ -2205,6 +2214,11 @@ refresh_conflicts() {
     [ -n "$id" ] || continue
     wt="$(node_field "$dir" "$id" 7)"
     [ -n "$wt" ] && [ -d "$wt" ] || continue
+    diff_base="$base"
+    remote="$(cd "$wt" && remote_name)"
+    if [ -n "$remote" ] && git -C "$wt" rev-parse --quiet --verify "refs/remotes/$remote/$base" >/dev/null 2>&1; then
+      diff_base="$remote/$base"
+    fi
     real="$(git -C "$wt" diff --name-only "$diff_base"...HEAD 2>/dev/null || true)"
     prev="$(node_field "$dir" "$id" 5)"
     if [ "$(node_field "$dir" "$id" 6)" = "in_flight" ]; then
@@ -2226,17 +2240,15 @@ refresh_conflicts() {
   # A landed node still counts as active: its PR is open, so its files are not
   # on the base yet and a neighbour touching them would be writing against a
   # version of that file the forge is about to replace.
-  local active blocked_count=0 cand cand_files act act_files
+  local active blocked_count=0 cand act
   active="$( { nodes_with_status "$dir" in_flight; nodes_with_status "$dir" landed; } | sort )"
 
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
-    cand_files="$(node_field "$dir" "$cand" 5)"
     local hit=""
     while IFS= read -r act; do
       [ -n "$act" ] || continue
-      act_files="$(node_field "$dir" "$act" 5)"
-      if files_overlap "$cand_files" "$act_files"; then hit="$act"; break; fi
+      if nodes_collide "$dir" "$cand" "$act"; then hit="$act"; break; fi
     done <<< "$active"
     if [ "$(node_field "$dir" "$cand" 10)" != "$hit" ]; then
       node_set "$dir" "$cand" 10 "$hit"
@@ -2533,22 +2545,24 @@ cmd_next() {
   local slots=$((max_in_flight - inflight))
   # Batch admission: a freed slot stays empty until the whole set has closed.
   [ "$(admission_of "$dir")" = "batch" ] && [ "$inflight" -gt 0 ] && slots=0
-  local frontier="" cand cand_files picked_files=""
+  local frontier="" cand picked winner
   if [ "$slots" -gt 0 ]; then
     while IFS= read -r cand; do
       [ -n "$cand" ] || continue
       [ "$slots" -gt 0 ] || break
       deps_satisfied "$dir" "$cand" || continue
       [ -z "$(node_field "$dir" "$cand" 10)" ] || continue
-      cand_files="$(node_field "$dir" "$cand" 5)"
       # Lowest id wins the slot; the loser stays pending with the winner recorded
       # in blocked_by_conflict — a scheduling decision, never an error state.
-      if files_overlap "$cand_files" "$picked_files"; then
-        node_set "$dir" "$cand" 10 "$(printf '%s' "$frontier" | awk '{print $NF}')"
+      winner=""
+      for picked in $frontier; do
+        if nodes_collide "$dir" "$cand" "$picked"; then winner="$picked"; break; fi
+      done
+      if [ -n "$winner" ]; then
+        node_set "$dir" "$cand" 10 "$winner"
         continue
       fi
       frontier="$frontier $cand"
-      picked_files="$picked_files${picked_files:+,}$cand_files"
       slots=$((slots - 1))
     done < <(nodes_with_status "$dir" pending; nodes_with_status "$dir" ready)
   fi
