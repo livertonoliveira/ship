@@ -292,6 +292,25 @@ test_a_spec_with_no_scenarios_still_scaffolds() {
   rm -rf "$(dirname "$scratch")"
 }
 
+test_brace_compressed_files_are_inventoried_one_per_path() {
+  local name="a brace-compressed ## Files entry is inventoried as one row per file, never as the literal brace path"
+  local scratch; scratch="$(make_scratch)"
+  cat > "$scratch/spec.md" <<EOF
+## Files
+
+- modify \`src/hooks/use-{create,update}.ts\`
+EOF
+  run_scaffold "$scratch"
+  if grep -q '^- src/hooks/use-create.ts (modify)' "$scratch/plan-scaffold.md" \
+    && grep -q '^- src/hooks/use-update.ts (modify)' "$scratch/plan-scaffold.md" \
+    && ! grep -q '{' "$scratch/plan-scaffold.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name"
+  fi
+  rm -rf "$(dirname "$scratch")"
+}
+
 test_missing_spec_is_an_error() {
   local name="a scratch dir with no spec.md is a caller error, not a silent empty scaffold"
   local scratch rc=0; scratch="$(make_scratch)"
@@ -315,6 +334,7 @@ test_steps_are_carried_into_the_slot
 test_inventory_lists_every_spec_file_and_flags_absent_modify_targets
 test_a_slot_in_a_disabled_layer_is_flagged_at_scaffold_time
 test_a_spec_with_no_scenarios_still_scaffolds
+test_brace_compressed_files_are_inventoried_one_per_path
 test_missing_spec_is_an_error
 
 echo
