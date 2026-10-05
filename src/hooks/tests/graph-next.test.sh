@@ -1332,6 +1332,29 @@ EOF
   fi
 }
 
+test_nodes_expand_brace_footprints() {
+  local name="a brace-compressed ## Files entry reaches the footprint as one path per file, not dropped"
+  local dir out
+  dir="$(mktemp -d)"
+  cat > "$dir/tasks.md" <<'EOF'
+### TASK-001 — Hooks
+
+## Files
+- modify src/hooks/use-{create,update}.ts — invalidar
+
+## Deps
+none
+EOF
+  out="$(bash "$GRAPH" nodes --from-tasks "$dir/tasks.md")"
+  rm -rf "$dir"
+
+  if printf '%s' "$out" | grep -q '"files": \["src/hooks/use-create.ts", "src/hooks/use-update.ts"\]'; then
+    log_pass "$name"
+  else
+    log_fail "$name (got: $out)"
+  fi
+}
+
 test_json_parser_keeps_empty_fields_aligned() {
   local name="a node with an empty repo does not shift its later columns"
   local dir json
@@ -1712,6 +1735,7 @@ test_fresh_still_discards_when_asked
 test_counters_survive_a_resumed_graph
 test_manual_driver_answers_all_four_verbs
 test_nodes_from_tasks_md
+test_nodes_expand_brace_footprints
 test_json_parser_keeps_empty_fields_aligned
 test_human_project_name_is_slugified
 test_accented_name_yields_a_stable_usable_slug

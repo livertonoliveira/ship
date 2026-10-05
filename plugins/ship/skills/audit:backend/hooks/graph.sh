@@ -1275,7 +1275,7 @@ cmd_set() {
 # closed), so a dep naming one is left out instead of dangling.
 tasks_to_nodes() {
   local tasks="$1" drop="${2:-}"
-  awk -v drop="$drop" '
+  bash "$HOOK_DIR/files-expand.sh" "$tasks" | awk -v drop="$drop" '
     function flush() {
       if (id == "") return
       if (out != "") printf ",\n"
@@ -1345,7 +1345,7 @@ tasks_to_nodes() {
       next
     }
     END { flush(); printf "\n]\n" }
-  ' "$tasks"
+  '
 }
 
 # One page of Linear's GraphQL answer → the same tasks.md shape tasks_to_nodes
