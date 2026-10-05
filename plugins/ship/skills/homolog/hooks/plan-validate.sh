@@ -379,7 +379,7 @@ plan_scenarios() {
 # the plan.
 spec_files() {
   local spec="$1" kind="${2:-}"
-  awk -v kind="$kind" '
+  bash "$HOOK_DIR/files-expand.sh" "$spec" | awk -v kind="$kind" '
     /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
     /^#+[[:space:]]/ { insection = 0 }
     insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
@@ -397,7 +397,7 @@ spec_files() {
       if (kind != "" && verb != kind) next
       print line
     }
-  ' "$spec" 2>/dev/null | sort -u || true
+  ' 2>/dev/null | sort -u || true
 }
 
 plan_files() {

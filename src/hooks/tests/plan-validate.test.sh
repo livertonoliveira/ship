@@ -812,6 +812,24 @@ test_spec_file_without_module_fails() {
   rm -rf "$dir"
 }
 
+test_brace_compressed_spec_files_are_claimed_one_by_one() {
+  local name="a spec listing files in brace notation is satisfied by modules naming each expanded file"
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/src" && : > "$dir/src/a.ts" && : > "$dir/src/b.ts"
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/a.ts, src/b.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "$(contract_slot "$(scenario_tag 01)" unit "src/a.test.ts")" >/dev/null
+  make_spec_fixture "$dir" \
+    "- modify \`src/{a,b}.ts\` — tweak" \
+    "$(scenario_tag 01) @unit"
+
+  assert_spec_check "$name" "$dir" 0 ""
+  rm -rf "$dir"
+}
+
 test_spec_file_logged_as_divergence_passes() {
   local name="a spec file logged under Map Divergences is accounted for"
   local dir
@@ -922,6 +940,7 @@ test_overlap_regression_guard
 test_spec_scenario_without_module_fails
 test_spec_file_without_module_fails
 test_spec_file_logged_as_divergence_passes
+test_brace_compressed_spec_files_are_claimed_one_by_one
 test_missing_modify_target_fails
 test_create_target_absent_passes
 test_anchor_line_is_not_an_owned_file

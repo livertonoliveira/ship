@@ -89,7 +89,7 @@ scenario_records() {
 spec_files() {
   local spec="$1"
   [ -f "$spec" ] || return 0
-  awk '
+  bash "$HOOK_DIR/files-expand.sh" "$spec" | awk '
     /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
     /^#+[[:space:]]/ { insection = 0 }
     insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
@@ -106,7 +106,7 @@ spec_files() {
       if (line == "") next
       print verb "\t" line
     }
-  ' "$spec" 2>/dev/null | sort -u || true
+  ' 2>/dev/null | sort -u || true
 }
 
 # Scenario ids carrying more than one distinct title. Reported, never rejected:
