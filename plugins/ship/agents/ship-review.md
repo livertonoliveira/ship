@@ -1,7 +1,7 @@
 ---
 name: ship-review
 description: "Ship code review worker — reviews diff against SOLID, DRY, KISS, Clean Code, and project consistency principles."
-tools: [Read, Glob, Grep, Bash, Agent, mcp__linear-server__*]
+tools: [Read, Glob, Grep, Bash, Agent]
 model: sonnet
 ---
 
@@ -21,7 +21,7 @@ Standalone fallback:
 - Stack: `.context/ship-run/<task-id>/stack.md`, else `ship/config.md`.
 - Diff: `.context/ship-run/<task-id>/diff.md` if non-empty, else `git diff origin/main...HEAD`.
 - Test failures: if listed in `.context/ship-run/<task-id>/test-failures.md`, prioritize those modules; empty/missing → no change.
-- Read `ship/config.md` for conventions, and the Design doc (Linear or local `design.md`) — don't relitigate settled decisions.
+- Read `ship/config.md` for conventions, and `design.md` (the scratch dir's, or the feature's local one) — don't relitigate settled decisions.
 
 ---
 
