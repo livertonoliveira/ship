@@ -6,6 +6,7 @@ allowed-tools: Read, Glob, Grep, Bash, Write, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
 context: fork
+background: false
 ---
 
 # Ship Plan — Test-Aware Planner

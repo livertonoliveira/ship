@@ -68,7 +68,7 @@ test_start_ignores_a_stale_run() {
 }
 
 test_stop_blocks_until_the_files_exist() {
-  local name="stop blocks a worker that wrote nothing, then lets it finish once it has"
+  local name="stop blocks a worker that wrote nothing, then lets it finish once it has and marks it done"
   local dir rc=0 rc2=0
   dir="$(new_run ship-test-unit)"
   run_hook start "$(event "$dir" ship:ship-test-unit agent-7)"
@@ -80,7 +80,8 @@ test_stop_blocks_until_the_files_exist() {
   echo "Status: DONE" > "$dir/.context/ship-run/MOB-1/worker-status-unit.md"
   run_hook stop "$(event "$dir" ship:ship-test-unit agent-7 ',"stop_hook_active":false')" || rc2=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'generated-tests-unit.md' \
-     && printf '%s' "$err" | grep -q 'worker-status-unit.md' && [ "$rc2" -eq 0 ]; then
+     && printf '%s' "$err" | grep -q 'worker-status-unit.md' && [ "$rc2" -eq 0 ] \
+     && [ -s "$dir/.context/ship-run/MOB-1/worker-done-ship-test-unit.txt" ]; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc rc2=$rc2 err=$err)"
@@ -106,7 +107,7 @@ test_stop_lets_the_second_stop_through() {
   dir="$(new_run ship-review)"
   run_hook start "$(event "$dir" ship:ship-review agent-3)"
   run_hook stop "$(event "$dir" ship:ship-review agent-3 ',"stop_hook_active": true')" || rc=$?
-  if [ "$rc" -eq 0 ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
+  if [ "$rc" -eq 0 ] && [ -s "$dir/.context/ship-run/MOB-1/worker-done-ship-review.txt" ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
