@@ -43,8 +43,24 @@ case "$agent_type" in
   ship:ship-*) name="${agent_type#ship:}" ;;
   *) exit 0 ;;
 esac
-runs="$cwd/.context/ship-run"
-[ -d "$runs" ] || exit 0
+# The hook's cwd is wherever the agent last cd'd to. Measured 2026-10-06: test
+# workers that cd'd into a subdirectory were never found, never marked done, and
+# pipeline.sh next waited on them until the graph failed the node. The run is
+# found by walking up from cwd, then from the session's project dir.
+find_runs() {
+  local d
+  for d in "$cwd" "${CLAUDE_PROJECT_DIR:-}"; do
+    [ -n "$d" ] || continue
+    while :; do
+      [ -d "$d/.context/ship-run" ] && { printf '%s/.context/ship-run' "$d"; return 0; }
+      [ "$d" = "/" ] || [ "$d" = "." ] && break
+      d="$(dirname "$d")"
+    done
+  done
+}
+runs="$(find_runs)"
+[ -n "$runs" ] || exit 0
+cwd="${runs%/.context/ship-run}"
 
 # The scratch dir whose worker-start file this agent wrote at start.
 scratch_of_agent() {
