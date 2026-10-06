@@ -5,11 +5,15 @@ argument-hint: "<linear-project-url | project-name | local-feature-dir> [--drive
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
+context: fork
+background: false
 ---
 
 # Ship Graph — Cross-Task Parallelism
 
 Admission, conflict edges and every gate live in one deterministic state machine: `graph.sh next`. You are its executor — call it, do exactly what it prints, call it again. You never decide which task runs next.
+
+You run forked on the orchestration model and cannot talk to the user: your final message reaches them. The graph lives on disk; `/ship:graph` with the same arguments resumes it.
 
 Each node is a full `/ship:run` in its own workspace. Nothing inside a task changes: develop stays sequential, verify stays a fan-out, gates and the fix-loop cap stay intact.
 
@@ -58,7 +62,7 @@ Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight i
 2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
    - `dispatch` → make EVERY listed call now, in this same turn, in the order printed. `dispatch` prepares the workspace, `collect` resolves its path and branch, `claim` hands both back. A driver that cannot start the worker itself returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in, and the graph waits on a worker that never existed. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
    - `wait` → run the listed calls in order. `graph.sh poll` is what decides completion — it reads each workspace's own artifacts and each open PR's real state on the forge. Never land, merge or fail a node from what a worker said.
-   - `ask` → the one kind of decision the graph cannot take from its artifacts (a PR with conflicts against the base, or one nobody armed under `merge-policy human`). Present it to the user in the artifact language, STOP; act on their answer, then go to step 1.
+   - `ask` → the one kind of decision the graph cannot take from its artifacts (a PR with conflicts against the base, or one nobody armed under `merge-policy human`). STOP with it in the artifact language: the question, the exact `graph.sh` command the instruction gives per answer, then the resume.
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
 
