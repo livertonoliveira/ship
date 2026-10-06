@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINEAR="$SCRIPT_DIR/../linear.sh"
+PIPELINE="$SCRIPT_DIR/../pipeline.sh"
 
 pass_count=0
 fail_count=0
@@ -150,12 +151,118 @@ test_transition_checks_what_linear_reports() {
   rm -rf "$dir"
 }
 
+setup_linear_repo() {
+  local dir="$1"
+  (
+    cd "$dir"
+    git init -q .
+    git config user.email test@test.com
+    git config user.name test
+    printf 'x\n' > f.txt
+    git add f.txt
+    git commit -qm init
+    git branch -M main
+    git update-ref refs/remotes/origin/main HEAD
+    mkdir -p ship
+    cat > ship/config.md <<'EOF'
+# Ship Config
+
+## Project
+- Name: Fixture
+- Type: prompt-toolkit
+
+## Linear Integration
+- Configured: yes
+- Team ID: team-1
+- In Progress Status: Em andamento
+- Done Status: Concluído
+
+## Pipeline Phases
+- dev: disabled
+- test: disabled
+- perf: disabled
+- security: disabled
+- review: disabled
+- homolog: enabled
+
+## Conventions
+- Artifact language: English
+EOF
+  )
+}
+
+pipe() {
+  local dir="$1"
+  shift
+  (cd "$dir/repo" && FAKE_DIR="$dir" PATH="$dir/bin:$PATH" LINEAR_API_KEY="lin_api_secret" bash "$PIPELINE" next "$@")
+}
+
+test_pipeline_stages_the_linear_context_itself() {
+  local name="with a key, the pipeline fetches the context and starts the issue without model calls"
+  local dir out
+  dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
+  out="$(pipe "$dir" MOB-1)"
+  if [ "$(field "$out" state)" = "context" ] \
+     && printf '%s' "$out" | grep -q 'already fetched the Linear context' \
+     && ! printf '%s' "$out" | grep -q 'get_issue' \
+     && [ -s "$dir/repo/.context/ship-run/MOB-1/linear/issue.md" ] \
+     && grep 'issueUpdate' "$dir/bodies" | grep -q '"s":"st-prog"'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out: $out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_pipeline_without_a_key_keeps_the_mcp_path() {
+  local name="without a key, context staging keeps the MCP instructions"
+  local dir out
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
+  out="$(cd "$dir/repo" && env -u LINEAR_API_KEY bash "$PIPELINE" next MOB-1)"
+  if printf '%s' "$out" | grep -q 'Fetch the issue and project documents via Linear MCP'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out: $out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_pipeline_completes_the_issue_once() {
+  local name="with a key, done moves the issue to completed once and says so"
+  local dir out calls
+  dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
+  pipe "$dir" MOB-1 >/dev/null 2>&1 || true
+  printf '# Spec\n\nfixture.\n' > "$dir/repo/.context/ship-run/MOB-1/spec.md"
+  printf '# Design\n\nnone.\n' > "$dir/repo/.context/ship-run/MOB-1/design.md"
+  printf 'defer\n' > "$dir/repo/.context/ship-run/MOB-1/homolog-mode.txt"
+  : > "$dir/bodies"
+  out="$(FAKE_REPORTED=completed pipe "$dir" MOB-1)"
+  calls="$(grep -c issueUpdate "$dir/bodies" || true)"
+  FAKE_REPORTED=completed pipe "$dir" MOB-1 >/dev/null 2>&1 || true
+  if [ "$(field "$out" state)" = "done" ] \
+     && printf '%s' "$out" | grep -q 'moved the issue to its completed state (Concluído)' \
+     && [ "$calls" = "1" ] && [ "$(grep -c issueUpdate "$dir/bodies")" = "1" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (calls=$calls / out: $out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_without_a_key_the_caller_falls_back
 test_context_writes_the_issue_and_the_documents
 test_cached_documents_are_not_fetched_again
 test_transition_prefers_the_configured_name
 test_transition_falls_back_to_the_type
 test_transition_checks_what_linear_reports
+test_pipeline_stages_the_linear_context_itself
+test_pipeline_without_a_key_keeps_the_mcp_path
+test_pipeline_completes_the_issue_once
 
 echo
 echo "$pass_count passed, $fail_count failed"
