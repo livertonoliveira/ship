@@ -113,7 +113,7 @@ ensure_worktree() {
 }
 
 verb_dispatch() {
-  local task="${REST[0]:-}" prompt="${REST[1]:-}"
+  local task="${REST[0]:-}"
   [ -n "$task" ] || { echo "driver-local.sh dispatch: <task> is required" >&2; exit 1; }
   require_state
 
@@ -139,8 +139,14 @@ verb_dispatch() {
   # worker is an Agent only the caller can launch. Saying so explicitly matters:
   # a caller that runs dispatch/collect/claim and skips this line leaves a node
   # claimed in_flight with an empty workspace and nothing running in it.
-  printf 'instruction=REQUIRED — the workspace is ready but NOTHING is running in it yet. Launch one Agent (subagent_type=general-purpose, model sonnet) with the prompt: "cd %s and run %s to completion. Report its final state= line." Launch it now and let it finish in this turn; this driver has no background worker and nothing else will start one.\n' \
-    "$path" "${prompt:-/ship:run $task}"
+  # The Agent drives pipeline.sh itself instead of invoking /ship:run: that skill
+  # forks, and a fork under this Agent under the forked coordinator would sit at
+  # the subagent depth limit, where the pipeline's own workers can no longer be
+  # spawned.
+  local hook_dir
+  hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf 'instruction=REQUIRED — the workspace is ready but NOTHING is running in it yet. Launch one Agent (subagent_type=general-purpose, model sonnet) with the prompt: "cd %s first and work only there. Drive the Ship pipeline for %s: run bash \"%s/pipeline.sh\" next %s, carry out exactly what its instruction block says (Skill lines through the Skill tool, Agent lines through the Agent tool), and run it again until it prints action=done or action=stop. Never invoke the ship:run skill. Report the final state= line." Launch it now and let it finish in this turn; this driver has no background worker and nothing else will start one.\n' \
+    "$path" "$task" "$hook_dir" "$task"
 }
 
 verb_collect() {

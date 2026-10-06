@@ -425,7 +425,7 @@ Immediately after that send, wake the coordinator directly — worker_done alone
 
   coord=\$(cat \"$STATE/driver-orca-coordinator.txt\" 2>/dev/null || true)
   if [ -n \"\$coord\" ]; then
-    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Run graph.sh poll, then graph.sh next, and keep the loop going until action=ask or action=done.'
+    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Invoke the ship:graph skill again with the same arguments as before — it resumes the live graph.'
     sleep 1
     orca terminal send --terminal \"\$coord\" --text '' --enter
   fi
@@ -482,7 +482,11 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     orca terminal wait --terminal "$handle" --for tui-idle --timeout-ms 120000 >/dev/null 2>&1 || true
     start_args+=(--terminal "$handle" --worktree "id:$wt_id")
   else
-    start_args+=(--agent claude)
+    # The node session is the pipeline's orchestrator, so it runs on the
+    # orchestration model rather than whatever the user's default agent model is.
+    # Measured on 677 platform-agendx nodes: inheriting Opus made the node
+    # session 69% of a node's cost, at a median of $1.89 against $1.12 on Sonnet.
+    start_args+=(--agent claude --model "${SHIP_NODE_MODEL:-sonnet}")
   fi
 
   local started dispatch_id rc=0
@@ -754,7 +758,7 @@ verb_resume() {
   handle="$(kv_get "$f" handle)"
   [ -n "$handle" ] || { echo "driver-orca.sh resume: no terminal handle recorded for $task" >&2; exit 1; }
 
-  local text="${message:-The coordinator answered — re-run pipeline.sh next $task and continue.}"
+  local text="${message:-The coordinator answered — invoke the ship:run skill with args $task to continue.}"
   # One line, then a separate Enter: a paste never submits itself (the trailing
   # newline of --enter is eaten as part of the paste — measured in dispatch).
   orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || {

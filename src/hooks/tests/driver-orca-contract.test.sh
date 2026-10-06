@@ -215,6 +215,44 @@ test_an_agent_is_launched_in_it() {
   rm -rf "$root"
 }
 
+test_the_node_runs_on_the_orchestration_model() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
+  # The node session is the pipeline's orchestrator. Left to the user's default
+  # agent model it ran on Opus — 69% of a node's cost on 677 measured nodes.
+  if printf '%s' "$line" | grep -qE -- '--agent claude --model sonnet( |$)'; then
+    log_pass "the node agent is launched on the orchestration model by default"
+  else
+    log_fail "the node agent is launched on the orchestration model by default (got: $line)"
+  fi
+  rm -rf "$root"
+  root="$(new_case)"; SHIP_NODE_MODEL=claude-sonnet-5-5 run_dispatch "$root"
+  line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
+  if printf '%s' "$line" | grep -qE -- '--model claude-sonnet-5-5( |$)'; then
+    log_pass "SHIP_NODE_MODEL overrides the node model"
+  else
+    log_fail "SHIP_NODE_MODEL overrides the node model (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
+test_the_wake_resumes_through_the_forked_skill() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
+  # The coordinator loop runs forked on the orchestration model. A wake that
+  # told the parent session to run graph.sh itself would move the loop back
+  # onto the parent's model.
+  if printf '%s' "$line" | grep -q 'Invoke the ship:graph skill again' \
+     && ! printf '%s' "$line" | grep -q 'Run graph.sh poll'; then
+    log_pass "the wake resumes the coordinator through ship:graph, not by hand"
+  else
+    log_fail "the wake resumes the coordinator through ship:graph, not by hand (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -346,7 +384,7 @@ test_the_worker_is_told_to_wake_the_coordinator() {
     # Without --enter the text is typed into the TUI input box and never
     # submitted, so the poke looks sent and wakes nobody.
     log_fail "the wake instruction submits with a separate --enter (got: $line)"
-  elif printf '%s' "$line" | grep -q -- "action=done.' --enter"; then
+  elif printf '%s' "$line" | grep -q -- "live graph.' --enter"; then
     # A paste eats its own trailing newline: text and Enter in one send left
     # every wake as a draft, appended to the previous one (measured 2026-09-29).
     log_fail "the wake text is not submitted in the same send as its Enter (got: $line)"
@@ -356,7 +394,7 @@ test_the_worker_is_told_to_wake_the_coordinator() {
     # Matched by shape, not by $root: mktemp -d hands back /var/folders/... and
     # `cd && pwd` resolves it to /private/var/folders/....
     log_fail "the wake instruction reads an absolute coordinator handle path (got: $line)"
-  elif ! printf '%s' "$line" | grep -q -- 'graph.sh next'; then
+  elif ! printf '%s' "$line" | grep -q -- 'resumes the live graph'; then
     # A message to a mid-loop coordinator ends its turn (measured 2026-09-06).
     # Carrying the resume instruction is what keeps the poke from stalling it.
     log_fail "the wake instruction tells the coordinator to resume its loop (got: $line)"
@@ -806,6 +844,8 @@ test_the_retired_call_is_never_made
 test_worker_start_creates_a_workspace_through_the_runtime
 test_one_workspace_named_for_the_node
 test_an_agent_is_launched_in_it
+test_the_node_runs_on_the_orchestration_model
+test_the_wake_resumes_through_the_forked_skill
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered
