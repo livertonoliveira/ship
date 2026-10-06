@@ -74,7 +74,7 @@ ship/
 ### Pipeline State Machine
 
 - All of `ship:run`'s sequencing lives in `src/hooks/pipeline.sh` (`pipeline.sh next`): phase ordering, scoping, gating and the single remediation round. The plan confrontation pass is not a phase: it is `/ship:develop`'s own first step, paid inside the context that is about to implement. It is a deterministic script, testable in CI with no runtime installed.
-- `ship:run` and `ship:graph` run forked (`context: fork`) on Sonnet: a non-forked skill's `model:` lasts one turn, and the orchestration loop spans dozens. Graph nodes launch on `SHIP_NODE_MODEL` (default `sonnet`). `ship:spec` runs on Opus; `ship:plan` stays on Sonnet (its contract and inventory are script-generated). See `src/patterns/model-routing.md`.
+- `ship:run` and `ship:graph` run forked (`context: fork`) on Sonnet: a non-forked skill's `model:` lasts one turn, and the orchestration loop spans dozens. Graph nodes launch on `SHIP_NODE_MODEL` (default `sonnet`) and drive `pipeline.sh` in that session, with no `ship:run` fork on top. `ship:spec` runs on Opus; `ship:plan` stays on Sonnet (its contract and inventory are script-generated). See `src/patterns/model-routing.md`.
 - `run/SKILL.md` is only the executor of what `pipeline.sh next` prints — never re-add phase choreography, gate arithmetic, or ordering decisions to a SKILL or agent file.
 - Fix-loop counters and the findings ledger NEVER reset on resume — resetting restarts the loop.
 
