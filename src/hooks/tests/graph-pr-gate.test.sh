@@ -315,6 +315,32 @@ test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone() {
   fi
 }
 
+test_a_misplaced_first_workspace_does_not_poison_its_repo() {
+  local name="a repo entry learned from a workspace cut in the wrong checkout is replaced, and the node is settled on its own forge"
+  local dir app out f
+  dir="$(mktemp -d)"
+  app="$(mktemp -d)"
+  new_repo "$dir"
+  init_two_repo_graph "$dir"
+  # What the live graph held: the app repo's entry pointing at the
+  # coordinator's forge, learned from a node cut inside the coordinator.
+  f="$dir/.context/ship-graph/f/forge-repos.tsv"
+  printf 'app\thttps://forge.test/acme/coordinator.git\n' > "$f"
+  other_repo_landed_node "$dir" "$app" TASK-001
+  make_gh_by_repo "$dir"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  local entry
+  entry="$(cat "$f")"
+  rm -rf "$dir" "$app"
+
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && [ "$entry" = "$(printf 'app\thttps://forge.test/acme/app.git')" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' entry='$entry')"
+  fi
+}
+
 test_a_missing_pr_asks_instead_of_waiting_forever() {
   local name="under merge-policy=graph a landed node with no PR on the forge is an ask with exits, never a wait"
   local dir out
@@ -764,6 +790,7 @@ test_a_missing_pr_is_surfaced_not_assumed
 test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace
 test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone
+test_a_misplaced_first_workspace_does_not_poison_its_repo
 test_the_coordinator_checkout_is_never_touched
 test_a_dependent_waits_for_the_real_merge
 test_next_hands_the_open_prs_to_the_user

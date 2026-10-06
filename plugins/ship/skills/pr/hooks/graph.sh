@@ -324,26 +324,52 @@ node_repo() {
   printf '%s' "$repo"
 }
 
-learn_forge_repo() {
-  local dir="$1" id="$2" repo wt remote url f
-  repo="$(node_repo "$dir" "$id")"
-  [ -n "$repo" ] || return 0
-  f="$(forge_repos_file "$dir")"
-  [ -f "$f" ] && awk -F'\t' -v r="$repo" '$1 == r { found = 1 } END { exit !found }' "$f" && return 0
-  wt="$(node_field "$dir" "$id" 7)"
+# The remote a node's own workspace pushes to, or nothing when it is gone.
+workspace_forge_url() {
+  local wt="$1" remote
   [ -n "$wt" ] && [ -d "$wt" ] || return 0
   remote="$(cd "$wt" && remote_name)"
   [ -n "$remote" ] || return 0
-  url="$(git -C "$wt" remote get-url "$remote" 2>/dev/null || true)"
-  [ -n "$url" ] || return 0
-  printf '%s\t%s\n' "$repo" "$url" >> "$f"
+  git -C "$wt" remote get-url "$remote" 2>/dev/null || true
 }
 
-node_forge_repo() {
-  local dir="$1" id="$2" repo f
+# Whether a remote URL names the repo it was learned for (".../api-agendx.git"
+# for repo api-agendx).
+forge_url_fits() {
+  local url="${2%.git}"
+  [ "${url##*[/:]}" = "$1" ]
+}
+
+# Measured 2026-10-06: the first api-agendx node of a graph was cut, by
+# mistake, inside the coordinator's checkout. The repo's entry was learned from
+# that workspace and, kept forever, sent every later api-agendx node to the
+# coordinator's forge: two merged PRs read "no PR" and held ten nodes. An entry
+# that does not name its repo is replaced by the first one that does.
+learn_forge_repo() {
+  local dir="$1" id="$2" repo url f known
   repo="$(node_repo "$dir" "$id")"
+  [ -n "$repo" ] || return 0
+  url="$(workspace_forge_url "$(node_field "$dir" "$id" 7)")"
+  [ -n "$url" ] || return 0
   f="$(forge_repos_file "$dir")"
-  [ -n "$repo" ] && [ -f "$f" ] || return 0
+  known="$([ -f "$f" ] && awk -F'\t' -v r="$repo" '$1 == r { print $2; exit }' "$f" || true)"
+  if [ -z "$known" ]; then
+    printf '%s\t%s\n' "$repo" "$url" >> "$f"
+  elif [ "$known" != "$url" ] && forge_url_fits "$repo" "$url" && ! forge_url_fits "$repo" "$known"; then
+    awk -F'\t' -v r="$repo" -v u="$url" 'BEGIN { OFS = "\t" } $1 == r { $2 = u } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  fi
+}
+
+# A node's own workspace is the truth about where its branch lives; the per-repo
+# entry answers for a node whose workspace is already gone.
+node_forge_repo() {
+  local dir="$1" id="$2" repo f url
+  repo="$(node_repo "$dir" "$id")"
+  [ -n "$repo" ] || return 0
+  url="$(workspace_forge_url "$(node_field "$dir" "$id" 7)")"
+  if [ -n "$url" ]; then printf '%s' "$url"; return 0; fi
+  f="$(forge_repos_file "$dir")"
+  [ -f "$f" ] || return 0
   awk -F'\t' -v r="$repo" '$1 == r { print $2; exit }' "$f"
 }
 
