@@ -436,8 +436,8 @@ cmd_report_timings() {
     }
   ' "$timings"
 
-  # Worker start lag: each Agent worker writes its start epoch to
-  # worker-start-<name>.txt as its first action; lag = start − dispatch is the
+  # Worker start lag: the SubagentStart hook (subagent-lifecycle.sh) writes each
+  # worker's start epoch to worker-start-<name>.txt; lag = start − dispatch is the
   # scheduling-starvation measurement (dispatch time alone can't show it).
   local epoch phase tool name f start header=0
   while IFS="$(printf '\t')" read -r epoch phase tool name; do
@@ -1409,14 +1409,14 @@ next_quality_dispatch() {
     review)   extra=" | Write review-findings.md to the scratch dir only (never ship/changes/ in Linear mode)" ;;
   esac
   cmd_dispatch "$scratch" "$phase" Agent "ship-$phase" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-$phase (model sonnet), prompt: \"Task: $task | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-$phase.txt | Artifact language: $lang | Storage mode: $mode | Scratch dir: $scratch | Fan-out: $depth (flat = no sub-agents) | Findings gate script: $HOOK_DIR/findings-gate.sh | Severity overrides: ship/config.md → ## Severity Overrides | Stack: $scratch/stack.md | Design decisions: $scratch/design.md — honor settled decisions; don't relitigate | Read the diff from $scratch/diff.md — never recompute it$extra\""
+  next_body_add "- Agent subagent_type=ship:ship-$phase (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Storage mode: $mode | Scratch dir: $scratch | Fan-out: $depth (flat = no sub-agents) | Findings gate script: $HOOK_DIR/findings-gate.sh | Severity overrides: ship/config.md → ## Severity Overrides | Stack: $scratch/stack.md | Design decisions: $scratch/design.md — honor settled decisions; don't relitigate | Read the diff from $scratch/diff.md — never recompute it$extra\""
 }
 
 next_test_dispatch() {
   local scratch="$1" task="$2" lang="$3" layer="$4"
   next_test_brief "$scratch" "$layer"
   cmd_dispatch "$scratch" test Agent "ship-test-$layer" sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | First action, before any read: run Bash date -u +%s > $scratch/worker-start-ship-test-$layer.txt | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Status: write your report's single 'Status: <value>' line to $scratch/worker-status-$layer.md. Generate only — never run a test command.\""
+  next_body_add "- Agent subagent_type=ship:ship-test-$layer (model sonnet), prompt: \"Task ID: $task | Mode: generate | Artifact language: $lang | Brief: $scratch/test-brief-$layer.md — read it first; it contains this layer's Test Contract (source of truth), Scenarios, Denylist (paths you must never touch) and Source pointer; do not fall back to standalone discovery | Manifest: write one line per file you actually create OR extend (an existing suite you added cases to counts too — an unlisted-but-changed file makes the gate re-run nothing, or everything), as '- <path> ($layer)', to $scratch/generated-tests-$layer.md (no header; write the file even when none were touched). Status: write your report's single 'Status: <value>' line to $scratch/worker-status-$layer.md. Generate only — never run a test command.\""
 }
 
 next_fix_dispatch() {
