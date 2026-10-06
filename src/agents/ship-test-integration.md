@@ -3,6 +3,7 @@ name: ship-test-integration
 description: "Ship integration test worker — generates and runs integration tests for API endpoints, module interactions, and database operations."
 tools: [Read, Glob, Grep, Bash, Edit, Write]
 model: sonnet
+maxTurns: 120
 ---
 
 # Ship Test Integration — Integration Test Worker

@@ -3,6 +3,7 @@ name: ship-test-unit
 description: "Ship unit test worker — generates and runs unit tests for isolated functions, services, and utilities."
 tools: [Read, Glob, Grep, Bash, Edit, Write]
 model: sonnet
+maxTurns: 120
 ---
 
 # Ship Test Unit — Unit Test Worker
