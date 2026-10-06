@@ -216,6 +216,31 @@ test_pipeline_stages_the_linear_context_itself() {
   rm -rf "$dir"
 }
 
+test_pipeline_stages_the_spec_without_the_model() {
+  local name="with a key and a Proposal it can slice, the pipeline writes spec.md and design.md itself and moves on"
+  local dir out r="REQ"
+  dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  cat > "$dir/context.json" <<EOF
+{"data":{"issue":{"identifier":"MOB-1","title":"Listagem","description":"## Requisito\\nCobre ${r}-101.","url":"u","state":{"name":"Todo","type":"unstarted"},"project":{"name":"P","documents":{"nodes":[
+{"title":"Proposal","content":"### TASK-101 · Listagem\\n\\n${r}-101 — A listagem mostra a comanda.\\n\\n* Detalhe.\\n\\n### TASK-102 · Outra\\n\\n${r}-102 — Outra coisa."},
+{"title":"Design","content":"# Design\\nfull design"}]}}}}}
+EOF
+  mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
+  out="$(pipe "$dir" MOB-1)"
+  local s="$dir/repo/.context/ship-run/MOB-1"
+  if [ "$(field "$out" state)" != "context" ] \
+     && grep -q "^## Proposal — ${r}-101$" "$s/spec.md" \
+     && grep -q "^- ${r}-102 — Outra coisa. — covered by TASK-102$" "$s/spec.md" \
+     && grep -q '^full design$' "$s/design.md" \
+     && [ "$(grep -c issueUpdate "$dir/bodies")" = "1" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) / $(cat "$s/spec.md" 2>/dev/null | head -5))"
+  fi
+  rm -rf "$dir"
+}
+
 test_pipeline_without_a_key_keeps_the_mcp_path() {
   local name="without a key, context staging keeps the MCP instructions"
   local dir out
@@ -261,6 +286,7 @@ test_transition_prefers_the_configured_name
 test_transition_falls_back_to_the_type
 test_transition_checks_what_linear_reports
 test_pipeline_stages_the_linear_context_itself
+test_pipeline_stages_the_spec_without_the_model
 test_pipeline_without_a_key_keeps_the_mcp_path
 test_pipeline_completes_the_issue_once
 
