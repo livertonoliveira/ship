@@ -123,6 +123,24 @@ test_standalone_agents_are_left_alone() {
   rm -rf "$dir"
 }
 
+test_a_worker_that_changed_directory_is_still_marked_done() {
+  local name="a worker whose cwd is a subdirectory at stop is still found and marked done"
+  local dir rc=0
+  dir="$(new_run ship-test-unit)"
+  run_hook start "$(event "$dir" ship:ship-test-unit agent-9)"
+  sleep 1
+  mkdir -p "$dir/test/unit/deep"
+  : > "$dir/.context/ship-run/MOB-1/generated-tests-unit.md"
+  echo "Status: DONE" > "$dir/.context/ship-run/MOB-1/worker-status-unit.md"
+  run_hook stop "$(event "$dir/test/unit/deep" ship:ship-test-unit agent-9)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$dir/.context/ship-run/MOB-1/worker-done-ship-test-unit.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+  rm -rf "$dir"
+}
+
 test_guard_denies_source_under_test() {
   local name="guard denies a test worker's edit to a Denylist path, allows its test file"
   local dir out_deny out_allow
@@ -154,6 +172,7 @@ test_stop_blocks_until_the_files_exist
 test_stop_rejects_a_stale_file
 test_stop_lets_the_second_stop_through
 test_standalone_agents_are_left_alone
+test_a_worker_that_changed_directory_is_still_marked_done
 test_guard_denies_source_under_test
 test_guard_ignores_the_main_session
 
