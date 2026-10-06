@@ -568,7 +568,7 @@ test_gate_fail_dispatches_one_remediation_batch() {
   regate="$(next "$dir" T4)"
   if [ "$(field "$ask" state)" = "gate" ] && [ "$(field "$ask" action)" = "ask" ] \
     && [ "$(field "$fix" state)" = "remediation-fix" ] \
-    && [ "$(printf '%s' "$fix" | grep -c 'subagent_type=general-purpose')" = "1" ] \
+    && [ "$(printf '%s' "$fix" | grep -c 'subagent_type=ship:ship-remediation-')" = "1" ] \
     && grep -q '^### R1 ' "$scratch/remediation.md" \
     && [ "$(field "$verify" state)" = "remediation-verify" ] \
     && ! printf '%s' "$verify" | grep -q 'ship:ship-review' \
@@ -825,7 +825,7 @@ test_static_failure_joins_the_findings_in_one_batch() {
   local out
   out="$(next "$dir" TS2)"
   if [ "$(field "$out" state)" = "remediation-fix" ] \
-    && [ "$(printf '%s' "$out" | grep -c 'subagent_type=general-purpose')" = "1" ] \
+    && [ "$(printf '%s' "$out" | grep -c 'subagent_type=ship:ship-remediation-')" = "1" ] \
     && grep -q 'typecheck/lint' "$scratch/remediation.md" \
     && grep -q 'race-condition-on-idempotency' "$scratch/remediation.md" \
     && [ "$(grep -c '^### R' "$scratch/remediation.md")" = "2" ]; then

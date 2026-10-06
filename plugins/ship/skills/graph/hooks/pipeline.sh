@@ -1424,14 +1424,14 @@ next_fix_dispatch() {
   # Recorded like any other dispatched phase: without this the remediation round
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
-  cmd_dispatch "$scratch" remediation-fix Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+  cmd_dispatch "$scratch" remediation-fix Agent ship-remediation-fix sonnet >/dev/null
+  next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
 }
 
 next_remediation_verify_dispatch() {
   local scratch="$1" task="$2" lang="$3"
-  cmd_dispatch "$scratch" remediation-verify Agent general-purpose sonnet >/dev/null
-  next_body_add "- Agent subagent_type=general-purpose (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set: judge only the listed findings and report nothing outside the list — that is what lets the round terminate. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
+  cmd_dispatch "$scratch" remediation-verify Agent ship-remediation-verify sonnet >/dev/null
+  next_body_add "- Agent subagent_type=ship:ship-remediation-verify (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Confirmation pass over a closed set: judge only the listed findings and report nothing outside the list — that is what lets the round terminate. Read $scratch/remediation.md and, for each item whose id is listed in $scratch/remediation-items.txt with kind 'finding', decide from the current source whether that specific finding is now addressed. Write $scratch/remediation-verify.md with exactly one line per finding item, format '- <id>: resolved' or '- <id>: unresolved — <short reason>'. Nothing else.\""
 }
 
 cmd_next() {
