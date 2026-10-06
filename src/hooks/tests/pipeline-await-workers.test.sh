@@ -112,6 +112,19 @@ test_a_worker_that_wrote_its_output_is_finished_without_a_marker() {
   if [ "$(field "$out" state)" != "waiting" ]; then log_pass "$name"; else log_fail "$name (out: $out)"; fi
 }
 
+test_a_fix_agent_with_its_report_is_finished() {
+  local name="the remediation fix agent counts as finished once its report is written"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  printf '%s\nagent-3\n' "$(date -u +%s)" > "$dir/.context/ship-run/T-1/worker-start-ship-remediation-fix.txt"
+  sleep 1
+  echo "- R1: fixed" > "$dir/.context/ship-run/T-1/remediation-fix-report.md"
+  out="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" != "waiting" ]; then log_pass "$name"; else log_fail "$name (out: $out)"; fi
+}
+
 test_a_stale_start_marker_is_ignored() {
   local name="a start marker older than an hour (a run that died) never holds the pipeline"
   local dir out
@@ -127,6 +140,7 @@ test_a_running_worker_keeps_the_run_waiting
 test_next_waits_for_the_worker_to_finish
 test_a_finished_worker_does_not_hold_the_run
 test_a_stale_start_marker_is_ignored
+test_a_fix_agent_with_its_report_is_finished
 test_a_worker_that_wrote_its_output_is_finished_without_a_marker
 
 echo
