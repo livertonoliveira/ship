@@ -404,7 +404,7 @@ test_post_develop_no_mutation_stops() {
 }
 
 test_verify_a_dispatches_worker_with_brief() {
-  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist, SUT slice, start marker)"
+  local name="verify-a dispatches the unit worker with a deterministic brief (contract, scenarios, denylist, SUT slice; the start marker is the SubagentStart hook's)"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -421,7 +421,7 @@ test_verify_a_dispatches_worker_with_brief() {
   brief="$dir/.context/ship-run/TASK-1/test-brief-unit.md"
   if [ "$(field "$out" state)" = "verify-a" ] \
     && printf '%s' "$out" | grep -q 'subagent_type=ship:ship-test-unit' \
-    && printf '%s' "$out" | grep -q 'worker-start-ship-test-unit.txt' \
+    && ! printf '%s' "$out" | grep -q 'First action' \
     && [ -f "$brief" ] \
     && grep -q 'Scenario: greets' "$brief" \
     && ! awk '/^## Scenarios/{c=1;next} /^## /{c=0} c' "$brief" | grep -q "$SCEN_ID" \
