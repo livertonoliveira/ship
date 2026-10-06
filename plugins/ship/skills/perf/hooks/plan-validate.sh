@@ -374,7 +374,9 @@ plan_scenarios() {
 # `## Files` entries: "create|modify `<path>` — <intent>", with or without a
 # leading "- ". Both shapes occur in practice — the local-mode fixture writes the
 # dash, a real Linear-mode spec does not — and requiring it made this check
-# extract nothing and pass vacuously on half the specs it exists for.
+# extract nothing and pass vacuously on half the specs it exists for. Linear
+# also rewrites "- " as "* ": measured 2026-10-06, 192 of 203 graph nodes got an
+# empty inventory that way, so the star is a bullet too.
 # `Âncora:` lines are pattern references, not owned files, so they never reach
 # the plan.
 spec_files() {
@@ -382,9 +384,9 @@ spec_files() {
   bash "$HOOK_DIR/files-expand.sh" "$spec" | awk -v kind="$kind" '
     /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
     /^#+[[:space:]]/ { insection = 0 }
-    insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
+    insection && /^[[:space:]]*([-*][[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/^[[:space:]]*[-*][[:space:]]*/, "", line)
       gsub(/`/, "", line)
       if (line ~ /^(Âncora|Ancora|Anchor)[[:space:]]*:/) next
       if (!match(line, /^(create|modify)[[:space:]]+/)) next
