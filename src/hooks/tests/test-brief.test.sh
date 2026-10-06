@@ -95,7 +95,9 @@ $PLAN_FILES_BLOCK
 EOF
 }
 
-# Drives the pipeline to the point just before the verification fan-out.
+# Drives the pipeline to the point just before the verification fan-out. A
+# one-file spec skips the planner, so develop writes the Test Contract into
+# plan.md itself; the develop step below stands in for that.
 drive_to_verify() {
   local dir="$1" task="$2" layer="${3:-unit}" testpath="${4:-src/b.test.js}"
   local scratch; scratch="$(scratch_of "$dir" "$task")"
@@ -107,7 +109,8 @@ drive_to_verify() {
     state="$(field "$out" state)"
     case "$state" in
       plan)        plan_with_contract "$layer" "$testpath" > "$scratch/plan.md" ;;
-      develop)     mkdir -p "$dir/src"; echo 'module.exports=1' > "$dir/src/b.js" ;;
+      develop)     mkdir -p "$dir/src"; echo 'module.exports=1' > "$dir/src/b.js"
+                   [ -f "$scratch/plan.md" ] || plan_with_contract "$layer" "$testpath" > "$scratch/plan.md" ;;
       verify-a)    printf '%s' "$out"; return 0 ;;
     esac
   done
@@ -154,6 +157,7 @@ test_layer_already_authored_by_develop_is_not_dispatched() {
       develop)
         mkdir -p "$dir/src"
         echo 'module.exports=1' > "$dir/src/b.js"
+        [ -f "$sc/plan.md" ] || plan_with_contract unit src/b.test.js > "$sc/plan.md"
         # develop implements the contract's test itself, as the plan's module
         # list told it to.
         echo 'it(1)' > "$dir/src/b.test.js"
@@ -298,6 +302,7 @@ test_develop_authored_tests_reach_the_manifest() {
       develop)
         mkdir -p "$dir/src" "$dir/test/e2e"
         echo 'module.exports=1' > "$dir/src/b.js"
+        [ -f "$sc/plan.md" ] || plan_with_contract e2e test/e2e/b.e2e-spec.js > "$sc/plan.md"
         # The plan gave this file to a develop module, so no worker manifest
         # will ever name it — and that manifest is the only thing test-exec runs.
         echo 'it(1)' > "$dir/test/e2e/b.e2e-spec.js"

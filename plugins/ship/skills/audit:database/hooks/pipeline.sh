@@ -1449,6 +1449,27 @@ next_plan_scaffold() {
   fi
 }
 
+# Source files the spec says the task touches, tests left out. A graph node
+# starts from a clean checkout, so its baseline diff is always empty and the
+# size rule above never fired: all 203 nodes of a platform-agendx graph were
+# planned, 19 of them one-file changes diff-classify later called minor. The
+# spec's own ## Files map (via the scaffold) is the size known before develop.
+next_spec_source_files() {
+  local scratch="$1" config="$2"
+  next_plan_scaffold "$scratch" "$config"
+  [ -f "$scratch/plan-scaffold.md" ] || { printf '0'; return 0; }
+  awk '
+    /^## File Inventory/ { inv = 1; next }
+    /^## / { inv = 0 }
+    inv && /^- [^ ]+ \((create|modify)\)/ {
+      path = $2
+      if (path ~ /(\.test\.|\.spec\.|\.e2e-spec\.|__tests__\/|(^|\/)tests?\/)/) next
+      n++
+    }
+    END { print n + 0 }
+  ' "$scratch/plan-scaffold.md"
+}
+
 # What the planner is told about the generated lists. Empty when no scaffold
 # exists (no spec.md, or standalone), which is the legacy free-derivation path.
 next_plan_scaffold_arg() {
@@ -1625,6 +1646,8 @@ cmd_next() {
       decision="skip:dev-disabled"
     elif [ "$baseline" = "trivial" ] || [ "$baseline" = "minor" ]; then
       decision="skip:baseline-$baseline"
+    elif [ "$baseline" = "greenfield" ] && [ "$(next_spec_source_files "$SCRATCH" "$CONFIG")" = "1" ]; then
+      decision="skip:spec-minor"
     fi
     printf '%s\n' "$decision" > "$SCRATCH/plan-decision.txt"
     if [ "$decision" != "run" ]; then
