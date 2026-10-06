@@ -92,9 +92,9 @@ spec_files() {
   bash "$HOOK_DIR/files-expand.sh" "$spec" | awk '
     /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
     /^#+[[:space:]]/ { insection = 0 }
-    insection && /^[[:space:]]*(-[[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
+    insection && /^[[:space:]]*([-*][[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
       line = $0
-      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/^[[:space:]]*[-*][[:space:]]*/, "", line)
       gsub(/`/, "", line)
       if (line ~ /^(Âncora|Ancora|Anchor)[[:space:]]*:/) next
       if (!match(line, /^(create|modify)[[:space:]]+/)) next
