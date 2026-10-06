@@ -267,6 +267,28 @@ function skillKeyFromRelPath(skillRelPath) {
   return skillRelPath.split(path.sep).join('/').replace(/\/SKILL\.md$/, '');
 }
 
+// A skill whose body is the single line `@ship-body-of <skill>` takes that
+// skill's source body under its own frontmatter, then builds like any other:
+// lazy refs, hook bundling and includes resolve exactly as in the original. It
+// lets one flow ship twice with different frontmatter (ship:pr-node is ship:pr
+// forked) without a copy that drifts.
+const BODY_OF = /^@ship-body-of\s+([a-z0-9:-]+)\s*$/;
+function splitFrontmatter(raw) {
+  const m = raw.match(/^---\n[\s\S]*?\n---\n/);
+  return m ? [m[0], raw.slice(m[0].length)] : ['', raw];
+}
+function withBodyOf(raw, skillRelPath) {
+  const [front, body] = splitFrontmatter(raw);
+  const m = body.trim().match(BODY_OF);
+  if (!m) return raw;
+  const srcPath = path.join(SOURCE_SKILLS, m[1], 'SKILL.md');
+  if (!fs.existsSync(srcPath)) {
+    console.error(`Erro: @ship-body-of aponta para uma skill inexistente em ${skillRelPath}: ${m[1]}`);
+    process.exit(1);
+  }
+  return front + splitFrontmatter(fs.readFileSync(srcPath, 'utf8'))[1];
+}
+
 function buildSkills() {
   fs.rmSync(OUTPUT_SKILLS, { recursive: true, force: true });
   const skillFiles = walkSkillFiles(SOURCE_SKILLS);
@@ -275,7 +297,7 @@ function buildSkills() {
 
   for (const skillPath of skillFiles) {
     const skillRelPath = path.relative(SOURCE_SKILLS, skillPath);
-    const raw = fs.readFileSync(skillPath, 'utf8');
+    const raw = withBodyOf(fs.readFileSync(skillPath, 'utf8'), skillRelPath);
     const outPath = path.join(OUTPUT_SKILLS, skillRelPath);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     const lazyResolved = processLazyRefs(raw, skillRelPath, path.dirname(outPath));
