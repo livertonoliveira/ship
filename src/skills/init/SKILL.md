@@ -4,6 +4,7 @@ description: "Initializes Ship in the project: detects stack, conventions, confi
 argument-hint: ""
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
+disable-model-invocation: true
 model: "sonnet"
 ---
 
