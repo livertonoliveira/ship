@@ -26,6 +26,13 @@ Linear workflow states each have a stable `type`. The two the pipeline transitio
 
 ---
 
+## 0. With `LINEAR_API_KEY` set: one call
+
+`bash "<skill dir>/hooks/linear.sh" transition <issue> started|completed --prefer "<configured status name>"`
+(`<skill dir>` holds the `patterns/` folder this file is in) does steps 1–3: it picks the team's state
+of that type, the configured name first, sets it by **ID**, and checks the type Linear reports back.
+`ok=1` ends the transition. Exit 4 (no key) or any other failure → steps 1–3 below.
+
 ## 1. Resolve the target state (do this once per transition)
 
 1. Read the relevant config field (`In Progress Status` or `Done Status`) and `Team ID` from

@@ -33,7 +33,7 @@ Identify the feature/task ID from `$ARGUMENTS`. Prefer the scratch dir `.context
 
 ### 1. Load all artifacts
 
-- **Linear mode**: in parallel, `mcp__linear-server__get_issue` (task details: title, description, AC, status, labels) AND `mcp__linear-server__get_project`. Then `list_documents` **once**, then in parallel `get_document` for **Proposal** and **Design** (IDs from that single `list_documents` call).
+- **Linear mode**: when the run staged `.context/ship-run/<task-id>/linear/` (`issue.md`, `proposal.md`, `design.md`), read those and make no fetch call. Otherwise, in parallel, `mcp__linear-server__get_issue` (task details: title, description, AC, status, labels) AND `mcp__linear-server__get_project`. Then `list_documents` **once**, then in parallel `get_document` for **Proposal** and **Design** (IDs from that single `list_documents` call).
 - **Local mode**: follow `@@ship/patterns/load-artifacts.md`, then additionally load `ship/changes/<feature>/report.md` (if consolidated) and `ship/changes/<feature>/tracking.md` (if it exists).
 - **Both modes**: get the canonical per-phase gate index with `bash "@@ship/hooks/pipeline.sh" rows .context/ship-run/<task-id>` — it prints the most recent row per phase (columns Phase | Run | Timestamp | Files | Gate | Critical | High | Medium | Low | Notes); never re-derive "last row per phase" by hand. Local mode treats a missing row as FAIL. For each phase where gate = WARN or FAIL, read its findings file (`perf-findings[-<task-id>].md`, `security-findings[-<task-id>].md`, `review-findings[-<task-id>].md`); do **not** open findings files for PASS phases.
 

@@ -59,7 +59,7 @@ Mirrors `ship:homolog` Step 6.
 
 ### 1. Load artifacts
 
-**Linear:** if `.context/ship-run/<task-id>/linear-cache.json` exists, `get_document` per cached id (Proposal/Design), skipping `list_documents` (log `cached_at`, non-gating). Otherwise use @@ship/patterns/load-artifacts.md. Reuse cached `list_comments` from Prerequisites — do not re-fetch.
+**Linear:** if `.context/ship-run/<task-id>/linear/` holds `proposal.md` and `design.md`, read those — no fetch. Else if `.context/ship-run/<task-id>/linear-cache.json` exists, `get_document` per cached id (Proposal/Design), skipping `list_documents` (log `cached_at`, non-gating). Otherwise use @@ship/patterns/load-artifacts.md. Reuse cached `list_comments` from Prerequisites — do not re-fetch.
 
 **Local:** @@ship/patterns/load-artifacts.md, plus `tasks.md` (completeness) and `report.md` (gates/findings).
 
