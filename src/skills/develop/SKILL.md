@@ -6,6 +6,7 @@ allowed-tools: Read, Glob, Grep, Bash, Edit, Write, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
 context: fork
+background: false
 ---
 
 # Ship Develop — Direct Implementer

@@ -1310,6 +1310,24 @@ cmd_wait_answer() {
   printf 'note=still waiting after %ss — run wait-answer again\n' "$timeout"
 }
 
+# Workers the pipeline dispatched that have not finished: a worker-start marker
+# (SubagentStart) with no worker-done marker written after it (SubagentStop).
+next_running_workers() {
+  local scratch="$1" f name start now
+  now="$(date -u +%s)"
+  for f in "$scratch"/worker-start-*.txt; do
+    [ -f "$f" ] || continue
+    name="${f##*/worker-start-}"
+    name="${name%.txt}"
+    start="$(head -1 "$f" | tr -cd '0-9')"
+    [ -n "$start" ] && [ $((now - start)) -le 3600 ] || continue
+    if [ -f "$scratch/worker-done-$name.txt" ] && [ ! "$f" -nt "$scratch/worker-done-$name.txt" ]; then
+      continue
+    fi
+    printf '%s\n' "$name"
+  done
+}
+
 next_common_after() {
   next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
 }
@@ -1467,6 +1485,26 @@ cmd_next() {
     ANSWER="$(head -1 "$SCRATCH/answer.txt")"
   fi
   rm -f "$SCRATCH/answer.txt" "$SCRATCH/ask.md"
+
+  # --- workers still running ---------------------------------------------------
+  # Interactive sessions launch subagents in the background, and a forked
+  # ship:run that ended its turn to wait for one was over: measured 2026-10-06,
+  # one node relaunched the fork 8 times, each paying its ~41k-token start while
+  # the node session polled the scratch dir with ls. The wait lives here instead,
+  # bounded so a tool call never hangs past what a runtime allows.
+  local running waited=0
+  running="$(next_running_workers "$SCRATCH")"
+  while [ -n "$running" ] && [ "$waited" -lt "${SHIP_AWAIT_WORKERS_S:-540}" ]; do
+    sleep 5
+    waited=$((waited + 5))
+    running="$(next_running_workers "$SCRATCH")"
+  done
+  if [ -n "$running" ]; then
+    NEXT_BODY=""
+    next_body_add "Still running: $(printf '%s' "$running" | paste -sd, - | sed 's/,/, /g'). They report through the run's files, not to you."
+    next_body_add "Run now, without ending your run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
+    next_emit "waiting" "work" "$(next_run_number "$SCRATCH")" "worker(s) still running after ${waited}s"
+  fi
 
   # --- init (first call, or forced fresh/resume) -------------------------------
   if [ ! -f "$SCRATCH/diff-class.txt" ] || [ "$MODE" != "check" ]; then

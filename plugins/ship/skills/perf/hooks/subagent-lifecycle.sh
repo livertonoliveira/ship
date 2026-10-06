@@ -15,6 +15,8 @@ set -euo pipefail
 #          after the fact, with the context that could have written them gone.
 #          Blocks once (exit 2, the reason goes back to the worker); the second
 #          stop is let through and the fail-closed gates take it from there.
+#          A worker let through gets worker-done-<name>.txt, which is what
+#          pipeline.sh next waits on for a worker launched in the background.
 #   guard  (PreToolUse Edit|Write) — a test worker may not edit a path its
 #          brief's ## Denylist names (the source under test).
 #
@@ -85,18 +87,24 @@ required_files() {
 }
 
 cmd_stop() {
-  [ "$(json_bool stop_hook_active)" = "true" ] && exit 0
   local scratch start f missing=""
   scratch="$(scratch_of_agent)"
   [ -n "$scratch" ] || exit 0
   start="$scratch/worker-start-$name.txt"
+  if [ "$(json_bool stop_hook_active)" = "true" ]; then
+    date -u +%s > "$scratch/worker-done-$name.txt"
+    exit 0
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if [ ! -f "$scratch/$f" ] || [ -z "$(find "$scratch/$f" -newer "$start" 2>/dev/null)" ]; then
       missing="$missing $scratch/$f"
     fi
   done < <(required_files)
-  [ -n "$missing" ] || exit 0
+  if [ -z "$missing" ]; then
+    date -u +%s > "$scratch/worker-done-$name.txt"
+    exit 0
+  fi
   {
     echo "Ship: you were dispatched by the pipeline, which reads your result from disk, and these files were not written during this run:"
     for f in $missing; do echo "  - $f"; done

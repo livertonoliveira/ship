@@ -40,7 +40,7 @@ Linear ID or local `TASK-001` → single task (default). `--project`/`--mileston
    - `ask` → STOP with the question in the artifact language, then one resume line per answer token the instruction names: `/ship:run <task-id> --answer <token>`.
    - `stop` → report the stated reason to the user and STOP.
    - `done` → follow the closing instruction, report, STOP.
-3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
+3. When every call from step 2 has returned — one launched in the background counts as returned — go to step 1. `pipeline.sh next` itself waits for dispatched workers: never end your run to wait for a notification. Non-zero exit: surface stderr to the user and STOP.
 
 ## Rules
 
