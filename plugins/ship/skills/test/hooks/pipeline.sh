@@ -1317,6 +1317,7 @@ next_worker_output() {
     ship-test-*) printf 'worker-status-%s.md' "${1#ship-test-}" ;;
     ship-review|ship-perf|ship-security) printf '%s-findings.md' "${1#ship-}" ;;
     ship-remediation-verify) printf 'remediation-verify.md' ;;
+    ship-remediation-fix) printf 'remediation-fix-report.md' ;;
   esac
 }
 
@@ -1324,7 +1325,8 @@ next_worker_output() {
 # (SubagentStart) with neither a worker-done marker (SubagentStop) nor the
 # worker's own output written after it. Measured 2026-10-06: test workers wrote
 # every file and the stop hook left no marker, and the run waited on them until
-# the graph failed the node — the hook alone is not a completion signal.
+# the graph failed the node — the hook alone is not a completion signal, so
+# every worker the pipeline waits on writes an output of its own.
 next_running_workers() {
   local scratch="$1" f name start now out
   now="$(date -u +%s)"
@@ -1460,7 +1462,7 @@ next_fix_dispatch() {
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent ship-remediation-fix sonnet >/dev/null
-  next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Report per item id what you changed.\""
+  next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Write what you changed per item id to $scratch/remediation-fix-report.md, last.\""
 }
 
 next_remediation_verify_dispatch() {

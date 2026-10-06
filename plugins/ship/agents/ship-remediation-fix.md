@@ -13,4 +13,4 @@ Apply the adjustments listed in the remediation file named in your prompt. The p
 - Fix every item in one pass, minimally: no unrelated refactors, no new features.
 - Zero comments and zero spec IDs (`AC-`, `SC-`, `REQ-`, issue keys) in source or test names.
 - Never run destructive git commands; never commit.
-- Report, per item id, what you changed.
+- Write what you changed, per item id, to the report file your prompt names — last, after every fix.
