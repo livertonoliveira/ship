@@ -40,7 +40,7 @@ You are the context about to do the work, so act on the answers yourself: extend
 
 ## 3. Mark issue as In Progress
 
-> **Linear mode only.** Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Read `${CLAUDE_SKILL_DIR}/patterns/linear-status.md`, follow that recipe, then `mcp__linear-server__save_issue` with `state: <target-state>` before writing any code.
+> **Linear mode, standalone only** — in pipeline mode the run already did it. Never pass literal `"In Progress"` — it no-ops on teams with a differently-named started state. Follow `${CLAUDE_SKILL_DIR}/patterns/linear-status.md` before writing any code.
 
 ---
 
