@@ -1310,10 +1310,23 @@ cmd_wait_answer() {
   printf 'note=still waiting after %ss — run wait-answer again\n' "$timeout"
 }
 
+# The file the pipeline told each worker to write last — the same contract its
+# prompt carries, so a worker that wrote it is finished whatever its hook did.
+next_worker_output() {
+  case "$1" in
+    ship-test-*) printf 'worker-status-%s.md' "${1#ship-test-}" ;;
+    ship-review|ship-perf|ship-security) printf '%s-findings.md' "${1#ship-}" ;;
+    ship-remediation-verify) printf 'remediation-verify.md' ;;
+  esac
+}
+
 # Workers the pipeline dispatched that have not finished: a worker-start marker
-# (SubagentStart) with no worker-done marker written after it (SubagentStop).
+# (SubagentStart) with neither a worker-done marker (SubagentStop) nor the
+# worker's own output written after it. Measured 2026-10-06: test workers wrote
+# every file and the stop hook left no marker, and the run waited on them until
+# the graph failed the node — the hook alone is not a completion signal.
 next_running_workers() {
-  local scratch="$1" f name start now
+  local scratch="$1" f name start now out
   now="$(date -u +%s)"
   for f in "$scratch"/worker-start-*.txt; do
     [ -f "$f" ] || continue
@@ -1322,6 +1335,10 @@ next_running_workers() {
     start="$(head -1 "$f" | tr -cd '0-9')"
     [ -n "$start" ] && [ $((now - start)) -le 3600 ] || continue
     if [ -f "$scratch/worker-done-$name.txt" ] && [ ! "$f" -nt "$scratch/worker-done-$name.txt" ]; then
+      continue
+    fi
+    out="$(next_worker_output "$name")"
+    if [ -n "$out" ] && [ -f "$scratch/$out" ] && [ "$scratch/$out" -nt "$f" ]; then
       continue
     fi
     printf '%s\n' "$name"
