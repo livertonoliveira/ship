@@ -4,7 +4,7 @@ description: "Ship Phase 1.8: test-aware planning — derives a single module + 
 argument-hint: "<task-id | linear-issue-id>"
 allowed-tools: Read, Glob, Grep, Bash, Write, mcp__linear-server__*
 user-invocable: true
-model: "sonnet"
+model: "opus"
 context: fork
 ---
 
