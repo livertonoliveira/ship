@@ -1536,7 +1536,7 @@ cmd_next() {
         next_body_add "The planner returned without writing $SCRATCH/plan.md (silent write failure). Re-dispatch it:"
       fi
       next_plan_scaffold "$SCRATCH" "$CONFIG"
-      cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+      cmd_dispatch "$SCRATCH" plan Skill ship:plan opus >/dev/null
       next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH")\""
       next_common_after
       next_emit "plan" "dispatch" "$RUN" "${resumed}planner required for this task"
@@ -1586,7 +1586,7 @@ cmd_next() {
           next_emit "plan" "ask" "$RUN" "plan failed validation after retries"
         fi
         rm -f "$SCRATCH/plan.md"
-        cmd_dispatch "$SCRATCH" plan Skill ship:plan sonnet >/dev/null
+        cmd_dispatch "$SCRATCH" plan Skill ship:plan opus >/dev/null
         next_body_add "- Skill ship:plan (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir$(next_plan_scaffold_arg "$SCRATCH") | Previous plan failed validation — read $SCRATCH/plan-validate-error.txt and fix exactly what it reports\""
         next_common_after
         next_emit "plan" "dispatch" "$RUN" "re-planning after failed validation"
