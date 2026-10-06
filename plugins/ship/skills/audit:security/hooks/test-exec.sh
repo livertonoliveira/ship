@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --lint-fix]" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --static-check | --lint-fix]" >&2
 }
 
 field_from() {
@@ -442,12 +442,13 @@ write_static_report() {
 }
 
 main() {
-  local scratch="" config="ship/config.md" static_only=0 lint_fix=0
+  local scratch="" config="ship/config.md" static_only=0 lint_fix=0 static_check=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --config) config="$2"; shift 2 ;;
       --static-only) static_only=1; shift ;;
+      --static-check) static_only=1; static_check=1; shift ;;
       --lint-fix) lint_fix=1; shift ;;
       -h|--help) usage; exit 0 ;;
       -*) usage; exit 1 ;;
@@ -502,8 +503,21 @@ main() {
     run_static_checks
     local st_overall=0
     { [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && st_overall=1
-    printf 'typecheck=%s\nlint=%s\n' "$TYPECHECK_EXIT" "$LINT_EXIT" > "$scratch/static-exits.txt"
-    write_static_report "$scratch" "$st_overall"
+    # --static-check: the same checks for the author of the change (develop's
+    # self-check), reported on stdout. It writes nothing: the run's static row
+    # and failure report stay the pipeline's own, recorded after develop.
+    if [ "$static_check" -eq 1 ]; then
+      if [ "$TYPECHECK_EXIT" -gt 0 ]; then
+        printf '## Typecheck failed (`%s`)\n\n' "$TYPECHECK_CMD"; tail -60 "$TYPECHECK_OUT"
+      fi
+      if [ "$LINT_EXIT" -gt 0 ]; then
+        printf '## Lint failed (`%s`)\n\n' "$LINT_CMD"; tail -60 "$LINT_OUT"
+      fi
+      printf 'typecheck=%s\nlint=%s\n' "$TYPECHECK_EXIT" "$LINT_EXIT"
+    else
+      printf 'typecheck=%s\nlint=%s\n' "$TYPECHECK_EXIT" "$LINT_EXIT" > "$scratch/static-exits.txt"
+      write_static_report "$scratch" "$st_overall"
+    fi
     [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
     [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
     exit "$st_overall"

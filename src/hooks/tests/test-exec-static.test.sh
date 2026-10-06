@@ -51,6 +51,25 @@ test_static_only_records_individual_exits() {
   rm -rf "$d"
 }
 
+test_static_check_reports_and_writes_nothing() {
+  local name="--static-check prints the failure for develop and leaves the run's static records alone"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Typecheck: ./tc.sh\n- Lint: ./lint.sh\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\necho "src/a.ts(1,1): error TS2304"\nexit 2\n' > "$d/tc.sh"
+  chmod +x "$d/tc.sh"
+  local rc=0 out
+  out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-check 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'TS2304' && printf '%s' "$out" | grep -qx 'typecheck=2' \
+     && [ ! -e "$d/scratch/static-exits.txt" ] && [ ! -e "$d/scratch/static-failures.md" ] \
+     && [ ! -e "$d/scratch/phase-status-static.md" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out files=$(ls "$d/scratch" | tr '\n' ' '))"
+  fi
+  rm -rf "$d"
+}
+
 test_full_run_carries_forward_a_red_typecheck() {
   local name="a full run after a red static skips the suite instead of assuming green"
   local d; d="$(mktemp -d)"
@@ -216,6 +235,7 @@ test_lint_runs_unscoped_without_a_footprint() {
 }
 
 test_static_only_records_individual_exits
+test_static_check_reports_and_writes_nothing
 test_lint_placeholder_receives_only_existing_touched_files
 test_eslint_package_script_is_scoped_to_touched_files
 test_lint_runs_unscoped_without_a_footprint

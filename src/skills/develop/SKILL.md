@@ -91,6 +91,7 @@ Hits → clean the exact `file:line` hits yourself (remove the comment or rename
 
 1. **Every module implemented?** Modules in `plan.md` (or 1) vs modules completed — implement any missing before returning.
 2. **Hygiene gate actually ran and passed?** Must have run the scan and, on hits, cleaned and re-scanned. Reporting success with an unrun gate or remaining known hits is a defect.
+3. **Typecheck and lint pass?** Pipeline mode: `bash "@@ship/hooks/test-exec.sh" <scratch dir> --static-check`. Exit 1 → fix every error it prints in files you touched, re-run; at most 2 fix cycles, then return and let the gate carry the rest. Exit 0 or 2 (no checks configured) → done.
 
 No phase-status bookkeeping: the caller's `pipeline.sh post-develop` verifies your mutation against the pre-develop snapshot and writes the `dev` row itself — a zero-mutation tree is detected there and fails the phase.
 
