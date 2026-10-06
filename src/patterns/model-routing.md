@@ -5,9 +5,17 @@
 ## Principle
 
 Ship pins the model per skill instead of inheriting from the session. This decouples quality
-from the user's session choice: a user may pick any session model to economize across the weekly
-limit, and Ship still guarantees the **reasoning tier (Sonnet)** on every skill, agent, and
-dispatched sub-agent — including the orchestrators and the pure template/aggregation phases.
+and cost from the user's session choice: planning runs on **Opus** (`ship:plan`, `ship:spec`),
+and everything else — orchestration, implementation, verification — on **Sonnet**, whatever
+model the session was opened with.
+
+**A `model:` on a skill that is not forked lasts one turn.** The session model resumes on the next
+prompt, and every `<task-notification>` from a background worker starts a new one. Measured on
+677 graph nodes: `ship:run` declared Sonnet and every node still orchestrated on the session's
+Opus — 69% of a node's cost. So the multi-turn orchestrators run forked (`context: fork`,
+`background: false`), where the frontmatter model is the subagent's model for the whole run:
+`ship:run` and `ship:graph`. Graph nodes are also launched on the orchestration model
+(`driver-orca.sh` passes `--model`, `SHIP_NODE_MODEL` overrides, default `sonnet`).
 
 Ship never pins `haiku`: forked wrappers must reliably dispatch their workers, so every unit runs on Sonnet.
 
@@ -25,9 +33,9 @@ an Agent tool dispatch overrides the frontmatter.
    eliminating churn when models are upgraded. **Never pin `"haiku"`** anywhere — not in
    frontmatter, not in an Agent-tool `model:` parameter.
 
-2. **Every skill declares `model: "sonnet"` in SKILL.md frontmatter.** No exceptions — reasoning
-   phases, orchestrators, and template/aggregation phases alike. They never inherit from the
-   parent session, so behavior is identical standalone or via an orchestrator.
+2. **Every skill declares `model:` in SKILL.md frontmatter** — `"opus"` for planning
+   (`ship:plan`, `ship:spec`), `"sonnet"` for every other skill. A skill whose work spans turns
+   must also be forked, or the declaration only holds for its first turn.
 
 3. **Every Agent tool dispatch passes `model: "sonnet"` explicitly.** Redundant with rule 2 (the
    sub-agent's frontmatter already pins Sonnet), but kept as a belt-and-suspenders so the dispatch
@@ -38,18 +46,18 @@ an Agent tool dispatch overrides the frontmatter.
 
 ## Phase classification
 
-Every skill and agent runs on **Sonnet**. The table records only the role of each unit, not a
-tier split (there is none).
+Every skill and agent runs on **Sonnet** except planning (`ship:plan`, `ship:spec`), which runs on **Opus**.
 
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
-| `ship:run`            | Executor of `pipeline.sh next` — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
+| `ship:run`            | Executor of `pipeline.sh next`, forked on Sonnet — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
+| `ship:graph`          | Executor of `graph.sh next`, forked on Sonnet. |
 | `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
 | `ship:audit:run`      | Orchestrator — fans out `audit:*` skills and applies the consolidated gate from their JSON summaries in its own context. |
-| `ship:plan`           | Test-aware planning — decomposition + scenario→test mapping. |
-| `ship:spec`           | Deep specification. |
+| `ship:plan`           | Test-aware planning — decomposition + scenario→test mapping (Opus). |
+| `ship:spec`           | Deep specification (Opus). |
 | `ship:perf`           | Performance analysis. |
 | `ship:security`       | Security analysis. |
 | `ship:review`         | Code review. |
@@ -105,6 +113,6 @@ The ground truth lives in two places:
    done
    ```
 
-   Every orchestrator and sub-agent turn should resolve to a Sonnet model ID. Any Haiku turn is a routing bug.
+   Every orchestrator and sub-agent turn should resolve to a Sonnet model ID, and `ship:plan` to an Opus one. Any Haiku turn is a routing bug.
 
 A mismatch between dispatch-log and the JSONL is a routing bug. A mismatch between in-model self-attestation and the JSONL is **not** a routing bug — it is a known limitation of the env-block injection. Ship does not emit self-attestation banners; use dispatch-log + the session JSONL as described above to verify routing.
