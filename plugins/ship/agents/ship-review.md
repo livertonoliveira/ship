@@ -3,6 +3,7 @@ name: ship-review
 description: "Ship code review worker — reviews diff against SOLID, DRY, KISS, Clean Code, and project consistency principles."
 tools: [Read, Glob, Grep, Bash, Agent]
 model: sonnet
+maxTurns: 60
 ---
 
 # Ship Review — Code Review Worker

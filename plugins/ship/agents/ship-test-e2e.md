@@ -3,6 +3,7 @@ name: ship-test-e2e
 description: "Ship e2e test worker — generates and runs end-to-end tests for critical user flows using the project's configured e2e framework."
 tools: [Read, Glob, Grep, Bash, Edit, Write]
 model: sonnet
+maxTurns: 120
 ---
 
 # Ship Test E2E — End-to-End Test Worker

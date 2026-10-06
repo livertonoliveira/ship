@@ -3,6 +3,7 @@ name: ship-perf
 description: "Ship performance worker — analyzes the diff for performance issues, adapts agents based on project type (backend/frontend/fullstack/monorepo), produces a structured findings report."
 tools: [Read, Glob, Grep, Bash, Agent]
 model: sonnet
+maxTurns: 60
 ---
 
 # Ship Perf — Performance Analysis Worker

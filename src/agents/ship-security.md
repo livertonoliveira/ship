@@ -3,6 +3,7 @@ name: ship-security
 description: "Ship security worker — OWASP scan of the diff via 3 parallel sub-agents (Injection, Auth, Data/Config). Produces a structured findings report."
 tools: [Read, Glob, Grep, Bash, Agent]
 model: sonnet
+maxTurns: 60
 ---
 
 # Ship Security — Security Analysis Worker
