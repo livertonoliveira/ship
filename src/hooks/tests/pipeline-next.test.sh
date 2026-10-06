@@ -416,6 +416,9 @@ test_verify_a_dispatches_worker_with_brief() {
   one_file_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   advance_past_planning "$dir" TASK-1 >/dev/null
   echo 'module.exports=1' > "$dir/src/b.js"
+  # One source file skips the planner; develop then writes the Test Contract
+  # into plan.md itself, which is what this stands in for.
+  [ -f "$dir/.context/ship-run/TASK-1/plan.md" ] || valid_plan > "$dir/.context/ship-run/TASK-1/plan.md"
   local out brief
   out="$(next "$dir" TASK-1)"
   brief="$dir/.context/ship-run/TASK-1/test-brief-unit.md"
@@ -626,6 +629,27 @@ test_dev_disabled_still_runs_verification() {
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
+test_a_one_file_spec_skips_the_planner_in_a_fresh_workspace() {
+  local name="in a fresh workspace, a spec touching one source file skips the planner; a wider one still plans"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: enabled' ''
+  next "$dir" T8 >/dev/null
+  one_file_spec > "$dir/.context/ship-run/T8/spec.md"
+  printf '# Design\n' > "$dir/.context/ship-run/T8/design.md"
+  next "$dir" T8 >/dev/null
+  next "$dir" T9 >/dev/null
+  printf '## Files\n- create `src/a.js`\n- create `src/b.js`\n' > "$dir/.context/ship-run/T9/spec.md"
+  printf '# Design\n' > "$dir/.context/ship-run/T9/design.md"
+  next "$dir" T9 >/dev/null
+  if grep -q '^skip:spec-minor$' "$dir/.context/ship-run/T8/plan-decision.txt" \
+     && grep -q '^run$' "$dir/.context/ship-run/T9/plan-decision.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (T8=$(cat "$dir/.context/ship-run/T8/plan-decision.txt" 2>/dev/null) T9=$(cat "$dir/.context/ship-run/T9/plan-decision.txt" 2>/dev/null))"
   fi
   rm -rf "$dir"
 }
@@ -947,6 +971,7 @@ test_happy_path_reaches_done_with_status_rows
 test_gate_fail_dispatches_one_remediation_batch
 test_gate_fail_defer_proceeds
 test_dev_disabled_still_runs_verification
+test_a_one_file_spec_skips_the_planner_in_a_fresh_workspace
 test_remediation_round_is_not_repeated_automatically
 test_confirmation_cannot_mint_new_findings
 test_warn_is_remediated_like_fail
