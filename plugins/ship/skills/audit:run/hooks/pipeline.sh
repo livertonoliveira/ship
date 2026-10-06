@@ -2086,7 +2086,11 @@ cmd_next() {
   if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
-    next_body_add "Invoke ship:pr via the Skill tool in this same context (not forked, not through Agent). Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
+    # Forked: the PR flow (~9 turns) used to run in this loop's own context, by
+    # then ~120k tokens re-read on every turn (~$0.25 a node, measured
+    # 2026-10-06). ship:pr-node is ship:pr's body in a context of its own; the
+    # run's files carry everything it needs.
+    next_body_add "Invoke ship:pr-node via the Skill tool (it forks itself — not through Agent). Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
     next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (the branch to sync onto and target) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
     next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
     next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
