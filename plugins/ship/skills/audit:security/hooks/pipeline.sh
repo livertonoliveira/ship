@@ -21,7 +21,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -530,14 +530,33 @@ trim() {
 linear_stage_context() {
   local scratch="$1" task="$2" docs="$3" config="$4" out started
   [ -n "${LINEAR_API_KEY:-}" ] || return 0
-  out="$(bash "$HOOK_DIR/linear.sh" context "$task" --out "$scratch/linear" ${docs:+--docs "$docs"} 2>/dev/null)" || return 0
-  # Later phases (homolog, /ship:pr) look for the documents in the run's own
-  # linear/ dir, whether or not this node read them from the graph's cache.
-  [ -z "$docs" ] || cp "$docs/proposal.md" "$docs/design.md" "$scratch/linear/" 2>/dev/null || true
-  started="$(config_field "$config" "In Progress Status")"
-  [ "$started" = "not configured" ] && started=""
-  bash "$HOOK_DIR/linear.sh" transition "$task" started ${started:+--prefer "$started"} >/dev/null 2>&1 || return 0
-  printf '%s\n' "$out" | grep -v '=none' | sed -nE 's/^(issue|proposal|design|other|docs)=([^ ]+).*/  - \2/p'
+  # Once per run: a second staging attempt reuses what the first fetched and
+  # does not move the issue again.
+  if [ ! -s "$scratch/linear/staged.txt" ]; then
+    out="$(bash "$HOOK_DIR/linear.sh" context "$task" --out "$scratch/linear" ${docs:+--docs "$docs"} 2>/dev/null)" || return 0
+    # Later phases (homolog, /ship:pr) look for the documents in the run's own
+    # linear/ dir, whether or not this node read them from the graph's cache.
+    [ -z "$docs" ] || cp "$docs/proposal.md" "$docs/design.md" "$scratch/linear/" 2>/dev/null || true
+    started="$(config_field "$config" "In Progress Status")"
+    [ "$started" = "not configured" ] && started=""
+    bash "$HOOK_DIR/linear.sh" transition "$task" started ${started:+--prefer "$started"} >/dev/null 2>&1 || return 0
+    printf '%s\n' "$out" | grep -v '=none' | sed -nE 's/^(issue|proposal|design|other|docs)=([^ ]+).*/  - \2/p' > "$scratch/linear/staged.txt"
+  fi
+  cat "$scratch/linear/staged.txt"
+}
+
+# The whole staging step without the model, when the Proposal is shaped the way
+# spec-slice.sh reads: spec.md sliced by script, design.md copied unsliced (as
+# run-scratch.md asks). Anything short of that leaves both unwritten and the
+# step to the model.
+next_script_stage() {
+  local scratch="$1" task="$2" docs="$3" config="$4"
+  [ -n "$(linear_stage_context "$scratch" "$task" "$docs" "$config")" ] || return 1
+  [ -s "$scratch/linear/issue.md" ] && [ -s "$scratch/linear/design.md" ] || return 1
+  bash "$HOOK_DIR/spec-slice.sh" "$scratch/linear/issue.md" "$scratch/linear/proposal.md" "$scratch/spec.md.tmp" >/dev/null 2>&1 \
+    || { rm -f "$scratch/spec.md.tmp"; return 1; }
+  cp "$scratch/linear/design.md" "$scratch/design.md"
+  mv "$scratch/spec.md.tmp" "$scratch/spec.md"
 }
 
 linear_complete() {
@@ -1550,6 +1569,14 @@ cmd_next() {
   STORE="$(storage_mode "$CONFIG")"
 
   # --- context staging (judgment: Linear/local artifact slicing) ---------------
+  local docs_dir="" graph_dir
+  if [ -f "$SCRATCH/graph-node.txt" ]; then
+    graph_dir="$(head -1 "$SCRATCH/graph-node.txt")"
+    docs_dir="$(dirname "$(dirname "$graph_dir")")/ship-graph-docs/$(basename "$graph_dir")"
+  fi
+  if [ ! -s "$SCRATCH/spec.md" ] && [ "$STORE" = "linear" ]; then
+    next_script_stage "$SCRATCH" "$TASK_ID" "$docs_dir" "$CONFIG" || true
+  fi
   if [ ! -s "$SCRATCH/spec.md" ]; then
     next_body_add "Stage the task context yourself (no sub-agent):"
     # Inside a work graph every node belongs to the same project, so its
@@ -1559,11 +1586,6 @@ cmd_next() {
     # always fetched — it is the one document that differs per node. The cache
     # sits beside the graph state, never inside it: graph.sh is that dir's only
     # writer.
-    local docs_dir="" graph_dir
-    if [ -f "$SCRATCH/graph-node.txt" ]; then
-      graph_dir="$(head -1 "$SCRATCH/graph-node.txt")"
-      docs_dir="$(dirname "$(dirname "$graph_dir")")/ship-graph-docs/$(basename "$graph_dir")"
-    fi
     local staged=""
     [ "$STORE" = "linear" ] && staged="$(linear_stage_context "$SCRATCH" "$TASK_ID" "$docs_dir" "$CONFIG")"
     if [ -n "$staged" ]; then
