@@ -253,6 +253,22 @@ test_the_wake_resumes_through_the_forked_skill() {
   rm -rf "$root"
 }
 
+test_the_node_drives_the_pipeline_itself() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
+  # A node session already runs on the orchestration model; a /ship:run fork
+  # on top of it paid a second ~44k-token start and the node's own turns.
+  if printf '%s' "$line" | grep -qE 'run bash "/[^"]*/pipeline\.sh" next N1' \
+     && printf '%s' "$line" | grep -q 'Never invoke the ship:run skill' \
+     && ! printf '%s' "$line" | grep -q -- '--spec /ship:run N1'; then
+    log_pass "the node brief drives pipeline.sh directly instead of forking /ship:run"
+  else
+    log_fail "the node brief drives pipeline.sh directly instead of forking /ship:run (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -846,6 +862,7 @@ test_one_workspace_named_for_the_node
 test_an_agent_is_launched_in_it
 test_the_node_runs_on_the_orchestration_model
 test_the_wake_resumes_through_the_forked_skill
+test_the_node_drives_the_pipeline_itself
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered

@@ -364,6 +364,14 @@ abandon_dispatch() {
   exit 1
 }
 
+# What a node session is told to do, and told again when it is resumed.
+node_drive_instruction() {
+  local task="$1" hook_dir
+  hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf 'Drive the Ship pipeline for %s in this session: run bash "%s/pipeline.sh" next %s, carry out exactly what its instruction block says (Skill lines through the Skill tool, Agent lines through the Agent tool, work steps yourself), then run it again, until it prints action=done or action=stop. A call launched in the background counts as returned: pipeline.sh next waits for dispatched workers itself. Never invoke the ship:run skill.' \
+    "$task" "$hook_dir" "$task"
+}
+
 verb_dispatch() {
   local task="${REST[0]:-}" prompt="${REST[1]:-}"
   [ -n "$task" ] || { echo "driver-orca.sh dispatch: <task> is required" >&2; exit 1; }
@@ -371,6 +379,13 @@ verb_dispatch() {
   require_cli
   resolve_repo
   prompt="${prompt:-/ship:run $task}"
+  # The node session already runs on the orchestration model, so it drives the
+  # pipeline itself. Invoking /ship:run opened a fork on top of it: a second
+  # ~44k-token start, plus the node session's own turns waiting on the fork
+  # (~$0.26 a node, measured 2026-10-06).
+  if [ "$prompt" = "/ship:run $task" ]; then
+    prompt="$(node_drive_instruction "$task")"
+  fi
   DISPATCH_TASK="$task"
 
   local run
@@ -758,7 +773,7 @@ verb_resume() {
   handle="$(kv_get "$f" handle)"
   [ -n "$handle" ] || { echo "driver-orca.sh resume: no terminal handle recorded for $task" >&2; exit 1; }
 
-  local text="${message:-The coordinator answered — invoke the ship:run skill with args $task to continue.}"
+  local text="${message:-The coordinator answered — continue: $(node_drive_instruction "$task")}"
   # One line, then a separate Enter: a paste never submits itself (the trailing
   # newline of --enter is eaten as part of the paste — measured in dispatch).
   orca terminal send --terminal "$handle" --text "$text" >/dev/null 2>&1 || {

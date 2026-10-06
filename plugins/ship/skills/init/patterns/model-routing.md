@@ -15,7 +15,8 @@ prompt, and every `<task-notification>` from a background worker starts a new on
 Opus — 69% of a node's cost. So the multi-turn orchestrators run forked (`context: fork`,
 `background: false`), where the frontmatter model is the subagent's model for the whole run:
 `ship:run` and `ship:graph`. Graph nodes are also launched on the orchestration model
-(`driver-orca.sh` passes `--model`, `SHIP_NODE_MODEL` overrides, default `sonnet`).
+(`driver-orca.sh` passes `--model`, `SHIP_NODE_MODEL` overrides, default `sonnet`), and a node
+session drives `pipeline.sh` itself — a `ship:run` fork on top of it would pay a second start.
 
 Ship never pins `haiku`: forked wrappers must reliably dispatch their workers, so every unit runs on Sonnet.
 
