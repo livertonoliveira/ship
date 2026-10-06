@@ -1,17 +1,21 @@
 ---
 name: ship:run
 description: "Full development pipeline for a task: develop → verify (test ∥ quality, one gate) → homolog. 1 task by default, or N / whole project on request."
-argument-hint: "<task-id | linear-issue-id | --project project-name>"
-allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
+argument-hint: "<task-id | linear-issue-id | --project project-name> [--answer <token>]"
+allowed-tools: Read, Glob, Grep, Bash, Agent, Skill, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
+context: fork
+background: false
 ---
 
 # Ship Run — Pipeline Driver
 
 The pipeline's phase ordering, scoping, gating, fix loops and re-runs live in one deterministic state machine: `pipeline.sh next`. You are its executor — call it, do exactly what it prints, call it again. You never decide what runs next.
 
-**Input received:** $ARGUMENTS
+You run forked, on the orchestration model, and cannot talk to the user: your final message is what reaches them. Every stop below ends your run with that message; the run state lives on disk, so the next `/ship:run` resumes exactly where you stopped.
+
+**Input received:** $ARGUMENTS — an `--answer <token>` in it goes on your first `pipeline.sh next` call only.
 
 > **STRICT RULE:** never run `ship:audit:*` from this pipeline — audits are project-wide, user-triggered separately; `ship:run` is diff-scoped only.
 
@@ -23,7 +27,7 @@ The pipeline's phase ordering, scoping, gating, fix loops and re-runs live in on
 
 ## Detect input mode
 
-Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task: sort by milestone order, issue date (never infer dependencies; explicit IDs force order), run the loop below once per task sequentially (tasks modify code), ask to continue after each, summarize at end. `<task-id>` matches `[a-zA-Z0-9_-]` only.
+Linear ID or local `TASK-001` → single task (default). `--project`/`--milestone`/multiple IDs → multi-task: sort by milestone order, issue date (never infer dependencies; explicit IDs force order), run the loop below once per task sequentially (tasks modify code); after each, stop with its report and the resume line `/ship:run <remaining ids in order>`. `<task-id>` matches `[a-zA-Z0-9_-]` only.
 
 ## The loop (per task)
 
@@ -32,8 +36,8 @@ Linear ID or local `TASK-001` → single task (default). `--project`/`--mileston
    Add `--mode fresh` only when the user explicitly asks to discard a previous run; add `--answer <token>` only when the previous instruction told you which token to send.
 2. Parse `state=`, `action=`, `run=`, `log=`, `instruction:` and act on the action:
    - `dispatch` → make EVERY listed tool call now, all in this same turn, synchronous, never backgrounded. Skill lines: invoke via the Skill tool exactly as written (forked skills fork themselves — never wrap in Agent). Agent lines: use the exact `subagent_type`, model and prompt given.
-   - `work` → do the described work yourself, in this context.
-   - `ask` → relay the question to the user in the artifact language, STOP; when they answer, re-run step 1 with the matching `--answer`.
+   - `work` → do the described work yourself, in this context. When it says to stop while the user decides (homolog), stop as for `ask`.
+   - `ask` → STOP with the question in the artifact language, then one resume line per answer token the instruction names: `/ship:run <task-id> --answer <token>`.
    - `stop` → report the stated reason to the user and STOP.
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
