@@ -21,7 +21,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh pipeline.sh"
+REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -521,6 +521,33 @@ trim() {
   s="${s#"${s%%[![:space:]]*}"}"
   s="${s%"${s##*[![:space:]]}"}"
   printf '%s' "$s"
+}
+
+# Linear round trips the pipeline can make itself instead of spending
+# orchestrator turns on them (linear.sh has the measurement). Prints the files
+# written, or nothing — no key, no script or a failed call all fall back to the
+# MCP instructions, so a run without LINEAR_API_KEY behaves exactly as before.
+linear_stage_context() {
+  local scratch="$1" task="$2" docs="$3" config="$4" out started
+  [ -n "${LINEAR_API_KEY:-}" ] || return 0
+  out="$(bash "$HOOK_DIR/linear.sh" context "$task" --out "$scratch/linear" ${docs:+--docs "$docs"} 2>/dev/null)" || return 0
+  # Later phases (homolog, /ship:pr) look for the documents in the run's own
+  # linear/ dir, whether or not this node read them from the graph's cache.
+  [ -z "$docs" ] || cp "$docs/proposal.md" "$docs/design.md" "$scratch/linear/" 2>/dev/null || true
+  started="$(config_field "$config" "In Progress Status")"
+  [ "$started" = "not configured" ] && started=""
+  bash "$HOOK_DIR/linear.sh" transition "$task" started ${started:+--prefer "$started"} >/dev/null 2>&1 || return 0
+  printf '%s\n' "$out" | grep -v '=none' | sed -nE 's/^(issue|proposal|design|other|docs)=([^ ]+).*/  - \2/p'
+}
+
+linear_complete() {
+  local scratch="$1" task="$2" config="$3" done_name
+  [ -n "${LINEAR_API_KEY:-}" ] || return 1
+  [ -s "$scratch/linear-completed.txt" ] && return 0
+  done_name="$(config_field "$config" "Done Status")"
+  [ "$done_name" = "not configured" ] && done_name=""
+  bash "$HOOK_DIR/linear.sh" transition "$task" completed ${done_name:+--prefer "$done_name"} > "$scratch/linear-completed.txt" 2>/dev/null \
+    || { rm -f "$scratch/linear-completed.txt"; return 1; }
 }
 
 config_field() {
@@ -1480,7 +1507,12 @@ cmd_next() {
       graph_dir="$(head -1 "$SCRATCH/graph-node.txt")"
       docs_dir="$(dirname "$(dirname "$graph_dir")")/ship-graph-docs/$(basename "$graph_dir")"
     fi
-    if [ "$STORE" = "linear" ] && [ -n "$docs_dir" ] && [ -s "$docs_dir/proposal.md" ] && [ -s "$docs_dir/design.md" ]; then
+    local staged=""
+    [ "$STORE" = "linear" ] && staged="$(linear_stage_context "$SCRATCH" "$TASK_ID" "$docs_dir" "$CONFIG")"
+    if [ -n "$staged" ]; then
+      next_body_add "- The pipeline already fetched the Linear context and moved the issue to its started state — make no Linear call for either. Read the files it wrote:"
+      next_body_add "$staged"
+    elif [ "$STORE" = "linear" ] && [ -n "$docs_dir" ] && [ -s "$docs_dir/proposal.md" ] && [ -s "$docs_dir/design.md" ]; then
       next_body_add "- Fetch the issue via Linear MCP (get_issue) and move it to its started state per $HOOK_DIR/../patterns/linear-status.md. The project's Proposal and Design are already cached for this graph at $docs_dir/proposal.md and $docs_dir/design.md — read those; do not call list_documents/get_document."
     elif [ "$STORE" = "linear" ] && [ -n "$docs_dir" ]; then
       next_body_add "- Fetch the issue and project documents via Linear MCP (get_issue/get_project/list_documents+get_document) and move the issue to its started state per $HOOK_DIR/../patterns/linear-status.md."
@@ -2010,7 +2042,9 @@ cmd_next() {
   if [ -f "$SCRATCH/remediation-verdict.txt" ]; then
     next_body_add "Remediation: $(tr '\n' ' ' < "$SCRATCH/remediation-verdict.txt")"
   fi
-  if [ "$STORE" = "linear" ]; then
+  if [ "$STORE" = "linear" ] && linear_complete "$SCRATCH" "$TASK_ID" "$CONFIG"; then
+    next_body_add "Linear: the pipeline moved the issue to its completed state ($(sed -n 's/^state=//p' "$SCRATCH/linear-completed.txt")) — make no status call. Confirm the quality-report comment exists on the issue."
+  elif [ "$STORE" = "linear" ]; then
     next_body_add "Verify the Linear lifecycle: resolve the completed state per $HOOK_DIR/../patterns/linear-status.md (never hardcode), confirm state.type == \"completed\" and that the quality-report comment exists."
   else
     next_body_add "Write report-$TASK_ID.md under ship/changes/<feature>/ and mark the task done in tasks.md."
