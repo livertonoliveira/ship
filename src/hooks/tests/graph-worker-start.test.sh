@@ -255,12 +255,14 @@ test_resume_points_at_set_not_fresh() {
   out="$(cd "$repo" && bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 5 --mode local 2>&1)"
   rc=$?
   set -e
-  # The reflex this prevents: a refused re-init whose only documented escape is
-  # --fresh, which discards the very counters the refusal exists to protect.
-  if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -q '^reconfigure=graph.sh set '; then
-    log_pass "a refused re-init names the non-destructive way to change the same knobs"
+  # Re-invoking /ship:graph with more slots is how a coordinator asks for them;
+  # a RESUME that only hinted at `set` left two live graphs at one slot.
+  local mif
+  mif="$(awk -F'\t' '$1 == "max_in_flight" { print $2 }' "$repo/.context/ship-graph/f/meta.tsv")"
+  if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -q '^reconfigured_max_in_flight=5$' && [ "$mif" = "5" ]; then
+    log_pass "a re-init of a live graph applies the slots it was given, without --fresh"
   else
-    log_fail "a refused re-init names the non-destructive way to change the same knobs (exit $rc)"
+    log_fail "a re-init of a live graph applies the slots it was given, without --fresh (exit $rc, meta=$mif, out=$out)"
   fi
   rm -rf "$root"
 }

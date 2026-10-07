@@ -934,7 +934,7 @@ reelect_driver() {
 }
 
 cmd_init() {
-  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on" merge_policy="graph"
+  local feature="" from="" driver="" max_in_flight="2" base_branch="" mode="local" fresh=0 default_repo="" chosen_by="explicit" node_pr="on" workspace_cleanup="on" merge_policy="graph" knobs=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -942,12 +942,12 @@ cmd_init() {
       --from) from="$2"; shift 2 ;;
       --driver) driver="$2"; shift 2 ;;
       --keep-workspaces) workspace_cleanup="off"; shift ;;
-      --max-in-flight) max_in_flight="$2"; shift 2 ;;
+      --max-in-flight) max_in_flight="$2"; knobs="$knobs --max-in-flight $2"; shift 2 ;;
       --base-branch) base_branch="$2"; shift 2 ;;
       --mode) mode="$2"; shift 2 ;;
       --repo) default_repo="$2"; shift 2 ;;
       --node-pr) node_pr="$2"; shift 2 ;;
-      --merge-policy) merge_policy="$2"; shift 2 ;;
+      --merge-policy) merge_policy="$2"; knobs="$knobs --merge-policy $2"; shift 2 ;;
       --fresh) fresh=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) usage; exit 1 ;;
@@ -1002,12 +1002,18 @@ cmd_init() {
     printf 'inflight=%s\n' "$(count_status "$dir" in_flight)"
     printf 'landed=%s\n' "$(count_status "$dir" landed)"
     printf 'merged=%s\n' "$(count_status "$dir" merged)"
-    # A re-init almost always means "the driver I picked does not work here" or
-    # "give me more slots" — not "throw the run away". Naming the non-destructive
-    # command here is what keeps the next reflex off --fresh.
-    if [ "$driver" != "$(meta_get "$dir" driver)" ] || [ "$max_in_flight" != "$(meta_get "$dir" max_in_flight)" ]; then
-      printf 'reconfigure=graph.sh set --feature %s --driver %s --max-in-flight %s\n' \
-        "$feature" "$driver" "$max_in_flight"
+    # A re-init almost always means "give me more slots" or "the driver I picked
+    # does not work here" — not "throw the run away". Slots and merge policy
+    # passed explicitly are applied here: measured 2026-10-07, two coordinators
+    # asked for more slots re-invoked /ship:graph --max-in-flight 3, got this
+    # RESUME, and the hint it used to print went unacted on — a graph stayed at
+    # 1. A driver change still needs its in-flight nodes released: hint only.
+    if [ -n "$knobs" ]; then
+      # shellcheck disable=SC2086
+      ( cmd_set --feature "$feature" $knobs ) | sed -nE 's/^(max_in_flight|merge_policy)=/reconfigured_&/p'
+    fi
+    if [ "$chosen_by" = "explicit" ] && [ "$driver" != "$(meta_get "$dir" driver)" ]; then
+      printf 'reconfigure=graph.sh set --feature %s --driver %s\n' "$feature" "$driver"
     fi
     exit 3
   fi
