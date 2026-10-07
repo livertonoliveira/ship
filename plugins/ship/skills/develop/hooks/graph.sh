@@ -214,7 +214,10 @@ hold_node() {
 retry_node() {
   local dir="$1" id="$2" why="$3" wt
   wt="$(node_field "$dir" "$id" 7)"
-  [ -n "$wt" ] && log_line "$dir" "$id previous workspace kept at $wt"
+  if [ -n "$wt" ]; then
+    log_line "$dir" "$id previous workspace kept at $wt"
+    printf '%s\t%s\n' "$id" "$wt" >> "$dir/previous-workspaces.tsv"
+  fi
   node_set "$dir" "$id" 6 pending
   node_set "$dir" "$id" 7 ""
   node_set "$dir" "$id" 8 ""
@@ -1695,8 +1698,40 @@ harvest_node() {
 # operator asked for the disk back, so the standing preference not to clean up
 # automatically no longer applies. `force` is `sweep --force` and also waives
 # the uncommitted-changes guard. Nothing waives the first rule.
+# The workspaces of a node's failed attempts. They are kept while the node can
+# still fail — they are the record of what went wrong — but once it merged they
+# are a whole checkout each that nothing else would ever remove: measured on an
+# api-agendx graph, five such checkouts for three merged nodes. A dirty one is
+# kept, as for the current attempt.
+dispose_previous() {
+  local dir="$1" id="$2" force="${3:-}" f="$1/previous-workspaces.tsv" pid wt out keep
+  [ -s "$f" ] || return 0
+  [ -n "$force" ] || workspace_cleanup_on "$dir" || return 0
+  keep="$(mktemp)"
+  while IFS=$'\t' read -r pid wt; do
+    [ -n "$pid" ] || continue
+    if [ "$pid" != "$id" ]; then printf '%s\t%s\n' "$pid" "$wt" >> "$keep"; continue; fi
+    [ -d "$wt" ] || continue
+    # The run's own scratch (.context/) is not work; anything else uncommitted is.
+    if [ "$force" != "force" ] && [ -n "$(git -C "$wt" status --porcelain -- . ':(exclude).context' 2>/dev/null)" ]; then
+      log_line "$dir" "$id previous workspace kept at $wt — it still holds uncommitted changes"
+      printf '%s\t%s\n' "$pid" "$wt" >> "$keep"
+      continue
+    fi
+    out="$(bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" dispose "$id" --state "$dir" --worktree "$wt" 2>/dev/null || true)"
+    if printf '%s' "$out" | grep -q '^disposed=1'; then
+      log_line "$dir" "$id previous workspace removed ($wt)"
+      printf 'previous_freed=%s\n' "$id"
+    else
+      printf '%s\t%s\n' "$pid" "$wt" >> "$keep"
+    fi
+  done < "$f"
+  mv "$keep" "$f"
+}
+
 dispose_workspace() {
   local dir="$1" id="$2" force="${3:-}" wt driver out disposed reason
+  dispose_previous "$dir" "$id" "$force"
   wt="$(node_field "$dir" "$id" 7)"
   [ -n "$wt" ] || return 0
   [ -n "$force" ] || workspace_cleanup_on "$dir" || return 0
