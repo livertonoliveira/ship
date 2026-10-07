@@ -373,6 +373,48 @@ test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails() {
   rm -rf "$dir"
 }
 
+glob_plan() {
+  local dir="$1" files="$2"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "- src/use-cases/booking-*/* (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "$files" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts"
+}
+
+test_a_glob_in_the_inventory_is_claimed_by_the_glob_with_a_note() {
+  local name="a glob inventory entry is claimed by a module listing the glob, even with a (note) after it"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(glob_plan "$dir" "src/a.ts, src/use-cases/booking-*/* (real dirs: booking-cancel/, booking-history/)")"
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_a_glob_in_the_inventory_is_claimed_by_files_it_matches() {
+  local name="a glob inventory entry is claimed by concrete files it matches"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(glob_plan "$dir" "src/a.ts, src/use-cases/booking-cancel/cancel.use-case.ts")"
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
+test_a_glob_no_module_claims_is_still_rejected() {
+  local name="a glob inventory entry nothing in the plan matches is still rejected"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(glob_plan "$dir" "src/a.ts, src/other/thing.ts")"
+  assert_exit_and_message "$name" "$plan" 2 "plan-validate: arquivo do inventário sem módulo"
+  rm -rf "$dir"
+}
+
 test_files_as_sub_bullets_claim_the_inventory() {
   local name="a module listing its files as indented sub-bullets under '- Files:' claims them"
   local dir plan
@@ -919,6 +961,9 @@ test_scaffolded_plan_with_an_unmarked_extra_slot_fails
 test_scaffolded_plan_leaving_an_inventory_file_unassigned_fails
 test_scaffolded_plan_may_divert_an_inventory_file
 test_files_as_sub_bullets_claim_the_inventory
+test_a_glob_in_the_inventory_is_claimed_by_the_glob_with_a_note
+test_a_glob_in_the_inventory_is_claimed_by_files_it_matches
+test_a_glob_no_module_claims_is_still_rejected
 test_files_as_sub_bullets_still_catch_an_unassigned_file
 test_module_files_query_reads_both_shapes
 test_invalid_layer_fails

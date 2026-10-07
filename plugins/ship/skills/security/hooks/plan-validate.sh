@@ -63,7 +63,7 @@ module_files() {
   raw="$(module_field "$f" "$id" "Files")"
   [ -n "$raw" ] || return 0
   printf '%s\n' "$raw" | tr ',' '\n' \
-    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/^[[:space:]]+|[[:space:]]+$//g' \
+    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/[[:space:]]+\(.*$//; s/^[[:space:]]+|[[:space:]]+$//g' \
     | grep -v '^$' || true
 }
 
@@ -490,10 +490,35 @@ check_contract_matches_scaffold() {
   return 0
 }
 
+# A spec may name a set of files by glob ("modify src/use-cases/booking-*/*",
+# ~12 files). Such an entry is assigned when the plan lists the glob itself or
+# any file it matches. Measured 2026-10-06/07: once star-bulleted Files maps were
+# read, three api-agendx nodes failed validation on a glob the planner had in
+# fact assigned (with a parenthetical note the comparison could not see past).
+glob_assigned() {
+  local glob="$1" planned="$2" p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ "$p" = "$glob" ] && return 0
+    # shellcheck disable=SC2053
+    [[ "$p" == $glob ]] && return 0
+  done <<< "$planned"
+  return 1
+}
+
 check_inventory_assigned() {
-  local f="$1" scaffold="$2" missing
-  missing="$(comm -23 <(scaffold_inventory "$scaffold") \
-    <(cat <(plan_files "$f") <(contract_files "$f") <(diverged_paths "$f") | sort -u))"
+  local f="$1" scaffold="$2" missing planned entry left=""
+  planned="$(cat <(plan_files "$f") <(contract_files "$f") <(diverged_paths "$f") | sort -u)"
+  missing="$(comm -23 <(scaffold_inventory "$scaffold") <(printf '%s\n' "$planned"))"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *'*'*|*'?'*) glob_assigned "$entry" "$planned" && continue ;;
+    esac
+    left="$left$entry
+"
+  done <<< "$missing"
+  missing="$left"
   if [ -n "$missing" ]; then
     echo "plan-validate: arquivo do inventário sem módulo (e sem registro em ## Map Divergences) — $(printf '%s' "$missing" | tr '\n' ' ')" >&2
     return 1
