@@ -867,6 +867,20 @@ verb_dispose() {
   path="$(kv_get "$f" worktree)"
   [ -n "$path" ] || path="$WORKTREE"
 
+  # A previous attempt's workspace: the record above names only the current
+  # one, so this one is removed by path and the current worker is left alone.
+  if [ -n "$WORKTREE" ] && [ -n "$path" ] && [ "$WORKTREE" != "$path" ]; then
+    orca worktree rm --worktree "path:$WORKTREE" --force --json >/dev/null 2>&1 || true
+    if [ -d "$WORKTREE" ]; then
+      printf 'disposed=0\n'
+      printf 'reason=the runtime still reports a workspace at %s\n' "$WORKTREE"
+    else
+      printf 'disposed=1\n'
+      printf 'workspace=%s\n' "$WORKTREE"
+    fi
+    return 0
+  fi
+
   REST=("$task")
   verb_stop >/dev/null 2>&1 || true
 

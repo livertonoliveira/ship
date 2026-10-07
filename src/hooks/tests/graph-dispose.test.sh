@@ -112,6 +112,59 @@ test_a_merged_node_frees_its_workspace() {
   fi
 }
 
+# A first attempt that failed: its workspace stays, the node is reset and claims
+# a fresh one. Leaves the first attempt's path on stdout.
+failed_first_attempt() {
+  local dir="$1" task="$2" dirty="${3:-}" wt
+  wt="$dir/.ship-graph/f/$task-attempt1"
+  (
+    cd "$dir"
+    git worktree add -q "$wt" -b "ship/$task-a1" main
+    bash "$GRAPH" claim "$task" --worktree "$wt" --branch "ship/$task-a1" >/dev/null
+    bash "$GRAPH" fail "$task" --reason "first attempt" >/dev/null
+    bash "$GRAPH" reset "$task" >/dev/null
+    [ "$dirty" = "dirty" ] && printf 'half done\n' >> "$wt/f.txt"
+    true
+  )
+  printf '%s' "$wt"
+}
+
+test_a_merged_node_frees_its_failed_attempts() {
+  local name="once a node merges, the workspaces of its failed attempts are removed too"
+  local dir out first gone=1
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  first="$(failed_first_attempt "$dir" TASK-001)"
+  landed_node "$dir" TASK-001
+  make_gh "$dir" MERGED
+  (cd "$dir" && bash "$GRAPH" set --driver local >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  [ -d "$first" ] && gone=0
+  rm -rf "$dir"
+  if [ "$gone" -eq 1 ] && printf '%s' "$out" | grep -q '^previous_freed=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (gone=$gone out='$out')"
+  fi
+}
+
+test_a_dirty_failed_attempt_is_kept() {
+  local name="a failed attempt holding uncommitted changes is kept even after the node merges"
+  local dir first present=0
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  first="$(failed_first_attempt "$dir" TASK-001 dirty)"
+  landed_node "$dir" TASK-001
+  make_gh "$dir" MERGED
+  (cd "$dir" && bash "$GRAPH" set --driver local >/dev/null)
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  [ -d "$first" ] && present=1
+  rm -rf "$dir"
+  if [ "$present" -eq 1 ]; then log_pass "$name"; else log_fail "$name"; fi
+}
+
 test_an_unmerged_node_keeps_its_workspace() {
   local name="a node still awaiting merge keeps its workspace"
   local dir out present=0
@@ -294,6 +347,8 @@ test_driver_local_refuses_a_path_it_does_not_own() {
 }
 
 test_a_merged_node_frees_its_workspace
+test_a_merged_node_frees_its_failed_attempts
+test_a_dirty_failed_attempt_is_kept
 test_an_unmerged_node_keeps_its_workspace
 test_uncommitted_work_is_never_thrown_away
 test_keep_workspaces_disables_the_whole_thing

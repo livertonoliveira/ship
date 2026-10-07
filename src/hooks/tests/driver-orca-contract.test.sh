@@ -854,6 +854,26 @@ test_dispose_removes_the_workspace_through_the_runtime() {
   rm -rf "$root"
 }
 
+test_a_previous_attempt_is_removed_by_path() {
+  local root out log old
+  root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
+  old="$root/old-attempt"
+  # A failed attempt's checkout: the driver's record names only the current one.
+  out="$( cd "$root/repo" && ORCA_FAKE_LOG="$root/dispose.log" PATH="$root/bin:$PATH" \
+    ORCA_FAKE_TUI_STATE="$root/tui" ORCA_FAKE_TICK="$root/tick" \
+    bash "$DRIVER" dispose N1 --state "$root/state" --worktree "$old" 2>/dev/null || true)"
+  log="$(cat "$root/dispose.log" 2>/dev/null || true)"
+  if printf '%s' "$log" | grep -q "^worktree rm .*--worktree path:$old" \
+    && ! printf '%s' "$log" | grep -qE '^orchestration worker-(stop|abandon)' \
+    && ! printf '%s' "$log" | grep -q 'worktree rm .*--worktree id:' \
+    && printf '%s' "$out" | grep -q '^disposed=1$'; then
+    log_pass "a previous attempt is removed by path, leaving the current worker and workspace alone"
+  else
+    log_fail "a previous attempt is removed by path, leaving the current worker and workspace alone (out: $out / log: $log)"
+  fi
+  rm -rf "$root"
+}
+
 test_a_run_is_created_before_anything_else
 test_task_create_carries_the_run
 test_the_retired_call_is_never_made
@@ -893,6 +913,7 @@ test_an_artifact_appearing_mid_window_cuts_it_short
 test_a_watched_file_that_never_appears_still_spends_the_window
 test_every_driver_accepts_the_until_file_flag
 test_dispose_removes_the_workspace_through_the_runtime
+test_a_previous_attempt_is_removed_by_path
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
