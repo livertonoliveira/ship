@@ -107,6 +107,10 @@ spec_files() {
       gsub(/\\/, "", line)
       sub(/[[:space:]]*(—|–|--).*$/, "", line)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      # The path is the first word: whatever follows it before the dash is a
+      # note ("src/a.ts (localizar)"), and carried along it names a file no
+      # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
+      sub(/[[:space:]].*$/, "", line)
       if (line == "") next
       print verb "\t" line
     }
