@@ -450,7 +450,7 @@ Immediately after that send, wake the coordinator directly — worker_done alone
 
   coord=\$(cat \"$STATE/driver-orca-coordinator.txt\" 2>/dev/null || true)
   if [ -n \"\$coord\" ]; then
-    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task finished. Invoke the ship:graph skill again with the same arguments as before — it resumes the live graph.'
+    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task has something to report (done, failed or asking — its files say which, not this message). Invoke the ship:graph skill again with the same arguments as before — it resumes the live graph.'
     sleep 1
     orca terminal send --terminal \"\$coord\" --text '' --enter
   fi
