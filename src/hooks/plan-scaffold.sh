@@ -101,6 +101,10 @@ spec_files() {
       verb = substr(line, 1, RLENGTH - 1)
       sub(/[[:space:]]+$/, "", verb)
       sub(/^(create|modify)[[:space:]]+/, "", line)
+      # A multi-repo spec names the repo before the path ("platform-agendx:
+      # src/a.ts"), and Linear escapes markdown in what it stores ("hooks/\*.ts").
+      sub(/^[A-Za-z0-9._-]+:[[:space:]]+/, "", line)
+      gsub(/\\/, "", line)
       sub(/[[:space:]]*(—|–|--).*$/, "", line)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
       if (line == "") next

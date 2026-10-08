@@ -406,6 +406,15 @@ test_a_glob_in_the_inventory_is_claimed_by_files_it_matches() {
   rm -rf "$dir"
 }
 
+test_a_repo_prefix_on_module_files_is_ignored() {
+  local name="a module listing 'repo: path' claims the inventory's bare path"
+  local dir plan
+  dir="$(mktemp -d)"
+  plan="$(glob_plan "$dir" "platform-agendx: src/a.ts, src/use-cases/booking-cancel/cancel.use-case.ts")"
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
 test_a_glob_no_module_claims_is_still_rejected() {
   local name="a glob inventory entry nothing in the plan matches is still rejected"
   local dir plan
@@ -964,6 +973,7 @@ test_files_as_sub_bullets_claim_the_inventory
 test_a_glob_in_the_inventory_is_claimed_by_the_glob_with_a_note
 test_a_glob_in_the_inventory_is_claimed_by_files_it_matches
 test_a_glob_no_module_claims_is_still_rejected
+test_a_repo_prefix_on_module_files_is_ignored
 test_files_as_sub_bullets_still_catch_an_unassigned_file
 test_module_files_query_reads_both_shapes
 test_invalid_layer_fails
