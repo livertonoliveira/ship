@@ -377,6 +377,16 @@ verb_dispatch() {
   [ -n "$task" ] || { echo "driver-orca.sh dispatch: <task> is required" >&2; exit 1; }
   require_state
   require_cli
+  # The graph's record of the node's repo wins over the caller's --repo.
+  # Measured 2026-10-07: a coordinator dispatched from its own loop script with
+  # --repo hard-coded to the graph's default, so three frontend nodes got backend
+  # checkouts and their develop went to edit the user's own clone instead.
+  local node_repo
+  node_repo="$(awk -F'\t' -v t="$task" '$1 == t { print $2; exit }' "$STATE/nodes.tsv" 2>/dev/null || true)"
+  if [ -n "$node_repo" ] && [ "$node_repo" != "$REPO" ]; then
+    [ -n "$REPO" ] && echo "driver-orca.sh dispatch: --repo $REPO ignored — $task belongs to $node_repo" >&2
+    REPO="$node_repo"
+  fi
   resolve_repo
   prompt="${prompt:-/ship:run $task}"
   # The node session already runs on the orchestration model, so it drives the

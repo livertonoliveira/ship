@@ -341,6 +341,29 @@ test_a_misplaced_first_workspace_does_not_poison_its_repo() {
   fi
 }
 
+test_a_workspace_of_another_graph_repo_is_refused_at_claim() {
+  local name="claiming a node in a checkout of another repo of the same graph is refused"
+  local dir app rc=0 err col
+  dir="$(mktemp -d)"
+  app="$(mktemp -d)"
+  new_repo "$dir"
+  git -C "$dir" remote add origin https://forge.test/acme/coordinator.git 2>/dev/null || git -C "$dir" remote set-url origin https://forge.test/acme/coordinator.git
+  (
+    cd "$dir"
+    printf '[{"id":"TASK-001","repo":"app","title":"T","deps":[],"files":["g.ts"]},{"id":"TASK-002","repo":"coordinator","title":"U","deps":[],"files":["h.ts"]}]\n' > nodes.json
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    git worktree add -q "$dir/wt-wrong" -b ship/TASK-001 main
+  )
+  err="$(cd "$dir" && bash "$GRAPH" claim TASK-001 --worktree "$dir/wt-wrong" --branch ship/TASK-001 2>&1)" || rc=$?
+  col="$(awk -F'\t' '$1 == "TASK-001" { print $7 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  rm -rf "$dir" "$app"
+  if [ "$rc" -ne 0 ] && printf '%s' "$err" | grep -q 'belongs to app' && [ -z "$col" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc err=$err col=$col)"
+  fi
+}
+
 test_a_missing_pr_asks_instead_of_waiting_forever() {
   local name="under merge-policy=graph a landed node with no PR on the forge is an ask with exits, never a wait"
   local dir out
@@ -791,6 +814,7 @@ test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace
 test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone
 test_a_misplaced_first_workspace_does_not_poison_its_repo
+test_a_workspace_of_another_graph_repo_is_refused_at_claim
 test_the_coordinator_checkout_is_never_touched
 test_a_dependent_waits_for_the_real_merge
 test_next_hands_the_open_prs_to_the_user
