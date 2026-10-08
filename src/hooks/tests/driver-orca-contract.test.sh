@@ -284,6 +284,19 @@ test_the_wake_does_not_claim_success() {
   rm -rf "$root"
 }
 
+test_the_node_is_told_how_to_ask() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
+  if printf '%s' "$line" | grep -qE 'pipeline\.sh\\?" ask N1' \
+     && printf '%s' "$line" | grep -q 'never report failure and go idle on a question'; then
+    log_pass "the brief gives the node the graph's own channel for a decision it cannot take"
+  else
+    log_fail "the brief gives the node the graph's own channel for a decision it cannot take (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -917,6 +930,7 @@ test_the_node_runs_on_the_orchestration_model
 test_the_wake_resumes_through_the_forked_skill
 test_the_node_drives_the_pipeline_itself
 test_the_wake_does_not_claim_success
+test_the_node_is_told_how_to_ask
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered

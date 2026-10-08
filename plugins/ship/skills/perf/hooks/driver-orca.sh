@@ -457,7 +457,7 @@ Immediately after that send, wake the coordinator directly — worker_done alone
 
 Run all of it exactly as written — the second send is the Enter that submits the first. Send it once, ignore any failure, and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
 
-Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else."
+Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else. When YOU must stop for a decision the pipeline did not ask (a task rule says stop and report, a blocker outside the task), post it the same way — bash \"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pipeline.sh\" ask $task \"<the question, with the options>\" — and wait as it tells you; never report failure and go idle on a question."
 
   local created rtask
   created="$(orca orchestration task-create --spec "$spec" --task-title "$task" --run "$run" --json 2>/dev/null || true)"

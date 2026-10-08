@@ -6,6 +6,7 @@ usage() {
   echo "usage: pipeline.sh <subcommand> [args...]" >&2
   echo "  next            <task-id> [--mode check|fresh|resume] [--answer <token>] [--config <path>]" >&2
   echo "  wait-answer     <task-id> [--timeout <seconds>]   (graph node: block until the coordinator answers)" >&2
+  echo "  ask             <task-id> <question>              (graph node: post a decision only a person can take)" >&2
   echo "  init            <task-id> [--mode check|fresh|resume] [--config <path>]" >&2
   echo "  dispatch        <scratch-dir> <phase> <tool> <name> <model>" >&2
   echo "  complete        <scratch-dir> <run-number> <phase>..." >&2
@@ -1366,6 +1367,31 @@ next_running_workers() {
   done
 }
 
+# A decision the pipeline did not ask for but the node cannot take: a task rule
+# that says "stop and report", an out-of-scope blocker. Measured 2026-10-07/08:
+# nodes in that spot reported `failed` through the runtime and went idle — the
+# graph saw a quiet node, the coordinator read the wake as success, and the node
+# was failed for no progress (MOB-7102 twice, MOB-7227). This puts the question
+# in the one channel graph.sh next reads, and the node waits like any other ask.
+cmd_ask() {
+  local task="${1:-}"
+  [ $# -ge 2 ] || { usage; exit 1; }
+  shift
+  case "$task" in ''|*[!a-zA-Z0-9_-]*) echo "pipeline.sh ask: invalid task id: $task" >&2; exit 1 ;; esac
+  local scratch=".context/ship-run/$task" question
+  [ -d "$scratch" ] || { echo "pipeline.sh ask: no run for $task here" >&2; exit 1; }
+  question="$(printf '%s' "$*" | tr '\n' ' ')"
+  {
+    printf 'state=node-question\n'
+    printf 'question=%s\n' "$question"
+    printf 'detail:\nAsked by the node itself, outside a pipeline gate. Answer in plain words.\n'
+  } > "$scratch/ask.md"
+  : > "$scratch/node-question.txt"
+  rm -f "$scratch/answer.txt"
+  printf 'posted=1\n'
+  printf 'next=bash "%s/pipeline.sh" wait-answer %s — blocks up to 9 minutes; run it again while it prints answered=0. Do not end your turn and do not report failure meanwhile.\n' "$HOOK_DIR" "$task"
+}
+
 next_common_after() {
   next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
 }
@@ -1540,6 +1566,19 @@ cmd_next() {
   # writes rather than as a flag on the command line. Consumed once and deleted
   # with the question that prompted it: if it does not resolve the gate, the next
   # emit posts a fresh question instead of replaying a stale answer forever.
+  # A node's own question (pipeline.sh ask) is not a gate token: its answer was
+  # read by wait-answer and must never be fed to a gate as --answer; unanswered,
+  # it stays posted.
+  if [ -f "$SCRATCH/node-question.txt" ]; then
+    if [ -f "$SCRATCH/ask.md" ] && [ ! -f "$SCRATCH/answer.txt" ]; then
+      NEXT_BODY=""
+      next_body_add "Your question is still waiting for the coordinator: $(sed -n 's/^question=//p' "$SCRATCH/ask.md")"
+      next_body_add "Run: bash \"$HOOK_DIR/pipeline.sh\" wait-answer $TASK_ID — and again while it prints answered=0."
+      printf 'state=waiting\naction=work\nrun=%s\nlog=%s\ninstruction:\n%s\n' "$(next_run_number "$SCRATCH")" "node question pending" "$NEXT_BODY"
+      exit 0
+    fi
+    rm -f "$SCRATCH/node-question.txt" "$SCRATCH/answer.txt" "$SCRATCH/ask.md"
+  fi
   if [ -z "$ANSWER" ] && [ -f "$SCRATCH/answer.txt" ]; then
     ANSWER="$(head -1 "$SCRATCH/answer.txt")"
   fi
@@ -2170,6 +2209,8 @@ case "$SUBCOMMAND" in
     cmd_next "$@" ;;
   wait-answer)
     cmd_wait_answer "$@" ;;
+  ask)
+    cmd_ask "$@" ;;
   init)
     cmd_init "$@" ;;
   dispatch)
