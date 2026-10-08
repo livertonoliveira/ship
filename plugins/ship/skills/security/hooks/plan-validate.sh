@@ -523,6 +523,13 @@ check_inventory_assigned() {
     case "$entry" in
       *'*'*|*'?'*) glob_assigned "$entry" "$planned" && continue ;;
     esac
+    # A directory named in the map ("modify src/use-cases — remaining callers")
+    # is the same thing said without a star: any file a module claims under it
+    # assigns it. Only a directory that exists — a missing path stays an
+    # unassigned file (MOB-7263 failed validation on one, 2026-10-08).
+    if [ -d "$entry" ] && glob_assigned "${entry%/}/*" "$planned"; then
+      continue
+    fi
     left="$left$entry
 "
   done <<< "$missing"
