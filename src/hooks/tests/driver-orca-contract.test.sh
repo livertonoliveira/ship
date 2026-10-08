@@ -269,6 +269,21 @@ test_the_node_drives_the_pipeline_itself() {
   rm -rf "$root"
 }
 
+test_the_wake_does_not_claim_success() {
+  local root line
+  root="$(new_case)"; run_dispatch "$root"
+  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
+  # A node that stopped on a failure sent "N1 finished" and the coordinator
+  # waited for a merge that was never coming (MOB-7227, 2026-10-08).
+  if printf '%s' "$line" | grep -q "graph-wake: N1 has something to report" \
+     && ! printf '%s' "$line" | grep -q "graph-wake: N1 finished"; then
+    log_pass "the wake says the node has something to report, never that it finished"
+  else
+    log_fail "the wake says the node has something to report, never that it finished (got: $line)"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -901,6 +916,7 @@ test_an_agent_is_launched_in_it
 test_the_node_runs_on_the_orchestration_model
 test_the_wake_resumes_through_the_forked_skill
 test_the_node_drives_the_pipeline_itself
+test_the_wake_does_not_claim_success
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered
