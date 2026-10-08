@@ -388,6 +388,35 @@ verb_dispatch() {
     REPO="$node_repo"
   fi
   resolve_repo
+
+  # Dispatching the same node twice must not make two workspaces. Measured
+  # 2026-10-08: a coordinator drove the graph from a loop script of its own that
+  # lost the claim, so `next` kept offering the same two nodes and every pass
+  # started a fresh workspace and agent for each — 15 in 16 minutes. A node that
+  # was dispatched, confirmed working and never claimed is handed back as it is.
+  # A retry is not that: graph.sh lists the attempt it gave up on in
+  # previous-workspaces.tsv, and that one is never reused.
+  local prior="$STATE/driver-orca-$task.txt" prior_wt prior_status
+  if [ -f "$prior" ] && [ "$(kv_get "$prior" confirmed)" = "1" ]; then
+    prior_wt="$(kv_get "$prior" worktree)"
+    prior_status="$(awk -F'\t' -v t="$task" '$1 == t { print $6; exit }' "$STATE/nodes.tsv" 2>/dev/null || true)"
+    if [ "$prior_status" = "pending" ] && [ -n "$prior_wt" ] && [ -d "$prior_wt" ] \
+       && ! awk -F'\t' -v t="$task" -v w="$prior_wt" '$1 == t && $2 == w { f = 1 } END { exit !f }' "$STATE/previous-workspaces.tsv" 2>/dev/null; then
+      printf 'ok=1\n'
+      printf 'handle=%s\n' "$(kv_get "$prior" handle)"
+      printf 'worktree=%s\n' "$prior_wt"
+      printf 'branch=%s\n' "$(kv_get "$prior" branch)"
+      printf 'runtime_task=%s\n' "$(kv_get "$prior" runtime_task)"
+      printf 'dispatch=%s\n' "$(kv_get "$prior" dispatch)"
+      printf 'confirmed=working\n'
+      printf 'reused=1\n'
+      printf 'note=%s was already dispatched and never claimed — this is that same workspace, no new one was started. Claim it: graph.sh claim %s --worktree "%s" --branch "%s"\n' \
+        "$task" "$task" "$prior_wt" "$(kv_get "$prior" branch)"
+      echo "driver-orca.sh dispatch: $task is already running in $prior_wt and was never claimed — not starting a second workspace." >&2
+      return 0
+    fi
+  fi
+
   prompt="${prompt:-/ship:run $task}"
   # The node session already runs on the orchestration model, so it drives the
   # pipeline itself. Invoking /ship:run opened a fork on top of it: a second
@@ -584,6 +613,8 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     echo "  Do NOT claim this node. Inspect the pane, then either re-run this dispatch or: driver-orca.sh stop $task --state \"$STATE\"" >&2
     exit 1
   fi
+
+  printf 'confirmed=1\n' >> "$STATE/driver-orca-$task.txt"
 
   printf 'ok=1\n'
   printf 'handle=%s\n' "$handle"
