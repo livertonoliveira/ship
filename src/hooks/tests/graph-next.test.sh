@@ -340,6 +340,36 @@ test_init_refuses_a_dependency_cycle() {
   fi
 }
 
+test_a_node_with_a_question_posted_is_never_stalled() {
+  local name="a node waiting on an answer is not counted quiet, resumed or failed, and the answer reads as progress"
+  local dir status log polls_after
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    printf 'state=node-question\nquestion=which one?\n' > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+    for _ in 1 2 3 4 5 6 7 8; do bash "$GRAPH" poll --stall-after 0 >/dev/null; done
+    bash "$GRAPH" status --json > status.json
+    rm -f "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
+    bash "$GRAPH" poll --stall-after 0 > poll-after.txt
+  )
+  status="$(grep -c '"status": "in_flight"' "$dir/status.json" || true)"
+  log="$dir/.context/ship-graph/f/graph-log.md"
+  polls_after="$(cat "$dir/poll-after.txt")"
+  if [ "$status" = "1" ] && ! grep -qE 'TASK-001 (quiet|→ failed)' "$log" \
+     && ! grep -q 'worker resumed once' "$log" && printf '%s' "$polls_after" | grep -q 'working=TASK-001'; then
+    log_pass "$name"
+  else
+    log_fail "$name (status=$status polls_after=$polls_after log=$(grep TASK-001 "$log" | tail -3 | tr '\n' '|'))"
+  fi
+  rm -rf "$dir"
+}
+
 test_progress_resets_the_stall_counter() {
   local name="a node that resumes phase progress clears its stall counter"
   local dir out
@@ -1709,6 +1739,7 @@ test_stall_after_is_a_live_knob
 test_wait_names_the_artifacts_it_is_waiting_for
 test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
+test_a_node_with_a_question_posted_is_never_stalled
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker

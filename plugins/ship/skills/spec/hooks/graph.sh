@@ -1994,6 +1994,18 @@ cmd_poll() {
       continue
     fi
 
+    # A node with a question posted is waiting on a person, not stuck: it writes
+    # nothing by design. Counting that silence resumed it and then failed it
+    # while its question was still on the table (MOB-7387, 2026-10-08: 2 of 3
+    # polls gone before anyone read it). Its clock starts again at the answer.
+    if [ -f "$wt/.context/ship-run/$id/ask.md" ]; then
+      printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
+      rm -f "$dir/stall-$id.txt"
+      printf 'asking=%s\n' "$id"
+      working=$((working + 1))
+      continue
+    fi
+
     # Quiet since when, in seconds — not in polls. The poll count alone is a
     # measure of how fast the coordinator can take a turn, not of how long the
     # worker has been silent, and the two came apart badly enough to kill two
