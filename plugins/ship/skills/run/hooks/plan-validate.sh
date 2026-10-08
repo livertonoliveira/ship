@@ -62,9 +62,29 @@ module_files() {
   local f="$1" id="$2" raw
   raw="$(module_field "$f" "$id" "Files")"
   [ -n "$raw" ] || return 0
-  printf '%s\n' "$raw" | tr ',' '\n' \
+  # A planner compresses siblings the way a spec does ("repos/{a,b}.ts"). The
+  # list is split on the commas outside a brace group and each entry expanded by
+  # the same script that expands the spec — read literally, thirteen inventory
+  # files matched nothing a module claimed (MOB-7278, 2026-10-08).
+  local tmp
+  tmp="$(mktemp)"
+  {
+    printf '## Files\n'
+    printf '%s\n' "$raw" | awk '{
+      d = 0; out = ""
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c == "{") d++
+        else if (c == "}" && d > 0) d--
+        out = out ((c == "," && d == 0) ? "\n" : c)
+      }
+      print out
+    }' | sed -E 's/^[[:space:]]+//' | grep -v '^$' | sed 's/^/- modify /'
+  } > "$tmp"
+  bash "$HOOK_DIR/files-expand.sh" "$tmp" | sed -n 's/^- modify //p' \
     | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/[[:space:]]+\(.*$//; s/^[[:space:]]+|[[:space:]]+$//g; s/^[A-Za-z0-9._-]+:[[:space:]]+//; s/\\//g' \
     | grep -v '^$' || true
+  rm -f "$tmp"
 }
 
 module_scenarios() {
