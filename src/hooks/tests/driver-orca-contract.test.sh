@@ -297,6 +297,38 @@ test_the_node_is_told_how_to_ask() {
   rm -rf "$root"
 }
 
+test_a_second_dispatch_of_an_unclaimed_node_starts_nothing() {
+  local root starts
+  root="$(new_case)"; run_dispatch "$root"
+  mkdir -p /tmp/ws/N1
+  printf 'N1\tthe-repo\tTitle\t\t\tpending\t\t\t0\t\n' > "$root/state/nodes.tsv"
+  run_dispatch "$root"
+  starts="$(grep -c '^orchestration worker-start ' "$root/argv.log" || true)"
+  if [ "$starts" = "1" ] && grep -q '^ok=1$' "$root/out.txt" && grep -q '^reused=1$' "$root/out.txt" \
+     && grep -q '^worktree=/tmp/ws/N1$' "$root/out.txt"; then
+    log_pass "dispatching a node that is running unclaimed hands back its workspace and starts no second one"
+  else
+    log_fail "dispatching a node that is running unclaimed hands back its workspace and starts no second one (starts=$starts out=$(tr '\n' '|' < "$root/out.txt"))"
+  fi
+  rm -rf "$root" /tmp/ws/N1
+}
+
+test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace() {
+  local root starts
+  root="$(new_case)"; run_dispatch "$root"
+  mkdir -p /tmp/ws/N1
+  printf 'N1\tthe-repo\tTitle\t\t\tpending\t\t\t1\t\n' > "$root/state/nodes.tsv"
+  printf 'N1\t/tmp/ws/N1\n' > "$root/state/previous-workspaces.tsv"
+  run_dispatch "$root"
+  starts="$(grep -c '^orchestration worker-start ' "$root/argv.log" || true)"
+  if [ "$starts" = "2" ] && ! grep -q '^reused=1$' "$root/out.txt"; then
+    log_pass "a retry the graph asked for is not mistaken for a repeated dispatch"
+  else
+    log_fail "a retry the graph asked for is not mistaken for a repeated dispatch (starts=$starts)"
+  fi
+  rm -rf "$root" /tmp/ws/N1
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -931,6 +963,8 @@ test_the_wake_resumes_through_the_forked_skill
 test_the_node_drives_the_pipeline_itself
 test_the_wake_does_not_claim_success
 test_the_node_is_told_how_to_ask
+test_a_second_dispatch_of_an_unclaimed_node_starts_nothing
+test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered
