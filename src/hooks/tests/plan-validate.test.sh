@@ -415,6 +415,41 @@ test_a_repo_prefix_on_module_files_is_ignored() {
   rm -rf "$dir"
 }
 
+dir_plan() {
+  local dir="$1" files="$2"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/a.ts (create) -> M?" \
+    "- src/use-cases (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "$files" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts"
+}
+
+test_a_directory_in_the_inventory_is_claimed_by_a_file_under_it() {
+  local name="a directory inventory entry is claimed by a module file under that directory"
+  local dir plan rc=0 err
+  dir="$(mktemp -d)"; mkdir -p "$dir/src/use-cases/agenda"
+  plan="$(dir_plan "$dir" "src/a.ts, src/use-cases/agenda/get-agenda.use-case.ts")"
+  err="$(cd "$dir" && bash "$PLAN_VALIDATE_SCRIPT" "$plan" --scaffold "$dir/plan-scaffold.md" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ]; then log_pass "$name"; else log_fail "$name (rc=$rc: $err)"; fi
+  rm -rf "$dir"
+}
+
+test_a_directory_nothing_is_planned_under_is_still_rejected() {
+  local name="a directory inventory entry with no module file under it is still rejected"
+  local dir plan rc=0 err
+  dir="$(mktemp -d)"; mkdir -p "$dir/src/use-cases/agenda"
+  plan="$(dir_plan "$dir" "src/a.ts, src/other/thing.ts")"
+  err="$(cd "$dir" && bash "$PLAN_VALIDATE_SCRIPT" "$plan" --scaffold "$dir/plan-scaffold.md" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'arquivo do inventário sem módulo'; then log_pass "$name"; else log_fail "$name (rc=$rc: $err)"; fi
+  rm -rf "$dir"
+}
+
 test_a_glob_no_module_claims_is_still_rejected() {
   local name="a glob inventory entry nothing in the plan matches is still rejected"
   local dir plan
@@ -972,6 +1007,8 @@ test_scaffolded_plan_may_divert_an_inventory_file
 test_files_as_sub_bullets_claim_the_inventory
 test_a_glob_in_the_inventory_is_claimed_by_the_glob_with_a_note
 test_a_glob_in_the_inventory_is_claimed_by_files_it_matches
+test_a_directory_in_the_inventory_is_claimed_by_a_file_under_it
+test_a_directory_nothing_is_planned_under_is_still_rejected
 test_a_glob_no_module_claims_is_still_rejected
 test_a_repo_prefix_on_module_files_is_ignored
 test_files_as_sub_bullets_still_catch_an_unassigned_file
