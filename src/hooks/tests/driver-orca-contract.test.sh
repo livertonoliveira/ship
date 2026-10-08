@@ -496,6 +496,24 @@ test_a_display_name_resolves_to_the_id() {
   rm -rf "$root"
 }
 
+test_the_graph_record_of_the_repo_wins() {
+  local root line err
+  root="$(new_case)"
+  mkdir -p "$root/state"
+  printf 'N1\tthe-repo\tTitle\t\t\tpending\t\t\t0\t\n' > "$root/state/nodes.tsv"
+  # The caller hard-coded another repo, as a coordinator's own loop script did.
+  run_dispatch "$root" --repo not-a-repo
+  line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
+  err="$(cat "$root/err.txt")"
+  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd' \
+     && printf '%s' "$err" | grep -q 'not-a-repo ignored — N1 belongs to the-repo'; then
+    log_pass "the graph's record of a node's repo wins over a --repo the caller hard-coded"
+  else
+    log_fail "the graph's record of a node's repo wins over a --repo the caller hard-coded (got: $line / err: $err)"
+  fi
+  rm -rf "$root"
+}
+
 test_an_unknown_repo_is_refused_by_name() {
   local root rc err
   root="$(new_case)"; run_dispatch "$root" --repo not-a-repo
@@ -896,6 +914,7 @@ test_concurrent_dispatches_share_one_run
 test_repo_is_resolved_from_the_working_tree
 test_an_explicit_repo_wins
 test_a_display_name_resolves_to_the_id
+test_the_graph_record_of_the_repo_wins
 test_an_unknown_repo_is_refused_by_name
 test_a_refused_worker_start_says_so
 test_a_failed_start_takes_back_the_workspace_it_cut

@@ -1586,6 +1586,20 @@ cmd_claim() {
   dir="$(graph_dir "$(resolve_feature "$feature")")"
   require_graph "$dir"
 
+  # A workspace of another repo is refused before it is recorded: its develop
+  # would find none of the node's files and go and edit wherever they are.
+  # Only another repo of this same graph counts: a repo whose remote is named
+  # differently from its graph name is not a mismatch.
+  local want url other
+  want="$(node_field "$dir" "$id" 2)"
+  url="$(workspace_forge_url "$wt")"
+  if [ -n "$want" ] && [ -n "$url" ] && ! forge_url_fits "$want" "$url"; then
+    while IFS= read -r other; do
+      [ -n "$other" ] && [ "$other" != "$want" ] && forge_url_fits "$other" "$url" \
+        && die "claim: $wt is a checkout of $other, but $id belongs to $want — dispatch it again with --repo $want"
+    done < <( { awk -F'\t' '{ print $2 }' "$dir/nodes.tsv"; meta_get "$dir" repo; } | sort -u)
+  fi
+
   node_set "$dir" "$id" 7 "$wt"
   node_set "$dir" "$id" 8 "$branch"
   node_set "$dir" "$id" 9 "$(( $(node_field "$dir" "$id" 9) + 1 ))"
