@@ -63,7 +63,7 @@ module_files() {
   raw="$(module_field "$f" "$id" "Files")"
   [ -n "$raw" ] || return 0
   printf '%s\n' "$raw" | tr ',' '\n' \
-    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/[[:space:]]+\(.*$//; s/^[[:space:]]+|[[:space:]]+$//g' \
+    | sed -E 's/[[:space:]]+(—|–|--)[[:space:]].*$//; s/[[:space:]]+\(.*$//; s/^[[:space:]]+|[[:space:]]+$//g; s/^[A-Za-z0-9._-]+:[[:space:]]+//; s/\\//g' \
     | grep -v '^$' || true
 }
 
@@ -393,6 +393,10 @@ spec_files() {
       verb = substr(line, 1, RLENGTH - 1)
       sub(/[[:space:]]+$/, "", verb)
       sub(/^(create|modify)[[:space:]]+/, "", line)
+      # A multi-repo spec names the repo before the path ("platform-agendx:
+      # src/a.ts"), and Linear escapes markdown in what it stores ("hooks/\*.ts").
+      sub(/^[A-Za-z0-9._-]+:[[:space:]]+/, "", line)
+      gsub(/\\/, "", line)
       sub(/[[:space:]]*(—|–|--).*$/, "", line)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
       if (line == "") next

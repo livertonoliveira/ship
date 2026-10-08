@@ -78,6 +78,20 @@ test_star_bullets_from_linear_are_inventoried() {
   rm -rf "$(dirname "$scratch")"
 }
 
+test_repo_prefix_and_escapes_are_dropped_from_the_inventory() {
+  local name="a multi-repo Files entry ('repo: path') with a Linear-escaped glob inventories the bare path"
+  local scratch; scratch="$(make_scratch)"
+  printf '## Files\n\n* modify platform-agendx: src/features/dashboard/hooks/\\*.ts — valores\n* modify platform-agendx: src/types/a.ts\n' > "$scratch/spec.md"
+  run_scaffold "$scratch"
+  if grep -q '^- src/features/dashboard/hooks/\*.ts (modify)' "$scratch/plan-scaffold.md" \
+     && grep -q '^- src/types/a.ts (modify)' "$scratch/plan-scaffold.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(tr '\n' '|' < "$scratch/plan-scaffold.md"))"
+  fi
+  rm -rf "$(dirname "$scratch")"
+}
+
 test_one_slot_per_occurrence_not_per_id() {
   local name="an id reused across two distinct scenarios yields two slots, so a plan for it exists at all"
   local scratch; scratch="$(make_scratch)"
@@ -339,6 +353,7 @@ test_missing_spec_is_an_error() {
 test_one_slot_per_occurrence_not_per_id
 test_files_nested_under_a_deeper_heading_are_inventoried
 test_star_bullets_from_linear_are_inventoried
+test_repo_prefix_and_escapes_are_dropped_from_the_inventory
 test_duplicate_ids_are_reported_but_never_fatal
 test_same_id_same_title_is_not_a_defect
 test_layer_comes_from_the_tag_never_reclassified
