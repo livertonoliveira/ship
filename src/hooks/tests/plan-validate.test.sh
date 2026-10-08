@@ -450,6 +450,26 @@ test_a_directory_nothing_is_planned_under_is_still_rejected() {
   rm -rf "$dir"
 }
 
+test_a_brace_group_in_module_files_claims_each_file() {
+  local name="a module listing 'dir/{a,b}.ts' claims each expanded file, alongside plain entries"
+  local dir plan
+  dir="$(mktemp -d)"
+  make_scaffold_fixture "$dir" \
+    "## File Inventory" \
+    "- src/repos/a.repository.ts (modify) -> M?" \
+    "- src/repos/b.repository.ts (modify) -> M?" \
+    "- src/c.ts (modify) -> M?" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> TBD" >/dev/null
+  plan="$(make_plan_fixture "$dir" \
+    "## Modules" \
+    "$(module_block "M1" "primeiro" "src/repos/{a,b}.repository.ts, src/c.ts" "none" "$(scenario_tag 01)")" \
+    "## Test Contract" \
+    "### S1 $(scenario_tag 01) (primeiro) -> unit -> src/a.test.ts")"
+  assert_exit_and_message "$name" "$plan" 0 "" require_empty
+  rm -rf "$dir"
+}
+
 test_a_glob_no_module_claims_is_still_rejected() {
   local name="a glob inventory entry nothing in the plan matches is still rejected"
   local dir plan
@@ -1009,6 +1029,7 @@ test_a_glob_in_the_inventory_is_claimed_by_the_glob_with_a_note
 test_a_glob_in_the_inventory_is_claimed_by_files_it_matches
 test_a_directory_in_the_inventory_is_claimed_by_a_file_under_it
 test_a_directory_nothing_is_planned_under_is_still_rejected
+test_a_brace_group_in_module_files_claims_each_file
 test_a_glob_no_module_claims_is_still_rejected
 test_a_repo_prefix_on_module_files_is_ignored
 test_files_as_sub_bullets_still_catch_an_unassigned_file
