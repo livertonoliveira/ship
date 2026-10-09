@@ -156,6 +156,24 @@ test_a_worker_that_ended_without_output_stops_holding_the_run() {
   fi
 }
 
+test_a_quality_worker_silent_past_its_bound_stops_holding_the_run() {
+  local name="a quality worker with nothing on disk past its time bound no longer holds the run; a test worker still does"
+  local dir quality testw
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  printf '%s\nagent-5\n' "$(( $(date -u +%s) - 700 ))" > "$dir/.context/ship-run/T-1/worker-start-ship-security.txt"
+  quality="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
+  rm -f "$dir/.context/ship-run/T-1/worker-start-ship-security.txt"
+  printf '%s\nagent-6\n' "$(( $(date -u +%s) - 700 ))" > "$dir/.context/ship-run/T-1/worker-start-ship-test-unit.txt"
+  testw="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
+  rm -rf "$dir"
+  if [ "$(field "$quality" state)" != "waiting" ] && [ "$(field "$testw" state)" = "waiting" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (quality=$(field "$quality" state) test=$(field "$testw" state))"
+  fi
+}
+
 test_a_stale_start_marker_is_ignored() {
   local name="a start marker older than an hour (a run that died) never holds the pipeline"
   local dir out
@@ -175,6 +193,7 @@ test_a_fix_agent_with_its_report_is_finished
 test_a_worker_that_wrote_its_output_is_finished_without_a_marker
 test_a_quality_worker_whose_gate_ran_is_finished
 test_a_worker_that_ended_without_output_stops_holding_the_run
+test_a_quality_worker_silent_past_its_bound_stops_holding_the_run
 
 echo
 echo "$pass_count passed, $fail_count failed"
