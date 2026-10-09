@@ -1813,11 +1813,33 @@ cmd_next() {
       evidence="$(printf '%s\n' "$pd_out" | grep '^evidence=' | cut -d= -f2)"
       untested="$(printf '%s\n' "$pd_out" | grep '^untested=' | cut -d= -f2)"
       class="$(printf '%s\n' "$pd_out" | grep '^diff_class=' | cut -d= -f2 | awk '{print $1}')"
-      if [ "$evidence" = "fail" ]; then
-        next_body_add "ship:develop returned but wrote nothing to the tree (no mutation vs the pre-develop snapshot, empty diff). Report the failure and stop — manual intervention required."
-        next_emit "post-develop" "stop" "$RUN" "develop produced no mutation"
-      fi
       local note=""
+      if [ "$evidence" = "fail" ]; then
+        # An empty tree after develop is either a develop that never ran (a
+        # fork that claimed completion without writing) or a task whose source
+        # is already right and whose change is its tests. Measured 2026-10-09:
+        # MOB-7335 — "check api.ts handles 201/204, adjust the tests" — stopped
+        # here for good, twice asked to re-run a pipeline that could only say
+        # the same thing. Develop gets one more turn; a second empty tree with
+        # tests still to come is the second case, and the tests carry the task.
+        local nm_rc=0
+        set +e
+        ( cmd_iter "$SCRATCH" "redispatch-dev-no-mutation" --max 1 ) >/dev/null
+        nm_rc=$?
+        set -e
+        if [ "$nm_rc" -ne 2 ]; then
+          cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
+          next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | The previous develop turn changed no file — implement what the plan assigns; when the source already satisfies the task, say so in your summary and change nothing\""
+          next_body_add "Dispatch develop alone — no other tool call this turn."
+          next_common_after
+          next_emit "develop" "dispatch" "$RUN" "develop changed nothing — one more turn"
+        fi
+        if [ "$(phase_toggle "$CONFIG" test)" = "disabled" ]; then
+          next_body_add "ship:develop changed nothing in two turns and no test phase follows, so this run has nothing to verify or deliver. Report the failure and stop — manual intervention required."
+          next_emit "post-develop" "stop" "$RUN" "develop produced no mutation"
+        fi
+        note="no source change in two turns — the tests carry this task"
+      fi
       [ "$evidence" = "warn" ] && note="re-run, no new mutation"
       next_write_row "$SCRATCH" dev pass "$note"
       next_consolidate "$SCRATCH" "$RUN" dev
