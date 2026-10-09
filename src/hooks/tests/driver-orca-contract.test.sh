@@ -359,6 +359,22 @@ test_a_stale_dispatch_lock_is_taken_over() {
   rm -rf "$root"
 }
 
+test_a_node_the_graph_already_runs_is_not_dispatched_again() {
+  local root starts
+  root="$(new_case)"
+  mkdir -p "$root/state"
+  printf 'N1\tthe-repo\tTitle\t\t\tin_flight\t/tmp/ws/N1\tship/N1\t1\t\n' > "$root/state/nodes.tsv"
+  run_dispatch "$root"
+  starts="$(grep -c '^orchestration worker-start ' "$root/argv.log" 2>/dev/null || true)"
+  if [ "$(cat "$root/rc.txt")" != "0" ] && grep -q '^ok=0$' "$root/out.txt" \
+     && grep -q 'is already in_flight in the graph' "$root/out.txt" && [ "${starts:-0}" = "0" ]; then
+    log_pass "a node the graph already has in flight is refused a second dispatch"
+  else
+    log_fail "a node the graph already has in flight is refused a second dispatch (rc=$(cat "$root/rc.txt") starts=$starts)"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -997,6 +1013,7 @@ test_a_second_dispatch_of_an_unclaimed_node_starts_nothing
 test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace
 test_a_dispatch_already_in_progress_is_refused
 test_a_stale_dispatch_lock_is_taken_over
+test_a_node_the_graph_already_runs_is_not_dispatched_again
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered

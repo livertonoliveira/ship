@@ -396,6 +396,21 @@ verb_dispatch() {
   # was dispatched, confirmed working and never claimed is handed back as it is.
   # A retry is not that: graph.sh lists the attempt it gave up on in
   # previous-workspaces.tsv, and that one is never reused.
+  # A node the graph already has running, landed, merged or failed is not
+  # dispatched again by anyone: two drivers over one graph (a loop script left
+  # running under a re-entered skill) started a second agent on a node the
+  # first had claimed 38 seconds earlier (MOB-7361, 2026-10-09).
+  local live_status
+  live_status="$(awk -F'\t' -v t="$task" '$1 == t { print $6; exit }' "$STATE/nodes.tsv" 2>/dev/null || true)"
+  case "$live_status" in
+    ''|pending|ready) ;;
+    *)
+      printf 'ok=0\n'
+      printf 'reason=%s is already %s in the graph — it was not dispatched again. Run graph.sh next for what to do now.\n' "$task" "$live_status"
+      echo "driver-orca.sh dispatch: $task is already '$live_status' — refusing a second dispatch." >&2
+      exit 1 ;;
+  esac
+
   local prior="$STATE/driver-orca-$task.txt" prior_wt prior_status
   if [ -f "$prior" ] && [ "$(kv_get "$prior" confirmed)" = "1" ]; then
     prior_wt="$(kv_get "$prior" worktree)"
