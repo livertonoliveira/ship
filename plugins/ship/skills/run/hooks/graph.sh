@@ -1600,6 +1600,18 @@ cmd_claim() {
     done < <( { awk -F'\t' '{ print $2 }' "$dir/nodes.tsv"; meta_get "$dir" repo; } | sort -u)
   fi
 
+  # Checked before anything is written. The transition below refuses a node
+  # that is not pending, but by then the record already named the new
+  # workspace: a second driver claiming a node the first had just claimed left
+  # it in_flight in the WRONG workspace, with two agents on it (MOB-7361,
+  # 2026-10-09).
+  local claim_cur
+  claim_cur="$(node_field "$dir" "$id" 6)"
+  case "$claim_cur" in
+    pending|ready) ;;
+    *) die "claim: $id is already '$claim_cur' in $(node_field "$dir" "$id" 7) — nothing was changed. Stop the worker you just dispatched for it: bash \"$HOOK_DIR/driver-$(meta_get "$dir" driver).sh\" stop $id is NOT the call (that stops the claimed one) — remove the extra workspace $wt instead." ;;
+  esac
+
   node_set "$dir" "$id" 7 "$wt"
   node_set "$dir" "$id" 8 "$branch"
   node_set "$dir" "$id" 9 "$(( $(node_field "$dir" "$id" 9) + 1 ))"

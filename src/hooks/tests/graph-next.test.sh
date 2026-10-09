@@ -432,6 +432,28 @@ test_concurrent_writers_lose_no_update() {
   rm -rf "$dir"
 }
 
+test_a_second_claim_changes_nothing() {
+  local name="claiming a node that is already in flight is refused and leaves its workspace, branch and attempts as they were"
+  local dir rc=0 row
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    git worktree add -q wt-dup -b ship/TASK-001-dup main
+  )
+  (cd "$dir" && bash "$GRAPH" claim TASK-001 --worktree "wt-dup" --branch ship/TASK-001-dup >/dev/null 2>&1) || rc=$?
+  row="$(awk -F'\t' '$1 == "TASK-001" { print $6 "|" $7 "|" $8 "|" $9 }' "$dir/.context/ship-graph/f/nodes.tsv")"
+  rm -rf "$dir"
+  if [ "$rc" -ne 0 ] && [ "$row" = "in_flight|wt-TASK-001|ship/TASK-001|1" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc row=$row)"
+  fi
+}
+
 test_progress_resets_the_stall_counter() {
   local name="a node that resumes phase progress clears its stall counter"
   local dir out
@@ -1811,6 +1833,7 @@ test_init_refuses_a_dependency_cycle
 test_a_node_with_a_question_posted_is_never_stalled
 test_a_node_running_a_command_is_not_stalled
 test_concurrent_writers_lose_no_update
+test_a_second_claim_changes_nothing
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker
