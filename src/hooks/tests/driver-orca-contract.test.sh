@@ -329,6 +329,36 @@ test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace() {
   rm -rf "$root" /tmp/ws/N1
 }
 
+test_a_dispatch_already_in_progress_is_refused() {
+  local root starts
+  root="$(new_case)"
+  mkdir -p "$root/state/dispatching-N1.lock"
+  date -u +%s > "$root/state/dispatching-N1.lock/at"
+  run_dispatch "$root"
+  starts="$(grep -c '^orchestration worker-start ' "$root/argv.log" 2>/dev/null || true)"
+  if [ "$(cat "$root/rc.txt")" != "0" ] && grep -q '^ok=0$' "$root/out.txt" \
+     && grep -q 'is being dispatched right now' "$root/out.txt" && [ "${starts:-0}" = "0" ]; then
+    log_pass "a dispatch racing another one for the same node is refused and starts nothing"
+  else
+    log_fail "a dispatch racing another one for the same node is refused and starts nothing (rc=$(cat "$root/rc.txt") starts=$starts)"
+  fi
+  rm -rf "$root"
+}
+
+test_a_stale_dispatch_lock_is_taken_over() {
+  local root
+  root="$(new_case)"
+  mkdir -p "$root/state/dispatching-N1.lock"
+  echo 1000 > "$root/state/dispatching-N1.lock/at"
+  run_dispatch "$root"
+  if grep -q '^ok=1$' "$root/out.txt" && [ ! -e "$root/state/dispatching-N1.lock" ]; then
+    log_pass "a lock left by a dispatch that died is taken over, and released when this one ends"
+  else
+    log_fail "a lock left by a dispatch that died is taken over, and released when this one ends (out=$(tr '\n' '|' < "$root/out.txt"))"
+  fi
+  rm -rf "$root"
+}
+
 test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
@@ -965,6 +995,8 @@ test_the_wake_does_not_claim_success
 test_the_node_is_told_how_to_ask
 test_a_second_dispatch_of_an_unclaimed_node_starts_nothing
 test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace
+test_a_dispatch_already_in_progress_is_refused
+test_a_stale_dispatch_lock_is_taken_over
 test_dispatch_reports_the_workspace_it_made
 test_an_unsent_brief_is_submitted
 test_a_brief_that_never_arrived_is_delivered

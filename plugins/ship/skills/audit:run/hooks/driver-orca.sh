@@ -417,6 +417,25 @@ verb_dispatch() {
     fi
   fi
 
+  # Two dispatches of one node racing each other: the reuse above only sees a
+  # dispatch that finished. Measured 2026-10-09: a coordinator left a loop script
+  # running in the background and re-entered the graph skill on top of it; both
+  # dispatched the same node 40s apart and two agents worked the task. mkdir is
+  # the lock (atomic, no flock on macOS); a stale one is taken over.
+  local lock="$STATE/dispatching-$task.lock" lock_at
+  if ! mkdir "$lock" 2>/dev/null; then
+    lock_at="$(cat "$lock/at" 2>/dev/null | tr -cd '0-9')"
+    if [ -n "$lock_at" ] && [ $(( $(date -u +%s) - lock_at )) -lt "${SHIP_DISPATCH_LOCK_S:-600}" ]; then
+      printf 'ok=0\n'
+      printf 'reason=%s is being dispatched right now by another call — a second workspace was not started. Do not claim it here; whoever dispatched it will.\n' "$task"
+      echo "driver-orca.sh dispatch: $task is already being dispatched (lock $lock)." >&2
+      exit 1
+    fi
+  fi
+  date -u +%s > "$lock/at"
+  # shellcheck disable=SC2064
+  trap "rm -rf \"$lock\"" EXIT
+
   prompt="${prompt:-/ship:run $task}"
   # The node session already runs on the orchestration model, so it drives the
   # pipeline itself. Invoking /ship:run opened a fork on top of it: a second
