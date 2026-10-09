@@ -402,6 +402,36 @@ test_a_node_running_a_command_is_not_stalled() {
   rm -rf "$dir"
 }
 
+test_concurrent_writers_lose_no_update() {
+  local name="twelve graph.sh calls writing the state at once lose no update and leave no lock behind"
+  local dir failed rows i
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    {
+      printf '[\n'
+      for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+        printf '  { "id": "TASK-0%s", "repo": "", "title": "t", "deps": [], "files": ["src/f%s.ts"] }%s\n' "$i" "$i" "$([ "$i" = 12 ] || printf ',')"
+      done
+      printf ']\n'
+    } > many.json
+    bash "$GRAPH" init --feature many --from many.json --driver manual --max-in-flight 12 --base-branch main >/dev/null
+    for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+      bash "$GRAPH" fail "TASK-0$i" --reason "r$i" --feature many >/dev/null 2>&1 &
+    done
+    wait
+  )
+  failed="$(awk -F'\t' '$6 == "failed"' "$dir/.context/ship-graph/many/nodes.tsv" | wc -l | tr -d ' ')"
+  rows="$(awk 'END { print NR }' "$dir/.context/ship-graph/many/nodes.tsv")"
+  if [ "$failed" = "12" ] && [ "$rows" = "12" ] && [ ! -e "$dir/.context/ship-graph/.lock" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (failed=$failed rows=$rows lock=$([ -e "$dir/.context/ship-graph/.lock" ] && echo left || echo gone))"
+  fi
+  rm -rf "$dir"
+}
+
 test_progress_resets_the_stall_counter() {
   local name="a node that resumes phase progress clears its stall counter"
   local dir out
@@ -1780,6 +1810,7 @@ test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
 test_a_node_with_a_question_posted_is_never_stalled
 test_a_node_running_a_command_is_not_stalled
+test_concurrent_writers_lose_no_update
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker

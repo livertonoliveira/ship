@@ -128,7 +128,7 @@ meta_get() {
 
 meta_set() {
   local dir="$1" key="$2" value="$3" tmp
-  tmp="$dir/.meta.tmp"
+  tmp="$dir/.meta.tmp.$$"
   touch "$dir/meta.tsv"
   awk -F'\t' -v k="$key" -v v="$value" '
     BEGIN { OFS = "\t" }
@@ -294,7 +294,7 @@ pr_status_get() {
 pr_status_set() {
   local dir="$1" id="$2" number="$3" state="$4" url="$5" armed="${6:-no}" mstate="${7:-}" f tmp
   f="$(pr_status_file "$dir")"
-  tmp="$dir/.pr-status.tmp"
+  tmp="$dir/.pr-status.tmp.$$"
   touch "$f"
   awk -F'\t' -v OFS='\t' -v id="$id" -v n="$number" -v s="$state" -v u="$url" -v a="$armed" -v m="$mstate" '
     $1 == id { print id, n, s, u, a, m; done = 1; next }
@@ -451,7 +451,7 @@ node_exists() {
 
 node_set() {
   local dir="$1" id="$2" col="$3" value="$4" tmp
-  tmp="$dir/.nodes.tmp"
+  tmp="$dir/.nodes.tmp.$$"
   awk -F'\t' -v OFS='\t' -v target="$id" -v c="$col" -v v="$value" '
     $1 == target { $c = v }
     { print }
@@ -593,7 +593,7 @@ json_array() {
 # graph.json is the readable, shareable projection of nodes.tsv + meta.tsv —
 # re-rendered on every mutation so it never drifts from the state it describes.
 render_json() {
-  local dir="$1" out="$dir/.graph.json.tmp"
+  local dir="$1" out="$dir/.graph.json.tmp.$$"
   {
     printf '{\n'
     printf '  "version": 1,\n'
@@ -2877,6 +2877,38 @@ fi
 
 SUBCOMMAND="$1"
 shift
+
+# One writer at a time. Every state file is rewritten read-modify-write
+# (nodes.tsv, meta.tsv, pr-status), and nothing stopped two calls from doing it
+# together: a coordinator's loop polling while an operator ran reset, or two
+# loops over one graph (2026-10-09 — a rename of the shared temp file failed
+# under exactly that; a lost node status would have looked the same and said
+# nothing). mkdir is the lock; the holder's pid lets a dead one be taken over.
+# A call that cannot get it in SHIP_GRAPH_LOCK_WAIT_S goes ahead and says so —
+# a stuck lock must never be what stops a graph.
+graph_lock() {
+  local lock="$GRAPH_ROOT/.lock" waited=0 holder
+  [ -d "$GRAPH_ROOT" ] || return 0
+  while ! mkdir "$lock" 2>/dev/null; do
+    holder="$( { cat "$lock/pid" 2>/dev/null || true; } | tr -cd '0-9')"
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$lock"
+      continue
+    fi
+    if [ "$waited" -ge "${SHIP_GRAPH_LOCK_WAIT_S:-300}" ]; then
+      echo "graph.sh: another graph.sh (pid ${holder:-?}) has held the state lock for ${waited}s — going ahead without it" >&2
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  printf '%s\n' "$$" > "$lock/pid"
+  # shellcheck disable=SC2064
+  trap "rm -rf \"$lock\"" EXIT
+}
+case "$SUBCOMMAND" in
+  init|set|next|claim|land|poll|complete|fail|answer|reset|abort|sweep) graph_lock ;;
+esac
 
 case "$SUBCOMMAND" in
   init)      cmd_init "$@" ;;
