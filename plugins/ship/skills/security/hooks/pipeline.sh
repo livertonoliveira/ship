@@ -1369,7 +1369,13 @@ next_running_workers() {
     case "$name" in
       ship-review|ship-perf|ship-security)
         gate_row="$scratch/phase-status-${name#ship-}.md"
-        if [ -f "$gate_row" ] && [ "$gate_row" -nt "$f" ]; then continue; fi ;;
+        if [ -f "$gate_row" ] && [ "$gate_row" -nt "$f" ]; then continue; fi
+        # No signal at all is also an answer. Measured 2026-10-09: a security
+        # worker ended five seconds after it started, wrote nothing, and its
+        # stop left no record either; the run waited 18 minutes for it. A
+        # quality worker reads a diff — past this bound with nothing on disk it
+        # is not coming back, and the missing-output check re-dispatches it.
+        if [ $((now - start)) -ge "${SHIP_QUALITY_WORKER_MAX_S:-600}" ]; then continue; fi ;;
     esac
     # It tried to end without its output (the stop hook recorded the attempt)
     # and nothing has been written since: it is gone, not running. Waiting on it
