@@ -62,7 +62,8 @@ Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight i
 2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
    - `dispatch` → make EVERY listed call now, in this same turn, in the order printed. `dispatch` prepares the workspace, `collect` resolves its path and branch, `claim` hands both back. A driver that cannot start the worker itself returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in, and the graph waits on a worker that never existed. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
    - `wait` → run the listed calls in order. `graph.sh poll` is what decides completion — it reads each workspace's own artifacts and each open PR's real state on the forge. Never land, merge or fail a node from what a worker said.
-   - `ask` → the one kind of decision the graph cannot take from its artifacts (a PR with conflicts against the base, or one nobody armed under `merge-policy human`). STOP with it in the artifact language: the question, the exact `graph.sh` command the instruction gives per answer, then the resume.
+   - `answer` → a node asked: decide it yourself as instructed, reply with the given `graph.sh answer`.
+   - `ask` → a decision the graph cannot take from its artifacts (a PR conflicting with the base, or unarmed under `merge-policy human`). STOP with it in the artifact language: the question, the `graph.sh` command per answer, then the resume.
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
 

@@ -2720,7 +2720,13 @@ cmd_next() {
       next_body_add "  1. Take the option the node recommends, or the conservative one when it recommends none. When the question lists answer tokens, answer with one of them."
       next_body_add "  2. Never pick an option that skips or weakens a check (--no-verify, disabling a test, accepting a failing gate), rewrites or discards work (force push, reset, deleting files or branches the node did not create), or reaches outside the node's own repo. When the node recommends one of those, choose the option that keeps the checks: a failure that already exists on the base is fixed inside this node's PR, in a commit of its own."
       next_body_add "  3. When every option is of the kind rule 2 forbids, fail the node instead of asking: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason \"<the question and why no safe option exists>\" — it is reported at done and the graph goes on."
-      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> \"<answer, with the reason in one sentence>\" — that writes the answer, logs it, and wakes the worker through the driver. Then carry on with the calls below."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> \"<answer, with the reason in one sentence>\" — that writes the answer, logs it, and wakes the worker through the driver. Then run graph.sh next again."
+      # An action of its own, emitted before anything else. Carried as text
+      # ahead of a `wait`, the question was never read: coordinators drive this
+      # loop from scripts that branch on action= alone, and the wait it rode on
+      # returns at once while ask.md exists — a question nobody answered and a
+      # loop spinning on it (MOB-7453, 2026-10-09).
+      next_emit "node-question" "answer" "$inflight" "" "node(s) waiting on an answer:${asked}"
     fi
   fi
 

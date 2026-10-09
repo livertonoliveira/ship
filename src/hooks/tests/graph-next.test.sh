@@ -107,7 +107,7 @@ test_a_nodes_question_reaches_the_coordinator() {
   out="$(cd "$dir" && bash "$GRAPH" next 2>/dev/null || true)"
   answered="$(cd "$dir" && bash "$GRAPH" answer TASK-001 proceed 2>&1 || true)"
 
-  if [ "$(field "$out" action)" = "wait" ] \
+  if [ "$(field "$out" action)" = "answer" ] \
     && printf '%s' "$out" | grep -q 'medium findings, continue?' \
     && printf '%s' "$out" | grep -q 'graph.sh" answer <task> "<answer' \
     && [ "$(field "$answered" answered)" = "TASK-001" ] \
@@ -678,7 +678,7 @@ two_independent_nodes() {
 }
 
 test_a_question_does_not_park_the_other_nodes() {
-  local name="a question from one node is presented while the graph keeps waiting on the other in-flight node"
+  local name="a question from one node is answered first, then the graph goes back to waiting on the others"
   local dir out
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -692,13 +692,17 @@ test_a_question_does_not_park_the_other_nodes() {
     bash "$GRAPH" claim TASK-005 --worktree "wt-TASK-005" --branch ship/TASK-005 >/dev/null
     printf 'state=gate\nquestion=q\ndetail:\nd\n' > "wt-TASK-001/.context/ship-run/TASK-001/ask.md"
     bash "$GRAPH" next > next.txt
+    bash "$GRAPH" answer TASK-001 proceed >/dev/null 2>&1
+    bash "$GRAPH" next > next-after.txt
   )
   out="$(cat "$dir/next.txt")"
+  local after
+  after="$(cat "$dir/next-after.txt")"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "wait" ] \
+  if [ "$(field "$out" action)" = "answer" ] \
     && printf '%s' "$out" | grep -q 'TASK-001 asks' \
-    && printf '%s' "$out" | grep -q -- '--until-file .*TASK-005/ask.md' \
-    && ! printf '%s' "$out" | grep -q -- '--until-file .*TASK-001/ask.md'; then
+    && [ "$(field "$after" action)" = "wait" ] \
+    && printf '%s' "$after" | grep -q -- '--until-file .*TASK-005/ask.md'; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -721,7 +725,7 @@ test_a_question_is_answered_by_the_coordinator_never_put_to_the_user() {
   )
   out="$(cat "$dir/next.txt")"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "wait" ] && printf '%s' "$out" | grep -q 'TASK-001 asks: q' \
+  if [ "$(field "$out" action)" = "answer" ] && [ "$(field "$out" state)" = "node-question" ] && printf '%s' "$out" | grep -q 'TASK-001 asks: q' \
      && printf '%s' "$out" | grep -q 'Answer each question above NOW, yourself' \
      && printf '%s' "$out" | grep -q -- '--no-verify' && printf '%s' "$out" | grep -q 'graph.sh" fail <task>' \
      && ! printf '%s' "$out" | grep -qi 'present it to the user in'; then
