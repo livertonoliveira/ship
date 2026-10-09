@@ -1348,7 +1348,7 @@ next_worker_output() {
 # the graph failed the node — the hook alone is not a completion signal, so
 # every worker the pipeline waits on writes an output of its own.
 next_running_workers() {
-  local scratch="$1" f name start now out
+  local scratch="$1" f name start now out gate_row ended ended_at
   now="$(date -u +%s)"
   for f in "$scratch"/worker-start-*.txt; do
     [ -f "$f" ] || continue
@@ -1362,6 +1362,24 @@ next_running_workers() {
     out="$(next_worker_output "$name")"
     if [ -n "$out" ] && [ -f "$scratch/$out" ] && [ "$scratch/$out" -nt "$f" ]; then
       continue
+    fi
+    # A quality worker with nothing to report runs its gate and writes no
+    # findings file; the gate's own row is the output the rest of this script
+    # already reads to call the phase complete.
+    case "$name" in
+      ship-review|ship-perf|ship-security)
+        gate_row="$scratch/phase-status-${name#ship-}.md"
+        if [ -f "$gate_row" ] && [ "$gate_row" -nt "$f" ]; then continue; fi ;;
+    esac
+    # It tried to end without its output (the stop hook recorded the attempt)
+    # and nothing has been written since: it is gone, not running. Waiting on it
+    # held a node until the graph called it stalled (MOB-7563, 2026-10-09). The
+    # missing-output check below then re-dispatches the phase, as for any
+    # silent write failure.
+    ended="$scratch/worker-ended-$name.txt"
+    if [ -f "$ended" ] && [ ! "$f" -nt "$ended" ]; then
+      ended_at="$(head -1 "$ended" | tr -cd '0-9')"
+      if [ -n "$ended_at" ] && [ $((now - ended_at)) -ge "${SHIP_WORKER_ENDED_GRACE_S:-180}" ]; then continue; fi
     fi
     printf '%s\n' "$name"
   done

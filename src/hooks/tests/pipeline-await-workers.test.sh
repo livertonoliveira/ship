@@ -125,6 +125,37 @@ test_a_fix_agent_with_its_report_is_finished() {
   if [ "$(field "$out" state)" != "waiting" ]; then log_pass "$name"; else log_fail "$name (out: $out)"; fi
 }
 
+test_a_quality_worker_whose_gate_ran_is_finished() {
+  local name="a quality worker that ran its gate and wrote no findings file is finished"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  printf '%s\nagent-3\n' "$(date -u +%s)" > "$dir/.context/ship-run/T-1/worker-start-ship-perf.txt"
+  sleep 1
+  echo "| perf | #1 | t | - | pass | 0 | 0 | 0 | 0 |  |" > "$dir/.context/ship-run/T-1/phase-status-perf.md"
+  out="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" != "waiting" ]; then log_pass "$name"; else log_fail "$name (out: $out)"; fi
+}
+
+test_a_worker_that_ended_without_output_stops_holding_the_run() {
+  local name="a worker that tried to end without its output holds the run only for the grace window"
+  local dir during after
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  printf '%s\nagent-4\n' "$(date -u +%s)" > "$dir/.context/ship-run/T-1/worker-start-ship-security.txt"
+  sleep 1
+  date -u +%s > "$dir/.context/ship-run/T-1/worker-ended-ship-security.txt"
+  during="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
+  after="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 SHIP_WORKER_ENDED_GRACE_S=0 bash "$PIPELINE" next T-1)"
+  rm -rf "$dir"
+  if [ "$(field "$during" state)" = "waiting" ] && [ "$(field "$after" state)" != "waiting" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (during=$(field "$during" state) after=$(field "$after" state))"
+  fi
+}
+
 test_a_stale_start_marker_is_ignored() {
   local name="a start marker older than an hour (a run that died) never holds the pipeline"
   local dir out
@@ -142,6 +173,8 @@ test_a_finished_worker_does_not_hold_the_run
 test_a_stale_start_marker_is_ignored
 test_a_fix_agent_with_its_report_is_finished
 test_a_worker_that_wrote_its_output_is_finished_without_a_marker
+test_a_quality_worker_whose_gate_ran_is_finished
+test_a_worker_that_ended_without_output_stops_holding_the_run
 
 echo
 echo "$pass_count passed, $fail_count failed"
