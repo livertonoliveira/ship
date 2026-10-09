@@ -370,6 +370,38 @@ test_a_node_with_a_question_posted_is_never_stalled() {
   rm -rf "$dir"
 }
 
+test_a_node_running_a_command_is_not_stalled() {
+  local name="a node with a command running out of its workspace is not counted quiet; once it ends the count starts"
+  local dir log busy_polls after pid
+  dir="$(mktemp -d)"
+  setup_repo "$dir"
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    printf '| dev | Skill | ship:develop | sonnet | t |\n' > "wt-TASK-001/.context/ship-run/TASK-001/dispatch-log.md"
+    printf '#!/usr/bin/env bash\nsleep 60\n' > "$dir/wt-TASK-001/.context/long-suite.sh"
+    bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$dir/wt-TASK-001/.context/long-suite.sh" &
+    pid=$!
+    sleep 1
+    for _ in 1 2 3 4 5 6 7 8; do bash "$GRAPH" poll --stall-after 0; done > busy.txt
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    bash "$GRAPH" poll --stall-after 0 > after.txt
+  )
+  log="$dir/.context/ship-graph/f/graph-log.md"
+  busy_polls="$(grep -c '^busy=TASK-001' "$dir/busy.txt" || true)"
+  after="$(cat "$dir/after.txt")"
+  if [ "$busy_polls" = "8" ] && ! grep -qE 'TASK-001 → failed|worker resumed once' "$log" \
+     && printf '%s' "$after" | grep -q 'quiet=TASK-001'; then
+    log_pass "$name"
+  else
+    log_fail "$name (busy_polls=$busy_polls after=$after)"
+  fi
+  rm -rf "$dir"
+}
+
 test_progress_resets_the_stall_counter() {
   local name="a node that resumes phase progress clears its stall counter"
   local dir out
@@ -1747,6 +1779,7 @@ test_wait_names_the_artifacts_it_is_waiting_for
 test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
 test_a_node_with_a_question_posted_is_never_stalled
+test_a_node_running_a_command_is_not_stalled
 test_progress_resets_the_stall_counter
 test_inflight_cap_holds
 test_claim_writes_homolog_defer_marker
