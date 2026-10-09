@@ -1935,7 +1935,7 @@ cmd_poll() {
   require_graph "$dir"
   [ -n "$stall_after" ] || stall_after="$(stall_after_of "$dir")"
 
-  local id wt fp rows prev stalls since quiet_for now landed=0 stalled=0 working=0
+  local id wt fp rows prev stalls since quiet_for busy_since now landed=0 stalled=0 working=0
   now="$(date +%s)"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -2002,6 +2002,22 @@ cmd_poll() {
       printf '%s\n' "$now" > "$dir/progress-at-$id.txt"
       rm -f "$dir/stall-$id.txt"
       printf 'asking=%s\n' "$id"
+      working=$((working + 1))
+      continue
+    fi
+
+    # A node running a command out of its own workspace is working, whatever
+    # the files say: a full test suite or a pre-push hook takes minutes and
+    # writes nothing. Measured 2026-10-09: MOB-7462 spent 15 minutes fixing and
+    # re-running suites after its question was answered and reached 3 of 3
+    # quiet polls with vitest running the whole time. Bounded, so a command
+    # that hangs does not hold the node open for ever. The graph's own wait
+    # names the workspace in its arguments and is not the node working.
+    busy_since="$(cat "$dir/progress-at-$id.txt" 2>/dev/null | tr -cd '0-9')"
+    if [ -n "$busy_since" ] && [ $(( now - busy_since )) -lt "${SHIP_BUSY_NODE_MAX_S:-3600}" ] \
+       && pgrep -fl "$wt/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' | grep -q .; then
+      rm -f "$dir/stall-$id.txt"
+      printf 'busy=%s\n' "$id"
       working=$((working + 1))
       continue
     fi
