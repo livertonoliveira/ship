@@ -385,8 +385,8 @@ test_invalid_plan_abort_stops() {
 
 
 
-test_post_develop_no_mutation_stops() {
-  local name="develop returning without mutating the tree yields action=stop"
+test_post_develop_no_mutation_retries_then_goes_to_the_tests() {
+  local name="develop changing nothing gets one more turn; a second empty tree goes on to the tests instead of a dead-end stop"
   local dir; dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: enabled
 - integration: disabled
@@ -394,11 +394,16 @@ test_post_develop_no_mutation_stops() {
   next "$dir" TASK-1 >/dev/null
   one_file_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   advance_past_planning "$dir" TASK-1 >/dev/null
-  local out; out="$(next "$dir" TASK-1)"
-  if [ "$(field "$out" state)" = "post-develop" ] && [ "$(field "$out" action)" = "stop" ]; then
+  local first second
+  first="$(next "$dir" TASK-1)"
+  second="$(next "$dir" TASK-1)"
+  if [ "$(field "$first" state)" = "develop" ] && [ "$(field "$first" action)" = "dispatch" ] \
+     && printf '%s' "$first" | grep -q 'changed no file' \
+     && [ "$(field "$second" action)" != "stop" ] && [ "$(field "$second" state)" != "post-develop" ] \
+     && [ -f "$dir/.context/ship-run/TASK-1/post-develop-done.txt" ]; then
     log_pass "$name"
   else
-    log_fail "$name"
+    log_fail "$name (first=$(field "$first" state)/$(field "$first" action) second=$(field "$second" state)/$(field "$second" action))"
   fi
   rm -rf "$dir"
 }
@@ -963,7 +968,7 @@ test_wait_answer_returns_at_once_with_nothing_pending
 test_graph_node_consumes_the_coordinators_answer
 test_validated_plan_goes_straight_to_develop
 test_stale_confrontation_artifacts_are_ignored
-test_post_develop_no_mutation_stops
+test_post_develop_no_mutation_retries_then_goes_to_the_tests
 test_verify_a_dispatches_worker_with_brief
 test_report_timings_prints_worker_start_lag
 test_silent_worker_failure_redispatches_then_stops
