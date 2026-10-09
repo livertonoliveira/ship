@@ -107,9 +107,9 @@ test_a_nodes_question_reaches_the_coordinator() {
   out="$(cd "$dir" && bash "$GRAPH" next 2>/dev/null || true)"
   answered="$(cd "$dir" && bash "$GRAPH" answer TASK-001 proceed 2>&1 || true)"
 
-  if [ "$(field "$out" action)" = "ask" ] \
+  if [ "$(field "$out" action)" = "wait" ] \
     && printf '%s' "$out" | grep -q 'medium findings, continue?' \
-    && printf '%s' "$out" | grep -q 'graph.sh" answer <task> <answer>' \
+    && printf '%s' "$out" | grep -q 'graph.sh" answer <task> "<answer' \
     && [ "$(field "$answered" answered)" = "TASK-001" ] \
     && [ "$(head -1 "$scratch/answer.txt")" = "proceed" ] \
     && [ ! -f "$scratch/ask.md" ] \
@@ -705,8 +705,8 @@ test_a_question_does_not_park_the_other_nodes() {
   fi
 }
 
-test_a_question_stops_the_graph_when_nothing_else_runs() {
-  local name="when every in-flight node is waiting on an answer the graph asks and stops"
+test_a_question_is_answered_by_the_coordinator_never_put_to_the_user() {
+  local name="a node's question is the coordinator's to answer: the graph does not stop on it or hand it to the user"
   local dir out
   dir="$(mktemp -d)"
   setup_repo "$dir"
@@ -721,7 +721,10 @@ test_a_question_stops_the_graph_when_nothing_else_runs() {
   )
   out="$(cat "$dir/next.txt")"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "ask" ]; then
+  if [ "$(field "$out" action)" = "wait" ] && printf '%s' "$out" | grep -q 'TASK-001 asks: q' \
+     && printf '%s' "$out" | grep -q 'Answer each question above NOW, yourself' \
+     && printf '%s' "$out" | grep -q -- '--no-verify' && printf '%s' "$out" | grep -q 'graph.sh" fail <task>' \
+     && ! printf '%s' "$out" | grep -qi 'present it to the user in'; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -1755,7 +1758,7 @@ test_reset_is_all_or_nothing
 test_unknown_dep_is_rejected_at_init
 test_answer_wakes_the_worker_through_the_driver
 test_a_question_does_not_park_the_other_nodes
-test_a_question_stops_the_graph_when_nothing_else_runs
+test_a_question_is_answered_by_the_coordinator_never_put_to_the_user
 test_batch_admission_holds_a_freed_slot
 test_a_failed_node_does_not_freeze_the_run
 test_a_run_ending_with_failures_reports_them_once

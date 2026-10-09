@@ -2711,16 +2711,16 @@ cmd_next() {
       next_body_add "- $qid asks: $(grep -m1 '^question=' "$qask" | sed 's/^question=//') — full text in $qask"
     done < <(nodes_with_status "$dir" in_flight)
     if [ -n "${asked# }" ]; then
-      next_body_add "Read each ask.md above. Inside a graph the node's pipeline decides its own gates, so a question that still reaches here is one it could not decide from its artifacts: present it to the user in the artifact language."
-      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> <answer> — that writes the answer and wakes the worker through the driver."
-      # Stop only when nothing else is running. A question from one node used
-      # to park the whole graph while its siblings sat finished and unpolled.
-      local asked_n
-      asked_n="$(printf '%s\n' $asked | grep -c . || true)"
-      if [ "$asked_n" -ge "$inflight" ]; then
-        next_emit "ask" "ask" "$inflight" "" "node(s) waiting on an answer:${asked}"
-      fi
-      next_body_add "The other in-flight node(s) keep running: after presenting the question, carry on with the calls below; the answer can come later."
+      # A graph runs unattended: whoever started it is not there to arbitrate.
+      # Until 2026-10-09 a node's question was presented to the user and, with
+      # nothing else in flight, the whole graph stopped on it — one graph sat
+      # three hours on a question whose recommended answer was never in doubt.
+      # The coordinator answers now; a person is not in this path at all.
+      next_body_add "Answer each question above NOW, yourself — nobody is watching this run, so do not present it to the user and do not stop. Read the ask.md, then decide:"
+      next_body_add "  1. Take the option the node recommends, or the conservative one when it recommends none. When the question lists answer tokens, answer with one of them."
+      next_body_add "  2. Never pick an option that skips or weakens a check (--no-verify, disabling a test, accepting a failing gate), rewrites or discards work (force push, reset, deleting files or branches the node did not create), or reaches outside the node's own repo. When the node recommends one of those, choose the option that keeps the checks: a failure that already exists on the base is fixed inside this node's PR, in a commit of its own."
+      next_body_add "  3. When every option is of the kind rule 2 forbids, fail the node instead of asking: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason \"<the question and why no safe option exists>\" — it is reported at done and the graph goes on."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> \"<answer, with the reason in one sentence>\" — that writes the answer, logs it, and wakes the worker through the driver. Then carry on with the calls below."
     fi
   fi
 
