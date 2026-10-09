@@ -669,9 +669,9 @@ test_graph_merge_policy_waits_while_checks_run() {
   fi
 }
 
-test_graph_merge_policy_hands_a_conflict_to_a_person() {
-  local name="merge-policy=graph never merges over conflicts — a DIRTY PR is the one that still asks"
-  local dir next_out merged
+test_graph_merge_policy_sends_a_conflict_back_to_its_node() {
+  local name="merge-policy=graph never merges over conflicts — a DIRTY PR goes back to its node, twice, then the node fails; nobody is asked"
+  local dir next_out merged log status
   dir="$(mktemp -d)"
   new_repo "$dir"
   init_graph "$dir"
@@ -680,13 +680,21 @@ test_graph_merge_policy_hands_a_conflict_to_a_person() {
   (cd "$dir" && bash "$GRAPH" set --merge-policy graph >/dev/null)
   (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
+  # Inside the sync window nothing is re-asked; past it, a second request, then failure.
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  (cd "$dir" && SHIP_PR_SYNC_WINDOW_S=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  (cd "$dir" && SHIP_PR_SYNC_WINDOW_S=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  log="$(cat "$dir"/.context/ship-graph/*/graph-log.md)"
+  status="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "failed"' || true)"
   rm -rf "$dir"
-  if [ -z "$merged" ] && [ "$(field "$next_out" state)" = "landed" ] && [ "$(field "$next_out" action)" = "ask" ] \
-    && printf '%s' "$next_out" | grep -q 'merge-state=DIRTY'; then
+  if [ -z "$merged" ] && [ "$(field "$next_out" action)" != "ask" ] \
+    && [ "$(printf '%s\n' "$log" | grep -c 'node asked to merge the base')" = "2" ] \
+    && printf '%s' "$log" | grep -q 'request 2 of 2' \
+    && printf '%s' "$log" | grep -q 'still conflicts with the base after 2 sync requests' && [ "$status" = "1" ]; then
     log_pass "$name"
   else
-    log_fail "$name (merged='$merged' next=$(field "$next_out" state)/$(field "$next_out" action))"
+    log_fail "$name (merged='$merged' next=$(field "$next_out" state)/$(field "$next_out" action) status=$status log=$(printf '%s' "$log" | tail -4 | tr '\n' '|'))"
   fi
 }
 
@@ -801,7 +809,7 @@ test_a_merged_pr_completes_the_node
 test_graph_merge_policy_merges_a_clean_unarmed_pr
 test_a_merge_that_fails_locally_but_landed_releases_now
 test_graph_merge_policy_waits_while_checks_run
-test_graph_merge_policy_hands_a_conflict_to_a_person
+test_graph_merge_policy_sends_a_conflict_back_to_its_node
 test_graph_merge_policy_asks_on_red_checks
 test_human_merge_policy_never_merges
 test_graph_is_the_default_merge_policy

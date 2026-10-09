@@ -162,7 +162,7 @@ admission_of() {
 # (default) merges it from here once the forge reports it CLEAN — the same thing
 # GitHub's auto-merge would have done, for a repository that has that feature
 # off. Nothing is merged while checks run or fail, and nothing is merged over a
-# conflict: DIRTY still needs a person. `human` hands every such PR to the
+# conflict: DIRTY goes back to its node (poll asks it to merge the base). `human` hands every such PR to the
 # operator.
 #
 # Measured 2026-09-23: /ship:pr arms auto-merge seconds after `gh pr create`,
@@ -1873,7 +1873,32 @@ settle_landed() {
               log_line "$dir" "$id PR #$number reported CLEAN but the merge call failed twice — see pr-$id-merge.log"
               ;;
             DIRTY)
-              log_line "$dir" "$id PR #$number has conflicts against the base (DIRTY) — needs a person"
+              # The node resolves its own conflict, in the context that wrote
+              # the change — the graph only asks it to. This used to stop for a
+              # person (a PR sat DIRTY for 15 minutes with its author idle next
+              # to it, 2026-10-09). Asked at most twice, a sync window apart;
+              # a conflict that survives both fails the node with its reason.
+              local sync_f="$dir/pr-sync-$id.txt" sync_n sync_at sync_now
+              sync_n="$( { sed -n 1p "$sync_f" 2>/dev/null || true; } | tr -cd '0-9')"; sync_n="${sync_n:-0}"
+              sync_at="$( { sed -n 2p "$sync_f" 2>/dev/null || true; } | tr -cd '0-9')"; sync_at="${sync_at:-0}"
+              sync_now="$(date -u +%s)"
+              if [ "$sync_n" -gt 0 ] && [ $((sync_now - sync_at)) -lt "${SHIP_PR_SYNC_WINDOW_S:-900}" ]; then
+                :
+              elif [ "$sync_n" -ge 2 ]; then
+                bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" stop "$id" --state "$dir" >/dev/null 2>&1 || true
+                node_set "$dir" "$id" 6 failed
+                node_set "$dir" "$id" 10 ""
+                rm -f "$sync_f"
+                log_line "$dir" "$id → failed: PR #$number still conflicts with the base after 2 sync requests (workspace kept: $(node_field "$dir" "$id" 7))"
+                printf 'failed=%s\n' "$id"
+                continue
+              else
+                bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" resume "$id" \
+                  "Your PR #$number conflicts with $(meta_get "$dir" base_branch) and cannot be merged. In this workspace: fetch, merge origin/$(meta_get "$dir" base_branch) into your branch (a merge commit — never rebase, never force-push), resolve the conflicts keeping both your change and what landed on the base, re-run the checks for the files you touched, commit and push normally (no --no-verify). Then stop: the graph merges the PR once the forge reports it clean." \
+                  --state "$dir" >/dev/null 2>&1 || true
+                printf '%s\n%s\n' "$((sync_n + 1))" "$sync_now" > "$sync_f"
+                log_line "$dir" "$id PR #$number conflicts with the base (DIRTY) — node asked to merge the base and resolve it (request $((sync_n + 1)) of 2)"
+              fi
               ;;
             UNSTABLE)
               log_line "$dir" "$id PR #$number has failing checks (UNSTABLE) — never merged red; needs the CI fixed"
@@ -2013,7 +2038,7 @@ cmd_poll() {
     # quiet polls with vitest running the whole time. Bounded, so a command
     # that hangs does not hold the node open for ever. The graph's own wait
     # names the workspace in its arguments and is not the node working.
-    busy_since="$(cat "$dir/progress-at-$id.txt" 2>/dev/null | tr -cd '0-9')"
+    busy_since="$( { cat "$dir/progress-at-$id.txt" 2>/dev/null || true; } | tr -cd '0-9')"
     if [ -n "$busy_since" ] && [ $(( now - busy_since )) -lt "${SHIP_BUSY_NODE_MAX_S:-3600}" ] \
        && pgrep -fl "$wt/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' | grep -q .; then
       rm -f "$dir/stall-$id.txt"
@@ -2796,11 +2821,11 @@ cmd_next() {
       next_body_add "- $lid — ${lurl:-no PR found for branch $(node_field "$dir" "$lid" 8)} ${lnum:+(#$lnum)} [${lstate:-unknown}] auto-merge=${larmed:-no}${lmstate:+ merge-state=$lmstate}"
       [ "$larmed" = "yes" ] && continue
       # Under merge-policy=graph an unarmed PR is the graph's to merge once the
-      # forge says CLEAN. A conflict (DIRTY) or red checks (UNSTABLE) will never
-      # get there by waiting, so those still need a person — waiting on them
-      # would park the graph with nothing to show for it.
+      # forge says CLEAN. A conflict (DIRTY) is sent back to its node by poll,
+      # which fails the node if it survives. Red checks (UNSTABLE) will never
+      # get there by waiting, so those still need a person.
       # So does a PR the forge cannot find: there is nothing there to turn CLEAN.
-      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lstate" != "none" ] && [ "$lmstate" != "DIRTY" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
+      if [ "$(merge_policy_of "$dir")" = "graph" ] && [ "$lstate" != "none" ] && [ "$lmstate" != "UNSTABLE" ]; then continue; fi
       unarmed="$unarmed $lid"
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
