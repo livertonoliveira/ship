@@ -121,6 +121,11 @@ cmd_stop() {
     date -u +%s > "$scratch/worker-done-$name.txt"
     exit 0
   fi
+  # Recorded because the block is not always honoured: measured 2026-10-09, two
+  # quality workers with nothing to report ended right here, and the pipeline
+  # waited on files nobody was going to write. pipeline.sh reads this as "tried
+  # to end without output" once it has stood for a while.
+  date -u +%s > "$scratch/worker-ended-$name.txt"
   {
     echo "Ship: you were dispatched by the pipeline, which reads your result from disk, and these files were not written during this run:"
     for f in $missing; do echo "  - $f"; done

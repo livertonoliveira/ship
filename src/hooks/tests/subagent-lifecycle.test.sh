@@ -67,6 +67,21 @@ test_start_ignores_a_stale_run() {
   rm -rf "$dir"
 }
 
+test_a_blocked_stop_leaves_a_record() {
+  local name="a stop blocked for missing files records that the worker tried to end"
+  local dir rc=0
+  dir="$(new_run ship-security)"
+  run_hook start "$(event "$dir" ship:ship-security agent-9)"
+  run_hook stop "$(event "$dir" ship:ship-security agent-9 ',"stop_hook_active":false')" || rc=$?
+  if [ "$rc" -eq 2 ] && [ -s "$dir/.context/ship-run/MOB-1/worker-ended-ship-security.txt" ] \
+     && [ ! -e "$dir/.context/ship-run/MOB-1/worker-done-ship-security.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+  rm -rf "$dir"
+}
+
 test_stop_blocks_until_the_files_exist() {
   local name="stop blocks a worker that wrote nothing, then lets it finish once it has and marks it done"
   local dir rc=0 rc2=0
@@ -169,6 +184,7 @@ test_guard_ignores_the_main_session() {
 test_start_records_the_worker
 test_start_ignores_a_stale_run
 test_stop_blocks_until_the_files_exist
+test_a_blocked_stop_leaves_a_record
 test_stop_rejects_a_stale_file
 test_stop_lets_the_second_stop_through
 test_standalone_agents_are_left_alone
