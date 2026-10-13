@@ -146,12 +146,43 @@ test_runner_that_never_ran_is_an_environment_stop() {
   rm -rf "$d"
 }
 
+# Measured live (2026-10-13, 2 of 2 nodes): develop changed a constructor, the
+# committed specs kept the old signature, the author left them "for the test
+# phase", and every node paid a remediation round for one missing edit.
+test_static_check_names_existing_tests_the_change_broke() {
+  local name="--static-check lists committed test files the typecheck now rejects, and only those"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  (cd "$d" && git init -q && git config user.email t@t && git config user.name T \
+    && mkdir -p test/unit src && : > test/unit/old.spec.ts && : > src/a.ts \
+    && git add -A && git commit -qm base) >/dev/null 2>&1
+  : > "$d/test/unit/new.spec.ts"
+  printf -- '- Typecheck: ./tc.sh\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\necho "test/unit/old.spec.ts(66,13): error TS2554: Expected 10 arguments, but got 9."\necho "test/unit/new.spec.ts(3,1): error TS2304: Cannot find name x"\necho "src/a.ts(1,1): error TS2304: Cannot find name y"\nexit 2\n' > "$d/tc.sh"
+  chmod +x "$d/tc.sh"
+  rm -f "$d/scratch/static-exec-done.txt"
+  local out rc=0
+  out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-check 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 1 ] \
+    && printf '%s' "$out" | grep -q '## Existing test files broken by this change' \
+    && printf '%s' "$out" | grep -qx -- '- test/unit/old.spec.ts' \
+    && ! printf '%s' "$out" | grep -qx -- '- test/unit/new.spec.ts' \
+    && ! printf '%s' "$out" | grep -qx -- '- src/a.ts' \
+    && printf '%s' "$out" | grep -qx 'broken-existing-tests=1'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$(printf '%s' "$out" | tr '\n' ' '))"
+  fi
+  rm -rf "$d"
+}
+
 test_skip_in_contract_file_fails_the_gate
 test_skip_outside_the_contract_is_only_reported
 test_pytest_skip_marker_is_caught
 test_static_that_never_ran_is_an_environment_stop
 test_a_real_typecheck_error_is_still_a_failure
 test_runner_that_never_ran_is_an_environment_stop
+test_static_check_names_existing_tests_the_change_broke
 
 echo ""
 echo "${pass_count} passed, ${fail_count} failed"

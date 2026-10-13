@@ -389,6 +389,26 @@ tool_never_ran() {
   grep -qE 'ERR_PNPM_[A-Z_]+|npm ERR! code E[A-Z]+|Command failed with exit code [0-9]+: (pnpm|npm|yarn|bun) install|(^|: )command not found|Cannot find module '"'"'(jest|vitest|mocha|ava|eslint|typescript|ts-node|tsx)|error TS6053|No such file or directory.*(node_modules|\.bin/)' "$out"
 }
 
+# Existing test files the typecheck now rejects. Measured live (2 of 2 nodes on
+# 2026-10-13, and the pattern behind most remediation rounds before): develop
+# changed a constructor, the committed specs kept the old signature, and the
+# author left them "for the test phase" — which only adds cases. The gate went
+# red and a whole remediation round did what one edit here would have. A
+# committed test file (in HEAD) with a compile error is the author's to update.
+broken_existing_tests() {
+  local out="$1" files f
+  [ -n "$out" ] && [ -f "$out" ] || return 0
+  files="$(grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null | sed -E 's/[(:]$//' | sort -u | while IFS= read -r f; do
+    case "$f" in *.test.*|*.spec.*|*/__tests__/*|*/tests/*|test/*|tests/*) ;; *) continue ;; esac
+    git cat-file -e "HEAD:$f" 2>/dev/null && printf '%s\n' "$f"
+  done)"
+  [ -n "$files" ] || return 0
+  printf '\n## Existing test files broken by this change\n\n'
+  printf 'These suites are committed and no longer compile against your change. They are yours to update now (call sites, mocks, fixtures): the test phase only adds cases, and a red typecheck here costs a full remediation round.\n\n'
+  printf '%s\n' "$files" | sed 's/^/- /'
+  printf 'broken-existing-tests=%s\n' "$(printf '%s\n' "$files" | grep -c .)"
+}
+
 # Constructs that keep a case from ever running, scanned in the contract's own
 # test files. Measured live on a 27-node graph: every oracle-backed spec guarded
 # itself with `existsSync(fixture) ? describe : describe.skip`, no workspace had
@@ -654,6 +674,7 @@ main() {
     if [ "$static_check" -eq 1 ]; then
       if [ "$TYPECHECK_EXIT" -gt 0 ]; then
         printf '## Typecheck failed (`%s`)\n\n' "$TYPECHECK_CMD"; tail -60 "$TYPECHECK_OUT"
+        broken_existing_tests "$TYPECHECK_OUT"
       fi
       if [ "$LINT_EXIT" -gt 0 ]; then
         printf '## Lint failed (`%s`)\n\n' "$LINT_CMD"; tail -60 "$LINT_OUT"
