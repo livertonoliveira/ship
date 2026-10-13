@@ -128,6 +128,22 @@ test_a_branch_with_work_is_left_alone() {
   rm -rf "$root"
 }
 
+test_the_scratch_dir_never_reaches_a_commit() {
+  local name="init keeps .context/ out of git in a repo whose .gitignore does not name it"
+  local root staged
+  root="$(new_case)"
+  run_init "$root" >/dev/null
+  git -C "$root/work" add -A
+  staged="$(git -C "$root/work" diff --cached --name-only | grep -c '^\.context/' || true)"
+  if [ "$staged" = "0" ] && [ -d "$root/work/.context/ship-run/TASK-1" ] \
+     && [ -z "$(git -C "$root/work" status --porcelain -- .gitignore)" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (staged .context files: $staged)"
+  fi
+  rm -rf "$root"
+}
+
 test_uncommitted_work_is_never_discarded() {
   local name="a tracked file modified in the tree stops the sync, it is not discarded"
   local root out
@@ -232,6 +248,7 @@ test_a_base_the_coordinator_owns_is_fast_forwarded() {
 test_a_node_opens_on_what_the_forge_has
 test_the_run_scratch_dir_does_not_block_the_sync
 test_a_branch_with_work_is_left_alone
+test_the_scratch_dir_never_reaches_a_commit
 test_uncommitted_work_is_never_discarded
 test_no_remote_is_not_a_failure
 test_a_base_checked_out_elsewhere_is_named_not_called_diverged
