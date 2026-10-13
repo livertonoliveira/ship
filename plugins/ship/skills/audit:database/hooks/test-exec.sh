@@ -93,6 +93,34 @@ eslint_collect_exts() {
   esac
 }
 
+# `{files}` hands over everything develop touched, and a linter reads only its
+# own kind: an eslint given package.json, a font and a gradle file answered
+# "Parsing error" on each and failed a gate whose code was clean (2026-10-12).
+# `{files:ts,tsx}` names the extensions; a bare `{files}` in an eslint command
+# means the ones eslint reads. With none of them touched there is nothing to
+# run, and FILLED_CMD comes back empty.
+fill_files_placeholder() {
+  local cmd="$1"; shift
+  local spec exts="" e ext f
+  spec="${cmd#*\{files}"; spec="${spec%%\}*}"
+  case "$spec" in :*) exts="${spec#:}"; exts="${exts//,/ }" ;; *) spec="" ;; esac
+  if [ -z "$exts" ]; then
+    case " $cmd " in *[\ /]eslint\ *) exts="js jsx ts tsx mjs cjs mts cts vue svelte astro" ;; esac
+  fi
+  local -a kept=()
+  for f in "$@"; do
+    if [ -z "$exts" ]; then kept+=("$f"); continue; fi
+    ext="${f##*.}"
+    for e in $exts; do
+      [ "${e#.}" = "$ext" ] && { kept+=("$f"); break; }
+    done
+  done
+  FILLED_CMD=""
+  [ "${#kept[@]}" -gt 0 ] || return 0
+  local q; q="$(printf '%q ' "${kept[@]}")"
+  FILLED_CMD="${cmd//\{files$spec\}/${q% }}"
+}
+
 # Whole-project lint was the slowest step of a run: a type-aware eslint over a
 # few thousand files costs minutes and gigabytes to check the ten files develop
 # touched. develop-touched-files.txt is the verified footprint, so the lint is
@@ -111,9 +139,9 @@ scope_lint_cmd() {
   [ "${#files[@]}" -gt 0 ] || return 0
 
   case "$LINT_CMD" in
-    *'{files}'*)
-      local q; q="$(printf '%q ' "${files[@]}")"
-      LINT_CMD="${LINT_CMD//\{files\}/${q% }}"
+    *'{files'*'}'*)
+      fill_files_placeholder "$LINT_CMD" "${files[@]}"
+      LINT_CMD="$FILLED_CMD"
       return 0 ;;
   esac
 
@@ -175,7 +203,7 @@ resolve_lint_fix() {
   is_resolved "$LINT_FIX_CMD" || LINT_FIX_CMD="$(field_from "$config" 'Lint fix')"
   if is_resolved "$LINT_FIX_CMD"; then
     case "$LINT_FIX_CMD" in
-      *'{files}'*) ;;
+      *'{files'*'}'*) ;;
       *) LINT_FIX_CMD=""; return 0 ;;
     esac
     local -a files=()
@@ -185,8 +213,8 @@ resolve_lint_fix() {
       done < "$touched"
     fi
     if [ "${#files[@]}" -eq 0 ]; then LINT_FIX_CMD=""; return 0; fi
-    local q; q="$(printf '%q ' "${files[@]}")"
-    LINT_FIX_CMD="${LINT_FIX_CMD//\{files\}/${q% }}"
+    fill_files_placeholder "$LINT_FIX_CMD" "${files[@]}"
+    LINT_FIX_CMD="$FILLED_CMD"
     return 0
   fi
   LINT_FIX_CMD=""
