@@ -54,9 +54,6 @@ init_usage() {
   echo "  resume: preserve existing state; only re-capture diff.md and re-classify" >&2
 }
 
-# Brings this workspace up to date with the trunk before the run touches
-# anything.
-#
 # Ship's scratch state is not the project's. A repo whose .gitignore does not
 # name .context/ had it committed: every `git add -A` — the graph's seal, the
 # PR sync, an agent's own — took the run's reports along, 81 of them into one
@@ -82,9 +79,15 @@ exclude_scratch_from_git() {
 # code on disk. Only the planner's confrontation pass caught it; a phase that
 # did not confront would have implemented on top of code that was not there.
 #
-# Fast-forward only, and only from a clean tree. A branch already carrying
-# commits is left exactly as it is: at init, anything ahead of the base means a
-# resume, and moving it would be a rebase nobody asked for. Every refusal is
+# Only from a clean tree, and never a rebase. A branch behind the base is
+# fast-forwarded. A branch already carrying commits of its own is left exactly
+# as it is: at init that means a resume. The one case in between is a branch
+# that sits exactly on the LOCAL base while that base has diverged from the
+# remote one — nothing on it is this run's work, and it is merged with the
+# remote base. Measured 2026-10-12: a clone whose main held one unpushed commit
+# cut every node 12 merged PRs behind, the fast-forward was refused on each,
+# and the nodes rebuilt by hand components their dependencies had already
+# merged. A merge that conflicts is undone and reported. Every refusal is
 # reported rather than silently swallowed — a run that did NOT sync is worth
 # knowing about.
 init_sync_to_base() {
@@ -112,7 +115,18 @@ init_sync_to_base() {
     || { printf 'skipped-dirty-tree'; return 0; }
   git fetch -q "$remote" "$base" >/dev/null 2>&1 || { printf 'skipped-fetch-failed'; return 0; }
 
-  git merge-base --is-ancestor HEAD FETCH_HEAD >/dev/null 2>&1 || { printf 'skipped-branch-ahead'; return 0; }
+  if ! git merge-base --is-ancestor HEAD FETCH_HEAD >/dev/null 2>&1; then
+    [ "$(git rev-parse HEAD 2>/dev/null)" = "$(git rev-parse --quiet --verify "refs/heads/$base" 2>/dev/null || true)" ] \
+      || { printf 'skipped-branch-ahead'; return 0; }
+    git merge-base --is-ancestor FETCH_HEAD HEAD >/dev/null 2>&1 && { printf 'skipped-branch-ahead'; return 0; }
+    if git merge -q --no-edit FETCH_HEAD >/dev/null 2>&1; then
+      printf '%s/%s (merged: the branch had diverged from it)' "$remote" "$base"
+    else
+      git merge --abort >/dev/null 2>&1 || true
+      printf 'skipped-merge-conflict'
+    fi
+    return 0
+  fi
   git merge --ff-only -q FETCH_HEAD >/dev/null 2>&1 || { printf 'skipped-ff-refused'; return 0; }
   printf '%s/%s' "$remote" "$base"
 }
