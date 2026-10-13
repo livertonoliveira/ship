@@ -77,7 +77,7 @@ Analyze `git diff`/`git status`, group into atomic commits, stage per file (`git
 
 ### 4. Pre-push validation
 
-Preflight printed `verified_tree=yes` → skip: the pipeline already passed typecheck, lint and the suite on this exact tree, and commits do not change it. Otherwise run typecheck, tests, and lint per `ship/config.md`; on failure fix, re-commit, re-run.
+Preflight printed `verified_tree=yes` → skip: the pipeline already passed typecheck, lint and the suite on this exact tree, and commits do not change it. Otherwise `bash "${CLAUDE_SKILL_DIR}/hooks/test-exec.sh" <scratch-dir> --config ship/config.md` (the gate's own checks: typecheck, lint, suite — never an invocation of your own; exit 0 = green, failures in `<scratch-dir>/test-failures.md`); on failure fix, re-commit, re-run.
 
 ### 5. Sync onto the base, then push
 
