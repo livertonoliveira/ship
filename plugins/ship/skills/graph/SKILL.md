@@ -11,7 +11,7 @@ background: false
 
 # Ship Graph — Cross-Task Parallelism
 
-Admission, conflict edges and every gate live in one deterministic state machine: `graph.sh next`. You are its executor — call it, do exactly what it prints, call it again. You never decide which task runs next.
+Admission, conflict edges, every gate and the loop itself live in one deterministic script: `graph.sh run`. You are its executor — call it, do exactly what it prints, call it again. You never decide which task runs next.
 
 You run forked on the orchestration model and cannot talk to the user: your final message reaches them. The graph lives on disk; `/ship:graph` with the same arguments resumes it.
 
@@ -57,13 +57,14 @@ Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight i
 
 ## 4. The loop
 
-1. Run it:
-   `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" next`
+1. Run it, with the Bash tool's `timeout` at 600000:
+   `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" run`
+   It is the loop: it dispatches, waits, polls and merges by itself, and returns only when a step is yours. Never script a loop around it. A call the tool moved to the background is still driving — the next `run` waits for it.
 2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
-   - `dispatch` → make EVERY listed call now, in this same turn, in the order printed. `dispatch` prepares the workspace, `collect` resolves its path and branch, `claim` hands both back. A driver that cannot start the worker itself returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in, and the graph waits on a worker that never existed. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
-   - `wait` → run the listed calls in order. `graph.sh poll` is what decides completion — it reads each workspace's own artifacts and each open PR's real state on the forge. Never land, merge or fail a node from what a worker said.
+   - `run` → nothing to decide: its time slice closed. Go to step 1.
+   - `dispatch` → this driver cannot start a worker itself. Make EVERY listed call now, in the order printed. `dispatch` prepares the workspace and returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
    - `answer` → a node asked: decide it yourself as instructed, reply with the given `graph.sh answer`.
-   - `ask` → a decision the graph cannot take from its artifacts (a PR conflicting with the base, or unarmed under `merge-policy human`). STOP with it in the artifact language: the question, the `graph.sh` command per answer, then the resume.
+   - `ask` → a decision the graph cannot take from its artifacts (a PR with failing checks, or unarmed under `merge-policy human`). STOP with it in the artifact language: the question, the `graph.sh` command per answer, then the resume.
    - `done` → follow the closing instruction, report, STOP.
 3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
 
