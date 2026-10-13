@@ -57,6 +57,24 @@ init_usage() {
 # Brings this workspace up to date with the trunk before the run touches
 # anything.
 #
+# Ship's scratch state is not the project's. A repo whose .gitignore does not
+# name .context/ had it committed: every `git add -A` — the graph's seal, the
+# PR sync, an agent's own — took the run's reports along, 81 of them into one
+# trunk (2026-10-12), and from there into every later node's diff and lint.
+# The clone's own exclude file covers every worktree of it and touches nothing
+# the project tracks.
+exclude_scratch_from_git() {
+  local common ex
+  common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 0
+  ex="$common/info/exclude"
+  grep -qxF '.context/' "$ex" 2>/dev/null && return 0
+  mkdir -p "$common/info" 2>/dev/null || return 0
+  printf '.context/\n' >> "$ex" 2>/dev/null || true
+}
+
+# Brings this workspace up to date with the trunk before the run touches
+# anything.
+#
 # A graph node's workspace is cut from the LOCAL base ref, and the graph admits
 # a node once its dependency's PR is MERGED on the forge — a merge that is not
 # a commit in this clone. Measured 2026-09-14: MOB-3461 was admitted on two
@@ -131,6 +149,7 @@ cmd_init() {
   esac
 
   require_hooks
+  exclude_scratch_from_git
 
   local SCRATCH=".context/ship-run/$TASK_ID"
   local DISPATCH_LOG="$SCRATCH/dispatch-log.md"
