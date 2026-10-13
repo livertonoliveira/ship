@@ -54,7 +54,7 @@ Every skill and agent runs on **Sonnet** except specification (`ship:spec`), whi
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
 | `ship:run`            | Executor of `pipeline.sh next`, forked on Sonnet — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
-| `ship:graph`          | Executor of `graph.sh next`, forked on Sonnet. |
+| `ship:graph`          | Executor of `graph.sh run`, forked on Sonnet. |
 | `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
