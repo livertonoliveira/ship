@@ -877,6 +877,9 @@ verb_resume() {
 # graph that picked this driver on that basis would fail at the first dispatch.
 # So the probe asks the runtime whether it is reachable, and reads only that.
 verb_probe() {
+  # Not a readiness fact: this driver's dispatch leaves a worker running, so a
+  # script can take the whole dispatch step with no caller behind it.
+  printf 'starts_worker=1\n'
   if ! command -v orca >/dev/null 2>&1; then
     printf 'ready=0\n'
     printf 'reason=orca not on PATH\n'

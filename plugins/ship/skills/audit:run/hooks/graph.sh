@@ -31,6 +31,7 @@ usage() {
   echo "            [--admission stream|batch] [--merge-policy human|graph] [--max-attempts N] [--stall-after SECONDS]" >&2
   echo "            [--workspace-cleanup on|off]" >&2
   echo "  next      [--feature <f>]" >&2
+  echo "  run       [--feature <f>] [--slice SECONDS]" >&2
   echo "  claim     <task> --worktree <path> --branch <ref> [--feature <f>]" >&2
   echo "  land      <task> [--feature <f>]" >&2
   echo "  poll      [--feature <f>] [--stall-max N] [--stall-after SECONDS]" >&2
@@ -47,6 +48,7 @@ usage() {
 }
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$HOOK_DIR/$(basename "$0")"
 GRAPH_ROOT=".context/ship-graph"
 ACTIVE_POINTER="$GRAPH_ROOT/active.txt"
 
@@ -2644,6 +2646,11 @@ cmd_next() {
 
   local DRIVER_SH="$HOOK_DIR/driver-$driver.sh"
 
+  # Whoever called is who gets called again: under `run` every "then run next"
+  # would walk the executor out of the loop that is driving it.
+  local again="bash \"$HOOK_DIR/graph.sh\" next"
+  [ "${SHIP_GRAPH_VIA_RUN:-}" = "1" ] && again="bash \"$HOOK_DIR/graph.sh\" run"
+
   # A node that failed on its own (stalled, never started, its pipeline gave
   # up) gets a fresh dispatch while it has attempts left. One that failed by a
   # person's decision carries a hold marker and waits for reset.
@@ -2743,7 +2750,7 @@ cmd_next() {
       next_body_add "- bash \"$HOOK_DIR/graph.sh\" claim $t --worktree <worktree> --branch <branch>"
     done
     next_body_add "Dispatch ALL of the above in this turn. Do not start a node the instruction did not list."
-    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+    next_body_add "After every listed call returns, run: $again — do not evaluate results yourself."
     next_emit "frontier" "dispatch" "$inflight" "$frontier" "$((max_in_flight - inflight)) slot(s) free"
   fi
 
@@ -2773,7 +2780,7 @@ cmd_next() {
       next_body_add "  1. Take the option the node recommends, or the conservative one when it recommends none. When the question lists answer tokens, answer with one of them."
       next_body_add "  2. Never pick an option that skips or weakens a check (--no-verify, disabling a test, accepting a failing gate), rewrites or discards work (force push, reset, deleting files or branches the node did not create), or reaches outside the node's own repo. When the node recommends one of those, choose the option that keeps the checks: a failure that already exists on the base is fixed inside this node's PR, in a commit of its own."
       next_body_add "  3. When every option is of the kind rule 2 forbids, fail the node instead of asking: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason \"<the question and why no safe option exists>\" — it is reported at done and the graph goes on."
-      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> \"<answer, with the reason in one sentence>\" — that writes the answer, logs it, and wakes the worker through the driver. Then run graph.sh next again."
+      next_body_add "Reply with: bash \"$HOOK_DIR/graph.sh\" answer <task> \"<answer, with the reason in one sentence>\" — that writes the answer, logs it, and wakes the worker through the driver. Then run: $again"
       # An action of its own, emitted before anything else. Carried as text
       # ahead of a `wait`, the question was never read: coordinators drive this
       # loop from scripts that branch on action= alone, and the wait it rode on
@@ -2808,7 +2815,7 @@ cmd_next() {
     next_body_add "- bash \"$DRIVER_SH\" wait --state \"$dir\"$until_args   → blocks until a node finishes, fails or asks, until a worker reports, or until the wait window closes; a timeout is a checkpoint, not a failure"
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → lands every node whose pipeline finished and reads the real PR state of the ones already landed. This is the completion signal; do NOT decide it yourself from what a worker said."
     next_body_add "- bash \"$HOOK_DIR/graph.sh\" conflicts"
-    next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+    next_body_add "After every listed call returns, run: $again — do not evaluate results yourself."
     next_emit "wait" "wait" "$inflight" "" "$inflight node(s) in flight"
   fi
 
@@ -2842,13 +2849,13 @@ cmd_next() {
     done < <(nodes_with_status "$dir" landed)
     if [ -n "${unarmed# }" ]; then
       next_body_add "Node(s)${unarmed} need a person on their PR (no auto-merge armed under merge-policy=human, no PR found for the branch, conflicts against the base, or failing checks) — present them to the user for review and merge, in the artifact language."
-      next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then bash \"$HOOK_DIR/graph.sh\" next."
+      next_body_add "Once one is merged: bash \"$HOOK_DIR/graph.sh\" poll — it reads the real PR state from the forge and releases the dependents. Then: $again"
       next_body_add "A node whose PR was merged by a route the forge cannot report: bash \"$HOOK_DIR/graph.sh\" complete <task>. One that will not be merged: bash \"$HOOK_DIR/graph.sh\" fail <task> --reason <r>."
       next_emit "landed" "ask" "$inflight" "" "$landed node(s) awaiting merge on the forge"
     else
       next_body_add "Every landed PR merges without a person: auto-merge is armed, or merge-policy=graph merges it once the forge reports it CLEAN."
       next_body_add "- bash \"$HOOK_DIR/graph.sh\" poll   → reads the real PR state from the forge and releases the dependents once one lands"
-      next_body_add "After it returns, run: bash \"$HOOK_DIR/graph.sh\" next — do not evaluate results yourself."
+      next_body_add "After it returns, run: $again — do not evaluate results yourself."
       next_emit "landed" "wait" "$inflight" "" "$landed node(s) auto-merging on the forge"
     fi
   fi
@@ -2870,7 +2877,7 @@ cmd_next() {
     next_body_add "Every node that could run has: $merged_n merged, $failed failed after $(max_attempts_of "$dir") attempt(s) or by decision, $((total - merged_n - failed)) held behind a failed dependency."
     next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its last workspace is kept."
     next_body_add "Present the batch homolog for the merged nodes ($dir/artifacts/<task>/homolog-report.md) and the failed list with reasons, in the artifact language. Then STOP."
-    next_body_add "Mention once: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) puts a failed node back on the frontier with a fresh workspace, and bash \"$HOOK_DIR/graph.sh\" next continues the run."
+    next_body_add "Mention once: bash \"$HOOK_DIR/graph.sh\" reset <task>... (or --all) puts a failed node back on the frontier with a fresh workspace, and $again continues the run."
     next_emit "done" "done" "0" "" "graph finished — $merged_n merged, $failed failed of $total"
   fi
 
@@ -2878,6 +2885,218 @@ cmd_next() {
   next_body_add "No node can advance: nothing in flight, nothing landed, and every remaining node is blocked."
   next_body_add "Run \`bash \"$HOOK_DIR/graph.sh\" status\` and present it — a dependency cycle or a permanent conflict edge needs a human call."
   next_emit "ask" "ask" "0" "" "deadlock — $merged_n/$total nodes merged"
+}
+
+# --- run ---------------------------------------------------------------------
+
+# The loop itself. Until 2026-10-12 it was prose: the executor called `next`,
+# ran what it printed, called `next` again — one model turn per step, hundreds
+# per graph, nearly all of them copying a command. Every coordinator ended up
+# writing its own loop script to get out of that, each differently, and those
+# scripts are where the damage came from: two drivers over one graph dispatching
+# the same node (15 duplicate workspaces in one run), a loop left watching a
+# graph nobody was answering. `run` is that loop, written once: it executes
+# every step a script can take and returns only for the ones that need
+# judgment — a node's question, a PR a person must look at, the end.
+
+run_lock_holder() {
+  { cat "$1/run.lock/pid" 2>/dev/null || true; } | tr -cd '0-9'
+}
+
+# One `run` per graph. A second one waits its turn instead of driving beside
+# the first; a holder that died is taken over. Returns 1 when the holder
+# outlived this call's own slice.
+run_lock() {
+  local dir="$1" deadline="$2" lock="$1/run.lock" holder blank=0
+  while ! mkdir "$lock" 2>/dev/null; do
+    holder="$(run_lock_holder "$dir")"
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$lock"
+      continue
+    fi
+    # No pid yet is a holder between its mkdir and its write, for a moment;
+    # past that it is debris.
+    if [ -z "$holder" ]; then
+      blank=$((blank + 1))
+      if [ "$blank" -ge 3 ]; then rm -rf "$lock"; continue; fi
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep 1
+  done
+  printf '%s\n' "$$" > "$lock/pid"
+  # shellcheck disable=SC2064
+  trap "rm -rf \"$lock\"" EXIT
+}
+
+run_counts() {
+  local dir="$1"
+  printf 'merged=%s landed=%s in_flight=%s failed=%s of %s' \
+    "$(count_status "$dir" merged)" "$(count_status "$dir" landed)" \
+    "$(count_status "$dir" in_flight)" "$(count_status "$dir" failed)" \
+    "$(awk 'END { print NR }' "$dir/nodes.tsv")"
+}
+
+run_fingerprint() {
+  { cat "$1/nodes.tsv" "$(pr_status_file "$1")" 2>/dev/null || true; } | cksum
+}
+
+# dispatch → collect → claim for one node, the sequence `next` prints. A step
+# that fails after the driver confirmed a worker is recorded the way the driver
+# records its own failures, so it is counted and capped instead of repeated
+# every turn with nothing in the log.
+run_dispatch_node() {
+  local dir="$1" driver_sh="$2" t="$3" base repo out wt branch
+  base="$(meta_get "$dir" base_branch)"
+  repo="$(node_field "$dir" "$t" 2)"
+  [ -n "$repo" ] || repo="$(meta_get "$dir" repo)"
+
+  local args=(dispatch "$t" "/ship:run $t" --state "$dir" --base "$base")
+  [ -n "$repo" ] && args+=(--repo "$repo")
+  out="$(bash "$driver_sh" "${args[@]}" || true)"
+  if ! printf '%s\n' "$out" | grep -q '^ok=1$'; then
+    # ok=0 is the driver's own answer, and it records the ones that count. A
+    # dispatch that died without one recorded nothing, and would be repeated
+    # every turn for as long as the graph ran.
+    if ! printf '%s\n' "$out" | grep -q '^ok=0$' && [ ! -f "$dir/dispatch-failed-$t.txt" ]; then
+      printf 'the driver exited without reporting a dispatch for %s\n' "$t" > "$dir/dispatch-failed-$t.txt"
+    fi
+    printf 'run: %s not dispatched — %s\n' "$t" "$(printf '%s\n' "$out" | sed -n 's/^reason=//p' | head -1)"
+    return 0
+  fi
+
+  out="$(bash "$driver_sh" collect "$t" --state "$dir" --base "$base" || true)"
+  wt="$(printf '%s\n' "$out" | sed -n 's/^worktree=//p' | head -1)"
+  branch="$(printf '%s\n' "$out" | sed -n 's/^branch=//p' | head -1)"
+  if [ -z "$wt" ] || [ -z "$branch" ]; then
+    printf 'the driver started %s but could not say where (collect returned no worktree or branch)\n' "$t" > "$dir/dispatch-failed-$t.txt"
+    printf 'run: %s dispatched but not collected\n' "$t"
+    return 0
+  fi
+  if out="$(bash "$SELF" claim "$t" --worktree "$wt" --branch "$branch" 2>&1)"; then
+    printf 'run: %s dispatched → %s\n' "$t" "$wt"
+  else
+    printf 'claim refused: %s\n' "$(printf '%s\n' "$out" | tail -1)" > "$dir/dispatch-failed-$t.txt"
+    printf 'run: %s dispatched but not claimed — %s\n' "$t" "$(printf '%s\n' "$out" | tail -1)"
+  fi
+}
+
+run_emit_again() {
+  local dir="$1" log="$2"
+  NEXT_BODY=""
+  next_body_add "- bash \"$HOOK_DIR/graph.sh\" run   → nothing to decide: the loop returned only so this call stays inside the tool's time limit. Run it again now, with the longest timeout the tool allows."
+  NEXT_DRIVER="$(meta_get "$dir" driver)"
+  NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
+  next_emit "running" "run" "$(count_status "$dir" in_flight)" "" "$log"
+}
+
+cmd_run() {
+  local feature="" slice="${SHIP_GRAPH_RUN_SLICE_S:-480}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --slice) slice="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  case "$slice" in ''|*[!0-9]*) die "run: --slice takes seconds, got '$slice'" ;; esac
+
+  local dir began deadline
+  feature="$(resolve_feature "$feature")"
+  dir="$(graph_dir "$feature")"
+  require_graph "$dir"
+  began="$(date +%s)"
+  deadline=$((began + slice))
+
+  if ! run_lock "$dir" "$deadline"; then
+    run_emit_again "$dir" "another run (pid $(run_lock_holder "$dir")) is driving this graph — waited ${slice}s for it"
+  fi
+
+  local out action state frontier t now left before after iter_began poll_fails=0 starts="" counts shown=""
+  while :; do
+    iter_began="$(date +%s)"
+    before="$(run_fingerprint "$dir")"
+    # What tells a finishing node that somebody is already listening: the gap
+    # between two slices holds no lock, and a wake landing there starts a turn
+    # the loop is about to take anyway.
+    printf '%s\n' "$iter_began" > "$dir/run-heartbeat.txt"
+
+    out="$(SHIP_GRAPH_VIA_RUN=1 bash "$SELF" next --feature "$feature")"
+    action="$(printf '%s\n' "$out" | sed -n 's/^action=//p' | head -1)"
+    state="$(printf '%s\n' "$out" | sed -n 's/^state=//p' | head -1)"
+    frontier="$(printf '%s\n' "$out" | sed -n 's/^frontier=//p' | head -1)"
+    local driver_sh
+    driver_sh="$HOOK_DIR/driver-$(meta_get "$dir" driver).sh"
+
+    case "$action" in
+      dispatch)
+        # A driver whose worker only the caller can launch gets the step back
+        # as `next` wrote it; nothing here can start an Agent.
+        [ -n "$starts" ] || starts="$(bash "$driver_sh" probe 2>/dev/null | sed -n 's/^starts_worker=//p' | head -1)"
+        [ -n "$starts" ] || starts=0
+        if [ "$starts" != "1" ]; then
+          printf '%s\n' "$out"
+          exit 0
+        fi
+        for t in $frontier; do
+          run_dispatch_node "$dir" "$driver_sh" "$t"
+          [ "$(date +%s)" -lt "$deadline" ] || break
+        done
+        ;;
+      wait)
+        if [ "$state" = "wait" ]; then
+          local wid wwt wargs=()
+          while IFS= read -r wid; do
+            [ -n "$wid" ] || continue
+            wwt="$(node_field "$dir" "$wid" 7)"
+            [ -n "$wwt" ] || continue
+            wargs+=(--until-file "$wwt/.context/ship-run/$wid/homolog-approved.txt")
+            wargs+=(--until-file "$wwt/.context/ship-run/$wid/node-failed.txt")
+            wargs+=(--until-file "$wwt/.context/ship-run/$wid/ask.md")
+          done < <(nodes_with_status "$dir" in_flight)
+          now="$(date +%s)"
+          left=$((deadline - now))
+          [ "$left" -ge 1 ] || left=1
+          [ "$left" -le 300 ] || left=300
+          bash "$driver_sh" wait --state "$dir" --timeout-ms "$((left * 1000))" ${wargs[@]+"${wargs[@]}"} >/dev/null || true
+        fi
+        if bash "$SELF" poll --feature "$feature" >/dev/null; then
+          poll_fails=0
+        else
+          poll_fails=$((poll_fails + 1))
+          [ "$poll_fails" -lt 3 ] || die "run: poll failed $poll_fails times in a row — its error is above"
+        fi
+        [ "$state" = "wait" ] && { bash "$SELF" conflicts --feature "$feature" >/dev/null || true; }
+        if [ "$state" = "landed" ]; then
+          now="$(date +%s)"
+          left=$((deadline - now))
+          t="${SHIP_GRAPH_RUN_LANDED_POLL_S:-30}"
+          [ "$t" -le "$left" ] || t="$left"
+          [ "$t" -le 0 ] || sleep "$t"
+        fi
+        ;;
+      *)
+        # answer, ask, done: the executor's. A graph that stopped for a person
+        # or ended has nobody listening any more, so the heartbeat goes.
+        [ "$action" = "answer" ] || rm -f "$dir/run-heartbeat.txt"
+        printf '%s\n' "$out"
+        exit 0
+        ;;
+    esac
+
+    after="$(run_fingerprint "$dir")"
+    now="$(date +%s)"
+    if [ "$after" != "$before" ]; then
+      counts="$(run_counts "$dir")"
+      [ "$counts" = "$shown" ] || printf 'run: %s\n' "$counts"
+      shown="$counts"
+    elif [ $((now - iter_began)) -lt 10 ]; then
+      # A turn that changed nothing and cost nothing is a spin: a wait that
+      # returns at once on a file poll did not act on, a dispatch refused.
+      sleep "${SHIP_GRAPH_RUN_IDLE_S:-15}"
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || run_emit_again "$dir" "slice of ${slice}s closed — $(run_counts "$dir")"
+  done
 }
 
 # --- dispatch ----------------------------------------------------------------
@@ -2926,6 +3145,7 @@ case "$SUBCOMMAND" in
   init)      cmd_init "$@" ;;
   set)       cmd_set "$@" ;;
   next)      cmd_next "$@" ;;
+  run)       cmd_run "$@" ;;
   claim)     cmd_claim "$@" ;;
   land)      cmd_land "$@" ;;
   poll)      cmd_poll "$@" ;;
