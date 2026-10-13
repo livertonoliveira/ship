@@ -128,6 +128,51 @@ test_a_branch_with_work_is_left_alone() {
   rm -rf "$root"
 }
 
+# The clone's own main holding a commit the remote never got, with the remote
+# moved on: every workspace cut from it starts behind every merged PR.
+diverge_local_base() {
+  echo local > "$1/work/local-only.txt"
+  git -C "$1/work" add -A
+  git -C "$1/work" commit -qm "a commit that never left this clone"
+}
+
+test_a_node_cut_from_a_diverged_base_gets_the_remote_one() {
+  local name="a branch sitting on a local base that diverged is merged with the remote base, losing nothing"
+  local root out
+  root="$(new_case)"
+  diverge_local_base "$root"
+  git -C "$root/work" checkout -q -b node/TASK-1
+  out="$(run_init "$root")"
+  if [ -f "$root/work/dependency.txt" ] && [ -f "$root/work/local-only.txt" ] \
+     && printf '%s' "$out" | grep -q '^base_sync=origin/main (merged'; then
+    log_pass "$name"
+  else
+    log_fail "$name (dependency on disk: $([ -f "$root/work/dependency.txt" ] && echo yes || echo no); $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
+  fi
+  rm -rf "$root"
+}
+
+test_a_diverged_base_that_conflicts_is_left_as_it_was() {
+  local name="a merge with the remote base that conflicts is undone and reported"
+  local root out before after
+  root="$(new_case)"
+  echo clash > "$root/work/dependency.txt"
+  git -C "$root/work" add -A
+  git -C "$root/work" commit -qm "the same file, written differently here"
+  git -C "$root/work" checkout -q -b node/TASK-1
+  before="$(git -C "$root/work" rev-parse HEAD)"
+  out="$(run_init "$root")"
+  after="$(git -C "$root/work" rev-parse HEAD)"
+  if [ "$before" = "$after" ] && [ ! -e "$root/work/.git/MERGE_HEAD" ] \
+     && [ -z "$(git -C "$root/work" status --porcelain --untracked-files=no)" ] \
+     && printf '%s' "$out" | grep -q '^base_sync=skipped-merge-conflict$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (moved: $([ "$before" = "$after" ] && echo no || echo yes); $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
+  fi
+  rm -rf "$root"
+}
+
 test_the_scratch_dir_never_reaches_a_commit() {
   local name="init keeps .context/ out of git in a repo whose .gitignore does not name it"
   local root staged
@@ -248,6 +293,8 @@ test_a_base_the_coordinator_owns_is_fast_forwarded() {
 test_a_node_opens_on_what_the_forge_has
 test_the_run_scratch_dir_does_not_block_the_sync
 test_a_branch_with_work_is_left_alone
+test_a_node_cut_from_a_diverged_base_gets_the_remote_one
+test_a_diverged_base_that_conflicts_is_left_as_it_was
 test_the_scratch_dir_never_reaches_a_commit
 test_uncommitted_work_is_never_discarded
 test_no_remote_is_not_a_failure
