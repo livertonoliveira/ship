@@ -237,22 +237,6 @@ test_the_node_runs_on_the_orchestration_model() {
   rm -rf "$root"
 }
 
-test_the_wake_resumes_through_the_forked_skill() {
-  local root line
-  root="$(new_case)"; run_dispatch "$root"
-  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
-  # The coordinator loop runs forked on the orchestration model. A wake that
-  # told the parent session to run graph.sh itself would move the loop back
-  # onto the parent's model.
-  if printf '%s' "$line" | grep -q 'Invoke the ship:graph skill again' \
-     && ! printf '%s' "$line" | grep -q 'Run graph.sh poll'; then
-    log_pass "the wake resumes the coordinator through ship:graph, not by hand"
-  else
-    log_fail "the wake resumes the coordinator through ship:graph, not by hand (got: $line)"
-  fi
-  rm -rf "$root"
-}
-
 test_the_node_drives_the_pipeline_itself() {
   local root line
   root="$(new_case)"; run_dispatch "$root"
@@ -265,21 +249,6 @@ test_the_node_drives_the_pipeline_itself() {
     log_pass "the node brief drives pipeline.sh directly instead of forking /ship:run"
   else
     log_fail "the node brief drives pipeline.sh directly instead of forking /ship:run (got: $line)"
-  fi
-  rm -rf "$root"
-}
-
-test_the_wake_does_not_claim_success() {
-  local root line
-  root="$(new_case)"; run_dispatch "$root"
-  line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
-  # A node that stopped on a failure sent "N1 finished" and the coordinator
-  # waited for a merge that was never coming (MOB-7227, 2026-10-08).
-  if printf '%s' "$line" | grep -q "graph-wake: N1 has something to report" \
-     && ! printf '%s' "$line" | grep -q "graph-wake: N1 finished"; then
-    log_pass "the wake says the node has something to report, never that it finished"
-  else
-    log_fail "the wake says the node has something to report, never that it finished (got: $line)"
   fi
   rm -rf "$root"
 }
@@ -498,34 +467,86 @@ test_the_worker_is_told_to_wake_the_coordinator() {
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
   # worker_done goes to a pull-only mailbox: it reaches the coordinator only
   # while it happens to be inside a wait window. Measured 2026-09-14, one sat
-  # unread for 25 minutes while two merged PRs stayed in_flight. `terminal send
-  # --enter` is the push that actually starts a turn on an idle terminal.
-  if ! printf '%s' "$line" | grep -q -- 'orca terminal send --terminal'; then
-    log_fail "the brief tells the worker to wake the coordinator (got: $line)"
-  elif ! printf '%s' "$line" | grep -q -- "--text '' --enter"; then
-    # Without --enter the text is typed into the TUI input box and never
-    # submitted, so the poke looks sent and wakes nobody.
-    log_fail "the wake instruction submits with a separate --enter (got: $line)"
-  elif printf '%s' "$line" | grep -q -- "live graph.' --enter"; then
-    # A paste eats its own trailing newline: text and Enter in one send left
-    # every wake as a draft, appended to the previous one (measured 2026-09-29).
-    log_fail "the wake text is not submitted in the same send as its Enter (got: $line)"
-  elif ! printf '%s' "$line" | grep -qE '"/[^"]*/driver-orca-coordinator\.txt"'; then
-    # The worker runs in its own workspace; the relative state dir graph.sh
-    # passes in resolves to nothing there, so the path has to be absolute.
-    # Matched by shape, not by $root: mktemp -d hands back /var/folders/... and
-    # `cd && pwd` resolves it to /private/var/folders/....
-    log_fail "the wake instruction reads an absolute coordinator handle path (got: $line)"
-  elif ! printf '%s' "$line" | grep -q -- 'resumes the live graph'; then
-    # A message to a mid-loop coordinator ends its turn (measured 2026-09-06).
-    # Carrying the resume instruction is what keeps the poke from stalling it.
-    log_fail "the wake instruction tells the coordinator to resume its loop (got: $line)"
+  # unread for 25 minutes while two merged PRs stayed in_flight. The worker runs
+  # in its own workspace, so both paths in the call have to be absolute —
+  # matched by shape, not by $root: mktemp -d hands back /var/folders/... and
+  # `cd && pwd` resolves it to /private/var/folders/....
+  if printf '%s' "$line" | grep -qE 'bash "/[^"]*/driver-orca\.sh" wake N1 --state "/[^"]*"'; then
+    log_pass "the brief tells the worker to wake the coordinator through the driver"
   else
-    log_pass "the brief tells the worker to wake the coordinator, submitted and self-healing"
+    log_fail "the brief tells the worker to wake the coordinator through the driver (got: $line)"
   fi
   rm -rf "$root"
 }
 
+run_wake() {
+  local root="$1"
+  ( cd "$root/repo" && PATH="$root/bin:$PATH" ORCA_FAKE_LOG="$root/argv.log" SHIP_WAKE_ENTER_DELAY_S=0 \
+      bash "$DRIVER" wake N1 --state "$root/state" 2>&1 )
+}
+
+test_the_wake_starts_a_turn_on_an_idle_coordinator() {
+  local root out sends
+  root="$(new_case)"; run_dispatch "$root"
+  : > "$root/argv.log"
+  out="$(run_wake "$root")"
+  sends="$(grep -c '^terminal send ' "$root/argv.log" || true)"
+  # `terminal send --enter` is the push that starts a turn on an idle terminal,
+  # and the Enter is its own send: text and Enter in one is a paste, which eats
+  # its own trailing newline and left every wake as a draft (2026-09-29).
+  # A message to a mid-loop coordinator ends its turn (2026-09-06), so the text
+  # carries the resume — through ship:graph, which keeps the loop forked on the
+  # orchestration model. It never says the node finished: one that stopped on a
+  # failure said so and the coordinator waited for a merge that was never
+  # coming (MOB-7227, 2026-10-08).
+  if [ "$out" = "wake=sent" ] && [ "$sends" = "2" ] \
+     && sed -n 1p "$root/argv.log" | grep -q 'graph-wake: N1 has something to report' \
+     && sed -n 1p "$root/argv.log" | grep -q 'Invoke the ship:graph skill again' \
+     && sed -n 1p "$root/argv.log" | grep -q 'resumes the live graph' \
+     && ! sed -n 1p "$root/argv.log" | grep -q -- '--enter' \
+     && ! grep -q 'N1 finished\|Run graph.sh poll' "$root/argv.log" \
+     && sed -n 2p "$root/argv.log" | grep -q -- '--text  --enter'; then
+    log_pass "the wake submits its text with a separate Enter and resumes through ship:graph"
+  else
+    log_fail "the wake submits its text with a separate Enter and resumes through ship:graph (out: $out, log: $(tr '\n' '|' < "$root/argv.log"))"
+  fi
+  rm -rf "$root"
+}
+
+test_the_wake_stays_silent_while_the_loop_is_running() {
+  local root out sends
+  root="$(new_case)"; run_dispatch "$root"
+  : > "$root/argv.log"
+  mkdir -p "$root/state/run.lock"
+  printf '%s\n' "$$" > "$root/state/run.lock/pid"
+  out="$(run_wake "$root")"
+  sends="$(grep -c '^terminal send ' "$root/argv.log" || true)"
+  # A message typed at a coordinator inside `graph.sh run` queues behind the
+  # call and re-enters the skill over a live loop when it returns.
+  if printf '%s' "$out" | grep -q '^wake=skipped$' && [ "$sends" = "0" ]; then
+    log_pass "no wake is typed at a coordinator whose loop is running"
+  else
+    log_fail "no wake is typed at a coordinator whose loop is running (out: $out, sends: $sends)"
+  fi
+  rm -rf "$root"
+}
+
+test_the_wake_stays_silent_between_two_slices_of_the_loop() {
+  local root out sends stale
+  root="$(new_case)"; run_dispatch "$root"
+  : > "$root/argv.log"
+  date +%s > "$root/state/run-heartbeat.txt"
+  out="$(run_wake "$root")"
+  sends="$(grep -c '^terminal send ' "$root/argv.log" || true)"
+  printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$root/state/run-heartbeat.txt"
+  stale="$(run_wake "$root")"
+  if printf '%s' "$out" | grep -q '^wake=skipped$' && [ "$sends" = "0" ] && [ "$stale" = "wake=sent" ]; then
+    log_pass "a loop that just ran silences the wake; one that stopped an hour ago does not"
+  else
+    log_fail "a loop that just ran silences the wake; one that stopped an hour ago does not (fresh: $out, sends: $sends, stale: $stale)"
+  fi
+  rm -rf "$root"
+}
 test_concurrent_dispatches_share_one_run() {
   local root state repo
   root="$(new_case)"; run_dispatch "$root"   # seeds the repo and the first node
@@ -1005,9 +1026,7 @@ test_worker_start_creates_a_workspace_through_the_runtime
 test_one_workspace_named_for_the_node
 test_an_agent_is_launched_in_it
 test_the_node_runs_on_the_orchestration_model
-test_the_wake_resumes_through_the_forked_skill
 test_the_node_drives_the_pipeline_itself
-test_the_wake_does_not_claim_success
 test_the_node_is_told_how_to_ask
 test_a_second_dispatch_of_an_unclaimed_node_starts_nothing
 test_a_retry_after_a_failed_attempt_still_gets_a_fresh_workspace
@@ -1023,6 +1042,9 @@ test_a_working_worker_is_reported_confirmed
 test_a_working_worker_is_not_disturbed
 test_the_worker_is_told_how_to_report_completion
 test_the_worker_is_told_to_wake_the_coordinator
+test_the_wake_starts_a_turn_on_an_idle_coordinator
+test_the_wake_stays_silent_while_the_loop_is_running
+test_the_wake_stays_silent_between_two_slices_of_the_loop
 test_concurrent_dispatches_share_one_run
 test_repo_is_resolved_from_the_working_tree
 test_an_explicit_repo_wins
