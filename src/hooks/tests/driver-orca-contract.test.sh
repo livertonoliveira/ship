@@ -1019,6 +1019,29 @@ test_a_previous_attempt_is_removed_by_path() {
   rm -rf "$root"
 }
 
+test_dispose_waits_for_the_runtime_to_finish_removing() {
+  local root out old stays
+  root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
+  old="$root/old-attempt"; mkdir -p "$old"
+  # The runtime answers before the directory is gone.
+  ( sleep 2; rm -rf "$old" ) &
+  out="$( cd "$root/repo" && ORCA_FAKE_LOG="$root/dispose.log" PATH="$root/bin:$PATH" \
+    bash "$DRIVER" dispose N1 --state "$root/state" --worktree "$old" 2>/dev/null || true)"
+  wait 2>/dev/null || true
+  stays="$root/stays"; mkdir -p "$stays"
+  local kept
+  kept="$( cd "$root/repo" && ORCA_FAKE_LOG="$root/dispose.log" PATH="$root/bin:$PATH" SHIP_DISPOSE_SETTLE_S=1 \
+    bash "$DRIVER" dispose N1 --state "$root/state" --worktree "$stays" 2>/dev/null || true)"
+  if printf '%s' "$out" | grep -q '^disposed=1$' \
+    && printf '%s' "$kept" | grep -q '^disposed=0$' \
+    && printf '%s' "$kept" | grep -q "^reason=the runtime still reports a workspace at $stays"; then
+    log_pass "a removal the runtime finishes a moment later counts as removed; one it never finishes does not"
+  else
+    log_fail "a removal the runtime finishes a moment later counts as removed; one it never finishes does not (late: $out / never: $kept)"
+  fi
+  rm -rf "$root"
+}
+
 test_a_run_is_created_before_anything_else
 test_task_create_carries_the_run
 test_the_retired_call_is_never_made
@@ -1068,6 +1091,7 @@ test_a_watched_file_that_never_appears_still_spends_the_window
 test_every_driver_accepts_the_until_file_flag
 test_dispose_removes_the_workspace_through_the_runtime
 test_a_previous_attempt_is_removed_by_path
+test_dispose_waits_for_the_runtime_to_finish_removing
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
