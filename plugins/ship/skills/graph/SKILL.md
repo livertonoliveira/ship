@@ -5,15 +5,14 @@ argument-hint: "<linear-project-url | project-name | local-feature-dir> [--drive
 allowed-tools: Read, Glob, Grep, Bash, Agent, mcp__linear-server__*
 user-invocable: true
 model: "sonnet"
-context: fork
 background: false
 ---
 
 # Ship Graph — Cross-Task Parallelism
 
-Admission, conflict edges, every gate and the loop itself live in one deterministic script: `graph.sh run`. You are its executor — call it, do exactly what it prints, call it again. You never decide which task runs next.
+Admission, conflict edges, every gate and the loop itself live in one deterministic script: `graph.sh run`. You are its executor: do exactly what it prints. You never decide which task runs next.
 
-You run forked on the orchestration model and cannot talk to the user: your final message reaches them. The graph lives on disk; `/ship:graph` with the same arguments resumes it.
+The loop is a background process, not your turn: you start it, end your turn, and are re-invoked when it needs you. In between, this session belongs to the user. The graph lives on disk; `/ship:graph` with the same arguments resumes it.
 
 Each node is a full `/ship:run` in its own workspace. Nothing inside a task changes: develop stays sequential, verify stays a fan-out, gates and the fix-loop cap stay intact.
 
@@ -57,26 +56,27 @@ Default `--max-in-flight 2`: each node is a whole pipeline, so three in flight i
 
 ## 4. The loop
 
-1. Run it, with the Bash tool's `timeout` at 600000:
+1. Start it with the Bash tool's `run_in_background: true`, then END YOUR TURN with one line saying the graph is running:
    `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" run`
-   It is the loop: it dispatches, waits, polls and merges by itself, and returns only when a step is yours. Never script a loop around it. A call the tool moved to the background is still driving — the next `run` waits for it.
-2. Parse `state=`, `action=`, `inflight=`, `frontier=`, `log=`, `instruction:` and act on the action:
-   - `run` → nothing to decide: its time slice closed. Go to step 1.
-   - `dispatch` → this driver cannot start a worker itself. Make EVERY listed call now, in the order printed. `dispatch` prepares the workspace and returns an `instruction=` line: carrying it out is a step of the sequence, not a note — skip it and the node is claimed with a workspace nobody is working in. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim.
-   - `answer` → a node asked: decide it yourself as instructed, reply with the given `graph.sh answer`.
-   - `ask` → a decision the graph cannot take from its artifacts (a PR with failing checks, or unarmed under `merge-policy human`). STOP with it in the artifact language: the question, the `graph.sh` command per answer, then the resume.
-   - `done` → follow the closing instruction, report, STOP.
-3. When every call from step 2 has returned, go to step 1. Non-zero exit: surface stderr to the user and STOP.
+   It dispatches, waits, polls and merges by itself and exits only when a step is yours — that exit re-invokes you. Never wait on it or script a loop around it. Starting it again replaces the one running.
+2. When it exits, read the end of its output — `state=`, `action=`, `log=`, `instruction:` — and act on the action:
+   - `dispatch` → this driver cannot start a worker itself. Make EVERY listed call now, in the order printed; an `instruction=` line is a step of the sequence — skip it and the node is claimed with nobody working in it. Feed `collect`'s `worktree=`/`branch=` into `claim` verbatim. Then step 1.
+   - `answer` → a node asked: decide it yourself as instructed, reply with the given `graph.sh answer`. Then step 1.
+   - `ask` → a decision the graph cannot take from its artifacts (a PR with failing checks, or unarmed under `merge-policy human`). Present it in the artifact language: the question and the `graph.sh` command per answer. Step 1 once the user decides.
+   - `done` → follow the closing instruction and report.
+   - `none` → another run took the graph over. Do nothing.
+   - Non-zero exit: surface its stderr to the user; do not restart.
+3. When the user writes while it runs, answer from `graph.sh status` and `graph-log.md`; the run goes on. To pause, stop the background run: nodes in flight finish, nothing new is dispatched or merged; step 1 resumes.
 
-`graph.sh status` renders the graph at any point; `--json` gives the raw state. `graph-log.md` in the graph dir carries the running timeline — every claim, poll, seal and PR verdict — and is the only progress signal visible from outside this turn.
+`graph.sh status` renders the graph at any point; `--json` gives the raw state.
 
 Workspaces are full checkouts: each is removed as its node merges, reports harvested to the graph dir first. `graph.sh sweep [--force]` frees what a run left behind, merged nodes only; `init --keep-workspaces` keeps them all.
 
-To stop a run, `graph.sh abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Killing the orchestrator does NOT do this — workers survive it and keep billing. `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" reset <task>... | --all` returns failed nodes to pending, each retry in a fresh workspace.
+To end a run, `graph.sh abort`: it stops each in-flight worker, marks those nodes failed and keeps their workspaces. Stopping the background run does NOT do this — workers survive it and keep billing. `bash "${CLAUDE_SKILL_DIR}/hooks/graph.sh" reset <task>... | --all` returns failed nodes to pending, each retry in a fresh workspace.
 
 ## Rules
 
-- Never start a task the instruction did not list, never skip one it did, never reorder — the state machine already decided. A task missing from the frontier is blocked by a dependency or a conflict edge, not forgotten.
+- Never start a task the instruction did not list, never skip one it did, never reorder — the state machine already decided. 
 - Never edit `nodes.tsv`, `meta.tsv` or `graph.json` by hand — they are the graph's state, and `graph.sh` is the only writer.
 - `claim` writes `homolog-mode=defer` into the task's workspace, so no node stops for its own acceptance prompt. Every report is presented in one batch at `done`.
 - Completion is observed, never reported: `poll` lands a node when its pipeline leaves `homolog-approved.txt` on disk, and seals the workspace into a commit (`/ship:run` writes files but never commits, so the branch would otherwise be empty). A node that stops writing anything is resumed once through the driver, then failed; one whose worker never started, or whose pipeline reports its own failure, is failed at once. A node that failed on its own is re-dispatched in a fresh workspace while it has attempts left; one failed by a decision (`abort`, `fail`, a PR closed on the forge) waits for `reset`. A failed node holds only its dependents — the run goes on and ends with the failed list at `done`. `init` refuses a dependency cycle before any workspace exists.
