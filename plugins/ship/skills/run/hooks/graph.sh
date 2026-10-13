@@ -2903,11 +2903,17 @@ run_lock_holder() {
   { cat "$1/run.lock/pid" 2>/dev/null || true; } | tr -cd '0-9'
 }
 
-# One `run` per graph. A second one waits its turn instead of driving beside
-# the first; a holder that died is taken over. Returns 1 when the holder
-# outlived this call's own slice.
+# One `run` per graph, and the newest one is it. A run is started by whoever
+# wants to be told when the graph needs them, so a second one does not wait
+# behind the first or drive beside it: it asks the first to step down and takes
+# the graph once that one is gone. The first exits saying it was superseded,
+# which tells its own caller not to start it again. A holder that died is
+# simply replaced; a pid that is no longer a graph.sh is a stale lock, never a
+# process to signal.
+RUN_SUPERSEDED=0
+
 run_lock() {
-  local dir="$1" deadline="$2" lock="$1/run.lock" holder blank=0
+  local dir="$1" lock="$1/run.lock" holder blank=0 asked="" waited=0
   while ! mkdir "$lock" 2>/dev/null; do
     holder="$(run_lock_holder "$dir")"
     if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
@@ -2919,13 +2925,50 @@ run_lock() {
     if [ -z "$holder" ]; then
       blank=$((blank + 1))
       if [ "$blank" -ge 3 ]; then rm -rf "$lock"; continue; fi
+      sleep 1
+      continue
     fi
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    if ! ps -p "$holder" -o command= 2>/dev/null | grep -q 'graph\.sh'; then
+      rm -rf "$lock"
+      continue
+    fi
+    if [ "$asked" != "$holder" ]; then
+      printf '%s\n' "$$" > "$lock/superseded-by" 2>/dev/null || true
+      kill -TERM "$holder" 2>/dev/null || true
+      asked="$holder"
+      printf 'run: taking the graph over from run pid %s\n' "$holder"
+    fi
+    # It yields between steps, and a dispatch is one step.
+    [ "$waited" -lt "${SHIP_GRAPH_RUN_TAKEOVER_WAIT_S:-900}" ] \
+      || die "run: the run already driving this graph (pid $holder) did not step down in ${waited}s — stop it, then run again"
     sleep 1
+    waited=$((waited + 1))
   done
   printf '%s\n' "$$" > "$lock/pid"
   # shellcheck disable=SC2064
   trap "rm -rf \"$lock\"" EXIT
+  # shellcheck disable=SC2064
+  trap "run_on_term \"$lock\"" TERM
+}
+
+# TERM from a newer run is a request to step down at the next step boundary;
+# from anything else it is a stop.
+run_on_term() {
+  if [ -f "$1/superseded-by" ]; then
+    RUN_SUPERSEDED=1
+  else
+    exit 143
+  fi
+}
+
+run_yield_if_superseded() {
+  local dir="$1"
+  [ "$RUN_SUPERSEDED" = "1" ] || return 0
+  NEXT_BODY=""
+  next_body_add "Another run took this graph over and is driving it now. Do NOT start run again and do nothing else: that run reports to whoever started it."
+  NEXT_DRIVER="$(meta_get "$dir" driver)"
+  NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
+  next_emit "superseded" "none" "$(count_status "$dir" in_flight)" "" "superseded by run pid $(cat "$dir/run.lock/superseded-by" 2>/dev/null || true)"
 }
 
 run_counts() {
@@ -2983,14 +3026,16 @@ run_dispatch_node() {
 run_emit_again() {
   local dir="$1" log="$2"
   NEXT_BODY=""
-  next_body_add "- bash \"$HOOK_DIR/graph.sh\" run   → nothing to decide: the loop returned only so this call stays inside the tool's time limit. Run it again now, with the longest timeout the tool allows."
+  next_body_add "- bash \"$HOOK_DIR/graph.sh\" run   → nothing to decide: the slice this run was given closed. Start it again now."
   NEXT_DRIVER="$(meta_get "$dir" driver)"
   NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
   next_emit "running" "run" "$(count_status "$dir" in_flight)" "" "$log"
 }
 
 cmd_run() {
-  local feature="" slice="${SHIP_GRAPH_RUN_SLICE_S:-480}"
+  # No slice by default: started in the background, a run goes on until the
+  # graph needs someone. --slice is for a caller that can only block.
+  local feature="" slice="${SHIP_GRAPH_RUN_SLICE_S:-0}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --feature) feature="$2"; shift 2 ;;
@@ -3005,15 +3050,14 @@ cmd_run() {
   feature="$(resolve_feature "$feature")"
   dir="$(graph_dir "$feature")"
   require_graph "$dir"
+  run_lock "$dir"
   began="$(date +%s)"
   deadline=$((began + slice))
-
-  if ! run_lock "$dir" "$deadline"; then
-    run_emit_again "$dir" "another run (pid $(run_lock_holder "$dir")) is driving this graph — waited ${slice}s for it"
-  fi
+  [ "$slice" -gt 0 ] || deadline=$((began + 315360000))
 
   local out action state frontier t now left before after iter_began poll_fails=0 starts="" counts shown=""
   while :; do
+    run_yield_if_superseded "$dir"
     iter_began="$(date +%s)"
     before="$(run_fingerprint "$dir")"
     # What tells a finishing node that somebody is already listening: the gap
@@ -3040,6 +3084,7 @@ cmd_run() {
         fi
         for t in $frontier; do
           run_dispatch_node "$dir" "$driver_sh" "$t"
+          run_yield_if_superseded "$dir"
           [ "$(date +%s)" -lt "$deadline" ] || break
         done
         ;;
@@ -3060,6 +3105,7 @@ cmd_run() {
           [ "$left" -le 300 ] || left=300
           bash "$driver_sh" wait --state "$dir" --timeout-ms "$((left * 1000))" ${wargs[@]+"${wargs[@]}"} >/dev/null || true
         fi
+        run_yield_if_superseded "$dir"
         if bash "$SELF" poll --feature "$feature" >/dev/null; then
           poll_fails=0
         else
