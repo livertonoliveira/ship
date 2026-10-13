@@ -375,6 +375,48 @@ run_suite() {
   RUN_EXIT_CODE="$exit_code"
 }
 
+# A non-zero exit whose output proves the tool never started: the package
+# manager refused to install (pnpm 11 blocks unapproved build scripts and
+# aborts every script that re-verifies dependencies), the binary is missing,
+# the runner module is not installed. Measured live: one node spent a whole
+# remediation round "fixing" a typecheck that had not compiled a single file.
+# That is an environment failure, not a finding — the gate must say so and
+# stop instead of handing the fix agent nothing to fix.
+tool_never_ran() {
+  local exit_code="$1" out="$2"
+  [ "$exit_code" -eq 127 ] && return 0
+  [ -n "$out" ] && [ -f "$out" ] || return 1
+  grep -qE 'ERR_PNPM_[A-Z_]+|npm ERR! code E[A-Z]+|Command failed with exit code [0-9]+: (pnpm|npm|yarn|bun) install|(^|: )command not found|Cannot find module '"'"'(jest|vitest|mocha|ava|eslint|typescript|ts-node|tsx)|error TS6053|No such file or directory.*(node_modules|\.bin/)' "$out"
+}
+
+# Constructs that keep a case from ever running, scanned in the contract's own
+# test files. Measured live on a 27-node graph: every oracle-backed spec guarded
+# itself with `existsSync(fixture) ? describe : describe.skip`, no workspace had
+# the fixture, and the gate reported 24 precision tests green that had never
+# executed. A scenario in the contract that does not run proves nothing, so a
+# skip there is a failure of the test phase, not a style choice.
+scan_skipped_contract_tests() {
+  SKIPPED_HITS=""
+  [ -n "$TEST_ENTRIES" ] || return 0
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] && [ -f "$p" ] || continue
+    SKIPPED_HITS="$SKIPPED_HITS$(grep -nE '(describe|it|test|context|suite)\.(skip|todo)|(^|[^A-Za-z0-9_])x(it|describe|test|context)[[:space:]]*\(|@pytest\.mark\.skip|pytest\.skip\(|unittest\.skip|[[:space:]]t\.Skip(f|Now)?\(' "$p" 2>/dev/null | sed "s#^#$p:#" || true)
+"
+  done < <(printf '%s\n' "$TEST_ENTRIES" | cut -f2 | sort -u)
+  SKIPPED_HITS="$(printf '%s' "$SKIPPED_HITS" | sed '/^$/d')"
+}
+
+# The runner's own count, for the report: jest/vitest "Tests: 3 skipped, 7
+# passed", pytest "2 skipped", mocha "3 pending".
+suite_skipped_count() {
+  local out="$1"
+  [ -n "$out" ] && [ -f "$out" ] || { printf '0'; return 0; }
+  local n
+  n="$(grep -oE '[0-9]+ (skipped|pending|todo)' "$out" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')"
+  printf '%s' "${n:-0}"
+}
+
 parse_failed_files() {
   local out="$1"
   FAILED_FILES="$( {
@@ -434,6 +476,14 @@ write_reports() {
       [ -n "$RUN_OUTPUT_FILE" ] && [ -f "$RUN_OUTPUT_FILE" ] && tail -80 "$RUN_OUTPUT_FILE"
       printf '```\n'
     fi
+    if [ -n "$SKIPPED_HITS" ]; then
+      printf '\n## Skipped cases in contract test files\n\n'
+      printf 'These files are the test contract; a scenario that does not execute proves nothing. Remove the skip, or make the data it guards available in the workspace (commit the fixture, or fetch it in a setup step the test runs) so the case executes.\n\n'
+      printf '%s\n' "$SKIPPED_HITS" | sed 's/^/- /'
+    fi
+    if [ "${SUITE_SKIPPED_COUNT:-0}" -gt 0 ]; then
+      printf '\nSuite summary: %s case(s) reported skipped or pending by the runner.\n' "$SUITE_SKIPPED_COUNT"
+    fi
   } > "$scratch/test-failures.md"
 
   local gate="pass"
@@ -462,11 +512,38 @@ run_static_checks() {
   if [ -n "$tc_pid" ]; then
     set +e; wait "$tc_pid"; TYPECHECK_EXIT=$?; set -e
     echo "typecheck ($TYPECHECK_CMD): $([ "$TYPECHECK_EXIT" -eq 0 ] && echo pass || echo fail)"
+    [ "$TYPECHECK_EXIT" -gt 0 ] && tool_never_ran "$TYPECHECK_EXIT" "$TYPECHECK_OUT" && TYPECHECK_ENV=1
   fi
   if [ -n "$lint_pid" ]; then
     set +e; wait "$lint_pid"; LINT_EXIT=$?; set -e
     echo "lint ($LINT_CMD): $([ "$LINT_EXIT" -eq 0 ] && echo pass || echo fail)"
+    [ "$LINT_EXIT" -gt 0 ] && tool_never_ran "$LINT_EXIT" "$LINT_OUT" && LINT_ENV=1
   fi
+  return 0
+}
+
+# The checks did not fail — they never ran. Reported as its own section so the
+# reader fixes the workspace, not the code; no exits file is written, so a
+# resumed run re-runs the checks instead of carrying a phantom red forward.
+write_environment_report() {
+  local scratch="$1" phase="$2"
+  {
+    printf '# %s\n\n' "$([ "$phase" = static ] && echo 'Static Failures' || echo 'Test Failures')"
+    printf '## Environment: the checks could not run\n\n'
+    printf 'This is not a finding in the code. The tool below never started — fix the workspace (dependency install, build-script approval, missing binary) and resume the run.\n'
+    if [ "${TYPECHECK_ENV:-0}" -eq 1 ]; then
+      printf '\n### Typecheck did not run (`%s`)\n\n```\n' "$TYPECHECK_CMD"; tail -40 "$TYPECHECK_OUT"; printf '```\n'
+    fi
+    if [ "${LINT_ENV:-0}" -eq 1 ]; then
+      printf '\n### Lint did not run (`%s`)\n\n```\n' "$LINT_CMD"; tail -40 "$LINT_OUT"; printf '```\n'
+    fi
+    if [ "${SUITE_ENV:-0}" -eq 1 ]; then
+      printf '\n### Test runner did not run\n\n```\n'; tail -40 "$RUN_OUTPUT_FILE"; printf '```\n'
+    fi
+  } > "$scratch/$([ "$phase" = static ] && echo static-failures.md || echo test-failures.md)"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '| %s | #<RUN> | %s | - | fail | 0 | 0 | 0 | 0 | environment: checks could not run |\n' "$phase" "$ts" > "$scratch/phase-status-$phase.md"
 }
 
 # Static-gate report: typecheck/lint output + a `static` phase row. Mirrors the
@@ -528,6 +605,11 @@ main() {
   RUN_OUTPUT_FILE=""
   RUN_EXIT_CODE=0
   TEST_ENTRIES=""
+  TYPECHECK_ENV=0
+  LINT_ENV=0
+  SUITE_ENV=0
+  SKIPPED_HITS=""
+  SUITE_SKIPPED_COUNT=0
   LAYER_CMD_WORDS=()
   LAYER_USES_PKG_SCRIPT=0
 
@@ -559,6 +641,13 @@ main() {
     run_static_checks
     local st_overall=0
     { [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && st_overall=1
+    if [ "$static_check" -eq 0 ] && { [ "$TYPECHECK_ENV" -eq 1 ] || [ "$LINT_ENV" -eq 1 ]; }; then
+      write_environment_report "$scratch" static
+      rm -f "$scratch/static-exits.txt"
+      [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
+      [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
+      exit 4
+    fi
     # --static-check: the same checks for the author of the change (develop's
     # self-check), reported on stdout. It writes nothing: the run's static row
     # and failure report stay the pipeline's own, recorded after develop.
@@ -615,10 +704,18 @@ main() {
   else
     run_suites_by_layer
     parse_failed_files "$RUN_OUTPUT_FILE"
+    if [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; then
+      SUITE_ENV=1
+      write_environment_report "$scratch" test
+      rm -f "$RUN_OUTPUT_FILE"
+      exit 4
+    fi
+    scan_skipped_contract_tests
+    SUITE_SKIPPED_COUNT="$(suite_skipped_count "$RUN_OUTPUT_FILE")"
   fi
 
   local overall=0
-  { [ "$RUN_EXIT_CODE" -ne 0 ] || [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ]; } && overall=1
+  { [ "$RUN_EXIT_CODE" -ne 0 ] || [ "$TYPECHECK_EXIT" -gt 0 ] || [ "$LINT_EXIT" -gt 0 ] || [ -n "$SKIPPED_HITS" ]; } && overall=1
 
   write_reports "$scratch" "$FAILED_FILES" "$overall"
 
