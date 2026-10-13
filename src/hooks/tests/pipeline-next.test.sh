@@ -820,6 +820,34 @@ drive_to_static_gate() {
   printf '%s' "$out"
 }
 
+# Measured live: pnpm 11 refused the repo's build scripts, `pnpm typecheck`
+# died inside `pnpm install`, and the node spent a remediation round on a
+# typecheck that had compiled nothing. A check that never ran is not a finding.
+test_static_that_never_ran_stops_the_node_with_the_cause() {
+  local name="a static check that could not run stops the run as an environment failure — no fan-out, no remediation, re-run on resume"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  local f="$dir/fake-tsc.sh"
+  printf '#!/usr/bin/env bash\necho "[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: sweph"\necho "[ERROR] Command failed with exit code 1: pnpm install"\nexit 1\n' > "$f"
+  chmod +x "$f"
+  printf -- '- Typecheck: %s\n' "$f" >> "$dir/ship/config.md"
+  local scratch="$dir/.context/ship-run/TS5"
+  local out; out="$(drive_to_static_gate "$dir" TS5)"
+  if [ "$(field "$out" state)" = "static" ] && [ "$(field "$out" action)" = "stop" ] \
+    && grep -q '^environment: static checks could not run' "$scratch/node-failed.txt" \
+    && grep -q 'Environment: the checks could not run' "$scratch/static-failures.md" \
+    && [ ! -f "$scratch/static-exec-done.txt" ] \
+    && [ ! -f "$scratch/static-exits.txt" ] \
+    && ! grep -q 'verify-a' "$scratch/dispatch-log.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state)/$(field "$out" action) files=$(ls "$scratch" 2>/dev/null | tr '\n' ' '))"
+  fi
+  rm -rf "$dir"
+}
+
 test_static_failure_does_not_block_the_fan_out() {
   local name="a red typecheck no longer halts the pipeline — the fan-out runs and the failure is recorded"
   local dir; dir="$(mktemp -d)"
@@ -980,6 +1008,7 @@ test_a_one_file_spec_skips_the_planner_in_a_fresh_workspace
 test_remediation_round_is_not_repeated_automatically
 test_confirmation_cannot_mint_new_findings
 test_warn_is_remediated_like_fail
+test_static_that_never_ran_stops_the_node_with_the_cause
 test_static_failure_does_not_block_the_fan_out
 test_static_failure_joins_the_findings_in_one_batch
 test_static_gate_skip_when_no_checks
