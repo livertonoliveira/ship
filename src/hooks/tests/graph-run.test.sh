@@ -187,28 +187,68 @@ test_run_closes_its_slice_and_asks_to_be_called_again() {
   rm -rf "$root"
 }
 
-test_a_second_run_never_drives_beside_the_first() {
-  local name="a run that finds a live one on the graph dispatches nothing, and takes over once that one is gone"
-  local root out holder after
+test_a_newer_run_takes_the_graph_over() {
+  local name="a second run makes the first step down, which says so and is not to be restarted; the node is dispatched once"
+  local root first second
   root="$(new_sandbox)"
-  sleep 60 &
-  holder=$!
-  mkdir -p "$(state_dir "$root")/run.lock"
-  printf '%s\n' "$holder" > "$(state_dir "$root")/run.lock/pid"
-  out="$(run_graph "$root" --slice 2)"
-  local dispatched_while_held
-  dispatched_while_held="$(calls "$root" 'dispatch TASK-001')"
-  kill "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
-  after="$(run_graph "$root")"
-  if [ "$(field "$out" action)" = "run" ] \
-     && printf '%s' "$out" | grep -q "another run (pid $holder)" \
-     && [ "${dispatched_while_held:-0}" = "0" ] \
-     && [ "$(status_of "$root" TASK-001)" = "merged" ] \
-     && [ "$(field "$after" action)" = "done" ]; then
+  printf 'hold\n' > "$(state_dir "$root")/behavior-TASK-001.txt"
+  run_graph "$root" > "$root/first.out" &
+  local first_pid=$!
+  local i=0
+  while [ "$(status_of "$root" TASK-001)" != "in_flight" ] && [ "$i" -lt 60 ]; do sleep 1; i=$((i + 1)); done
+  printf 'finish\n' > "$(state_dir "$root")/behavior-TASK-001.txt"
+  second="$(run_graph "$root")"
+  wait "$first_pid" 2>/dev/null || true
+  first="$(cat "$root/first.out")"
+  if [ "$(field "$first" state)" = "superseded" ] \
+     && [ "$(field "$first" action)" = "none" ] \
+     && printf '%s' "$first" | grep -q 'Do NOT start run again' \
+     && printf '%s' "$second" | grep -q 'run: taking the graph over from run pid' \
+     && [ "$(field "$second" action)" = "done" ] \
+     && [ "$(calls "$root" 'dispatch TASK-001')" = "1" ] \
+     && [ ! -e "$(state_dir "$root")/run.lock" ]; then
     log_pass "$name"
   else
-    log_fail "$name (held: $(field "$out" action), dispatched=$dispatched_while_held, after: $(field "$after" action))"
+    log_fail "$name (first: $(printf '%s' "$first" | tr '\n' '|'), second: $(field "$second" action), dispatches: $(calls "$root" 'dispatch TASK-001'))"
+  fi
+  rm -rf "$root"
+}
+
+test_a_stale_lock_is_not_a_process_to_signal() {
+  local name="a lock whose pid is alive but is not a run is replaced, and that process is left alone"
+  local root out bystander
+  root="$(new_sandbox)"
+  sleep 120 &
+  bystander=$!
+  mkdir -p "$(state_dir "$root")/run.lock"
+  printf '%s\n' "$bystander" > "$(state_dir "$root")/run.lock/pid"
+  out="$(run_graph "$root")"
+  if [ "$(field "$out" action)" = "done" ] && kill -0 "$bystander" 2>/dev/null; then
+    log_pass "$name"
+  else
+    log_fail "$name (action: $(field "$out" action), bystander alive: $(kill -0 "$bystander" 2>/dev/null && echo yes || echo no))"
+  fi
+  kill "$bystander" 2>/dev/null || true
+  wait "$bystander" 2>/dev/null || true
+  rm -rf "$root"
+}
+
+test_a_stopped_run_releases_the_graph() {
+  local name="a run that is stopped exits and releases the graph; nothing in flight is touched"
+  local root pid i=0
+  root="$(new_sandbox)"
+  printf 'hold\n' > "$(state_dir "$root")/behavior-TASK-001.txt"
+  run_graph "$root" > "$root/first.out" &
+  while [ "$(status_of "$root" TASK-001)" != "in_flight" ] && [ "$i" -lt 60 ]; do sleep 1; i=$((i + 1)); done
+  pid="$(cat "$(state_dir "$root")/run.lock/pid" 2>/dev/null || true)"
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ -e "$(state_dir "$root")/run.lock" ] && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+  wait 2>/dev/null || true
+  if [ -n "$pid" ] && [ ! -e "$(state_dir "$root")/run.lock" ] && [ "$(status_of "$root" TASK-001)" = "in_flight" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (pid: $pid, lock: $(ls -d "$(state_dir "$root")/run.lock" 2>/dev/null || echo released), status: $(status_of "$root" TASK-001))"
   fi
   rm -rf "$root"
 }
@@ -295,7 +335,9 @@ test_next_called_directly_still_names_next() {
 test_run_takes_a_graph_to_done_alone
 test_run_returns_for_a_node_question_and_resumes_after_the_answer
 test_run_closes_its_slice_and_asks_to_be_called_again
-test_a_second_run_never_drives_beside_the_first
+test_a_newer_run_takes_the_graph_over
+test_a_stale_lock_is_not_a_process_to_signal
+test_a_stopped_run_releases_the_graph
 test_a_driver_that_cannot_start_workers_gets_the_dispatch_back
 test_a_refused_dispatch_claims_nothing
 test_a_dispatch_that_cannot_be_collected_is_counted
