@@ -1911,6 +1911,16 @@ cmd_next() {
     case "$se_rc" in
       0) next_write_row "$SCRATCH" static pass "" ;;
       2) next_write_row "$SCRATCH" static skip "no static checks" ;;
+      4)
+        # The checks never ran (install refused, binary missing): nothing to
+        # remediate, and a resumed run must re-run them — so the done marker is
+        # not written. Measured live: one node burned a full remediation round
+        # on a typecheck that had not compiled a single file.
+        next_consolidate "$SCRATCH" "$RUN" static
+        printf 'environment: static checks could not run — see %s/static-failures.md (fix the workspace, then resume)\n' "$SCRATCH" > "$SCRATCH/node-failed.txt"
+        next_body_add "The static checks could not run in this workspace (see $SCRATCH/static-failures.md). This is an environment failure, not a finding: nothing is remediated, no PR is opened. Report it and stop."
+        next_emit "static" "stop" "$RUN" "environment: static checks could not run"
+        ;;
       # Non-zero: test-exec.sh already wrote phase-status-static.md with gate=fail
       # plus static-failures.md. Leave both for the gate and the batch.
     esac
@@ -2075,6 +2085,12 @@ cmd_next() {
         ;;
       2)  next_write_row "$SCRATCH" test skip "runner unresolved" ;;
       3)  next_write_row "$SCRATCH" test fail "the configured Test Framework could not be run — fix it in ship/config.md" ;;
+      4)
+        next_consolidate "$SCRATCH" "$RUN" test
+        printf 'environment: the test runner could not run — see %s/test-failures.md (fix the workspace, then resume)\n' "$SCRATCH" > "$SCRATCH/node-failed.txt"
+        next_body_add "The test runner could not run in this workspace (see $SCRATCH/test-failures.md). This is an environment failure, not a finding: nothing is remediated, no PR is opened. Report it and stop."
+        next_emit "test-exec" "stop" "$RUN" "environment: test runner could not run"
+        ;;
     esac
     next_consolidate "$SCRATCH" "$RUN" test
     touch "$SCRATCH/test-exec-done.txt"
