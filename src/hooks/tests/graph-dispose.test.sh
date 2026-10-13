@@ -204,6 +204,32 @@ test_uncommitted_work_is_never_thrown_away() {
   fi
 }
 
+test_the_runs_own_scratch_is_not_uncommitted_work() {
+  local name="a merged node whose only uncommitted changes are under .context/ frees its workspace"
+  local dir out present=0
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001
+  # A trunk that had .context/ committed once keeps it tracked, and a run goes
+  # on writing there after its last commit (2026-10-12: three merged nodes kept
+  # their workspaces over nothing else).
+  printf 'done\n' >> "$(WS "$dir" TASK-001)/.context/ship-run/TASK-001/homolog-report.md"
+  make_gh "$dir" MERGED
+  (cd "$dir" && bash "$GRAPH" set --driver local >/dev/null)
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  [ -d "$(WS "$dir" TASK-001)" ] && present=1
+  local harvested=0
+  [ -f "$dir/.context/ship-graph/f/artifacts/TASK-001/homolog-report.md" ] && harvested=1
+  rm -rf "$dir"
+
+  if printf '%s' "$out" | grep -q '^workspace_freed=TASK-001$' && [ "$present" -eq 0 ] && [ "$harvested" -eq 1 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' present=$present harvested=$harvested)"
+  fi
+}
+
 test_keep_workspaces_disables_the_whole_thing() {
   local name="--keep-workspaces leaves a merged node's workspace on disk"
   local dir out present=0
@@ -351,6 +377,7 @@ test_a_merged_node_frees_its_failed_attempts
 test_a_dirty_failed_attempt_is_kept
 test_an_unmerged_node_keeps_its_workspace
 test_uncommitted_work_is_never_thrown_away
+test_the_runs_own_scratch_is_not_uncommitted_work
 test_keep_workspaces_disables_the_whole_thing
 test_sweep_catches_up
 test_a_failed_node_is_never_swept

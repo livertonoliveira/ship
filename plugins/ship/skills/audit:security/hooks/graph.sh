@@ -1771,7 +1771,7 @@ dispose_workspace() {
   [ -n "$force" ] || workspace_cleanup_on "$dir" || return 0
 
   if [ "$force" != "force" ] && [ -d "$wt" ] \
-    && [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+    && [ -n "$(git -C "$wt" status --porcelain -- . ':(exclude).context' 2>/dev/null)" ]; then
     log_line "$dir" "$id workspace kept at $wt — it still holds uncommitted changes"
     printf 'workspace_kept=%s\n' "$id"
     return 0
