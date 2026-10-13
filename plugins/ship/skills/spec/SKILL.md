@@ -64,6 +64,8 @@ All contexts also read `ship/config.md` for stack and conventions.
 
 <400 lines incl. tests, independently buildable/testable, unambiguous scope, dependency-ordered. Estimate conservatively (e.g. service ~150-250, endpoint ~80-150 lines), split overages; assignment here feeds §6's `## Files`.
 
+**Merge pass (both modes):** draft the tasks as `tasks.md` (`### TASK-NNN — title`, `## Files`, `## Deps`), then `bash "${CLAUDE_SKILL_DIR}/hooks/task-merge.sh" --tasks <draft>`. Apply every `merge` line it prints — one task, union of Files, Scenarios and outer Deps — and re-run until it prints none. A node costs the same whatever its size; tasks on the same files or in a straight chain are one PR, and the script keeps the result under its reviewability caps.
+
 **Milestones:** delivery phases by dependency flow. **Labels:** Area (`backend`/`frontend`/`shared`/`infrastructure`/`database`) + Type (`feature`/`test`/`refactor`/`config`/`migration`) from `ship/config.md`.
 
 ### Gates (before creating any artifact)
