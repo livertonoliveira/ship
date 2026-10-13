@@ -154,14 +154,64 @@ function profileSession(file, node, since) {
   }
 }
 
-function profileNode(input, since) {
-  const node = { name: path.basename(input).replace(/\.jsonl$/, ''), sessions: 0, categories: { orchestration: emptyBucket() } };
-  if (input.endsWith('.jsonl')) {
-    profileSession(input, node, since);
-  } else {
-    for (const name of fs.readdirSync(input).sort()) {
-      if (name.endsWith('.jsonl')) profileSession(path.join(input, name), node, since);
-    }
+// A node's `timings.tsv` (epoch, phase, tool, name — one row per dispatch) is
+// the only record of which phase the orchestrating session was in at a given
+// moment. Each orchestration turn is charged to the phase dispatched last
+// before it; turns before the first dispatch are `init`.
+function readTimings(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
+  return text.split('\n').map((l) => l.split('\t')).filter((c) => c.length >= 2 && /^\d+$/.test(c[0]))
+    .map((c) => ({ at: Number(c[0]) * 1000, phase: c[1] })).sort((a, b) => a.at - b.at);
+}
+
+function phaseAt(timings, ts) {
+  let phase = 'init';
+  for (const t of timings) {
+    if (t.at <= ts) phase = t.phase; else break;
+  }
+  return phase;
+}
+
+function timingsFor(nodeName, artifactsDirs) {
+  const m = /([A-Z]+-\d+)(?:-\d+)?$/.exec(nodeName);
+  if (!m) return [];
+  for (const dir of artifactsDirs) {
+    const f = path.join(dir, m[1], 'timings.tsv');
+    if (fs.existsSync(f)) return readTimings(f);
+  }
+  return [];
+}
+
+function chargeTurnsToPhases(file, timings, byPhase) {
+  if (!timings.length) return;
+  const seen = new Set();
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
+  for (const raw of text.split('\n')) {
+    if (!raw.trim()) continue;
+    let rec;
+    try { rec = JSON.parse(raw); } catch { continue; }
+    if (rec.type !== 'assistant' || !rec.message || !rec.message.usage) continue;
+    const key = `${rec.message.id}|${rec.requestId || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const ts = Date.parse(rec.timestamp);
+    if (Number.isNaN(ts)) continue;
+    const phase = phaseAt(timings, ts);
+    if (!byPhase[phase]) byPhase[phase] = emptyBucket();
+    addTurn(byPhase[phase], rec, rec.message.usage, rec.message.model);
+  }
+}
+
+function profileNode(input, since, artifactsDirs) {
+  const node = { name: path.basename(input).replace(/\.jsonl$/, ''), sessions: 0, categories: { orchestration: emptyBucket() }, orchestrationByPhase: {} };
+  const timings = artifactsDirs && artifactsDirs.length ? timingsFor(node.name, artifactsDirs) : [];
+  const sessions = input.endsWith('.jsonl') ? [input]
+    : fs.readdirSync(input).sort().filter((n) => n.endsWith('.jsonl')).map((n) => path.join(input, n));
+  for (const s of sessions) {
+    profileSession(s, node, since);
+    chargeTurnsToPhases(s, timings, node.orchestrationByPhase);
   }
   node.total = Object.values(node.categories).reduce((s, b) => s + b.cost, 0);
   return node;
@@ -199,6 +249,26 @@ function render(nodes) {
   lines.push('');
   lines.push('orchestration tool calls (all nodes):');
   for (const [k, v] of Object.entries(tools).sort((a, b) => b[1] - a[1]).slice(0, 15)) lines.push(`  ${pad(k, 40)} ${lpad(v, 6)}`);
+  const phases = {};
+  let phasedNodes = 0;
+  for (const n of nodes) {
+    const entries = Object.entries(n.orchestrationByPhase || {});
+    if (!entries.length) continue;
+    phasedNodes += 1;
+    for (const [p, b] of entries) {
+      if (!phases[p]) phases[p] = { cost: 0, turns: 0, output: 0 };
+      phases[p].cost += b.cost; phases[p].turns += b.turns; phases[p].output += b.output;
+    }
+  }
+  if (phasedNodes) {
+    const orchTotal = Object.values(phases).reduce((s, p) => s + p.cost, 0);
+    lines.push('');
+    lines.push(`orchestration turns by pipeline phase (${phasedNodes} node(s) with timings; a phase owns the turns between its dispatch and the next one, 'init' the turns before the first):`);
+    lines.push(`  ${pad('phase', 20)} ${lpad('$', 8)} ${lpad('share', 6)} ${lpad('turns', 6)} ${lpad('turns/node', 10)} ${lpad('out-tok', 8)}`);
+    for (const [p, v] of Object.entries(phases).sort((a, b) => b[1].cost - a[1].cost)) {
+      lines.push(`  ${pad(p, 20)} ${lpad(fmt(v.cost), 8)} ${lpad(orchTotal ? fmt(100 * v.cost / orchTotal, 0) + '%' : '-', 6)} ${lpad(v.turns, 6)} ${lpad(fmt(v.turns / phasedNodes, 1), 10)} ${lpad(v.output, 8)}`);
+    }
+  }
   if (Object.keys(unknown).length) {
     lines.push('');
     lines.push(`unpriced models (cost counted as 0): ${JSON.stringify(unknown)}`);
@@ -211,12 +281,14 @@ function main(argv) {
   let json = false;
   let since = null;
   let prefix = null;
+  const artifacts = [];
   const inputs = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') json = true;
     else if (a === '--since') since = Date.parse(args[++i]);
     else if (a === '--prefix') prefix = args[++i];
+    else if (a === '--artifacts') artifacts.push(args[++i]);
     else inputs.push(a);
   }
   if (prefix) {
@@ -226,10 +298,10 @@ function main(argv) {
     }
   }
   if (!inputs.length) {
-    process.stderr.write('usage: cost-profile.js [--json] [--since ISO] [--prefix <project-dir-substring>] <project-dir|session.jsonl> ...\n');
+    process.stderr.write('usage: cost-profile.js [--json] [--since ISO] [--prefix <project-dir-substring>] [--artifacts <dir-with-<task>/timings.tsv>]... <project-dir|session.jsonl> ...\n');
     process.exit(2);
   }
-  const nodes = inputs.filter((p) => fs.existsSync(p)).map((p) => profileNode(p, since)).filter((n) => n.sessions > 0);
+  const nodes = inputs.filter((p) => fs.existsSync(p)).map((p) => profileNode(p, since, artifacts)).filter((n) => n.sessions > 0);
   if (json) {
     process.stdout.write(JSON.stringify(nodes, null, 2) + '\n');
   } else {
