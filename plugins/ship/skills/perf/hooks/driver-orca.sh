@@ -972,6 +972,18 @@ verb_stop() {
 #
 # The worker is fenced first. Removing the workspace out from under a live agent
 # leaves it writing into a deleted directory, and the dispatch stays listening.
+# The runtime answers `worktree rm` before the directory is gone. Checking the
+# instant it returned reported every removal as a workspace that was kept —
+# 18 of 18 in one graph, all of them removed seconds later (2026-10-12).
+gone_soon() {
+  local path="$1" i=0
+  while [ -d "$path" ] && [ "$i" -lt "${SHIP_DISPOSE_SETTLE_S:-15}" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  [ ! -d "$path" ]
+}
+
 verb_dispose() {
   local task="${REST[0]:-}"
   [ -n "$task" ] || { echo "driver-orca.sh dispose: <task> is required" >&2; exit 1; }
@@ -987,7 +999,7 @@ verb_dispose() {
   # one, so this one is removed by path and the current worker is left alone.
   if [ -n "$WORKTREE" ] && [ -n "$path" ] && [ "$WORKTREE" != "$path" ]; then
     orca worktree rm --worktree "path:$WORKTREE" --force --json >/dev/null 2>&1 || true
-    if [ -d "$WORKTREE" ]; then
+    if ! gone_soon "$WORKTREE"; then
       printf 'disposed=0\n'
       printf 'reason=the runtime still reports a workspace at %s\n' "$WORKTREE"
     else
@@ -1008,7 +1020,7 @@ verb_dispose() {
   fi
 
   orca worktree rm --worktree "id:$wt_id" --force --json >/dev/null 2>&1 || true
-  if [ -n "$path" ] && [ -d "$path" ]; then
+  if [ -n "$path" ] && ! gone_soon "$path"; then
     printf 'disposed=0\n'
     printf 'reason=the runtime still reports a workspace at %s\n' "$path"
     return 0
