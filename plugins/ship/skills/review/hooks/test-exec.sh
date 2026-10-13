@@ -19,6 +19,25 @@ is_resolved() {
   [ -n "$v" ] && [ "$v" != "unknown" ] && [ "$v" != "none" ]
 }
 
+# A config field is written for people: "Jest 29 (preset react-native)",
+# "yarn 3.6.4 (Berry)". Taken literally, the first ran as a command named Jest,
+# was not found, and the test gate was skipped on all 44 nodes of one graph
+# (2026-10-12); the second became the word that runs every script. A value that
+# opens with a tool this file knows is that tool.
+known_tool() {
+  local first
+  first="$(printf '%s' "$1" | awk '{ print tolower($1) }')"
+  first="${first%%@*}"
+  case " $2 " in
+    *" $first "*) printf '%s' "$first" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+resolve_pkg() {
+  PKG="$(known_tool "$PKG" "npm yarn pnpm bun")"
+}
+
 resolve_runner() {
   local scratch="$1" config="$2"
   RUNNER="$(field_from "$scratch/stack.md" 'Test Framework')"
@@ -28,6 +47,11 @@ resolve_runner() {
     RUNNER="$(field_from "$config" 'Test Framework')"
     PKG="$(field_from "$config" 'Package Manager')"
   fi
+  case "$RUNNER" in
+    "node --test"*|"node:test"*) ;;
+    *) RUNNER="$(known_tool "$RUNNER" "jest vitest mocha ava pytest")" ;;
+  esac
+  resolve_pkg
 }
 
 pkg_script_exists() {
@@ -511,6 +535,7 @@ main() {
   if [ "$lint_fix" -eq 1 ]; then
     PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
     is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
+    resolve_pkg
     resolve_static_checks "$scratch" "$config"
     resolve_lint_fix "$scratch" "$config"
     is_resolved "$LINT_FIX_CMD" || exit 2
@@ -524,6 +549,7 @@ main() {
   if [ "$static_only" -eq 1 ]; then
     PKG="$(field_from "$scratch/stack.md" 'Package Manager')"
     is_resolved "$PKG" || PKG="$(field_from "$config" 'Package Manager')"
+    resolve_pkg
     resolve_static_checks "$scratch" "$config"
     if ! is_resolved "$TYPECHECK_CMD" && ! is_resolved "$LINT_CMD"; then
       exit 2

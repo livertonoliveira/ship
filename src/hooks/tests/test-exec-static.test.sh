@@ -131,6 +131,25 @@ test_lint_placeholder_receives_only_existing_touched_files() {
   rm -rf "$d"
 }
 
+test_a_runner_written_for_people_is_still_the_runner() {
+  local name="'Jest 29 (preset react-native)' and 'yarn 3.6.4 (Berry)' run the suite through yarn test, not a command named Jest"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  sed -i.bak -e '/^- Test Framework:/d' -e '/^- Package Manager:/d' "$d/config.md" "$d/scratch/stack.md" 2>/dev/null || true
+  printf -- '- Test Framework: Jest 29 (preset react-native, react-test-renderer)\n- Package Manager: yarn 3.6.4 (Berry)\n' >> "$d/config.md"
+  mkdir -p "$d/bin"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/yarn-calls.txt"\nexit 0\n' "$d" > "$d/bin/yarn"
+  chmod +x "$d/bin/yarn"
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '^test' "$d/yarn-calls.txt" 2>/dev/null; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc calls=$(cat "$d/yarn-calls.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
 test_eslint_placeholder_gets_only_files_eslint_reads() {
   local name="an eslint Lint command with {files} is not handed a manifest, a font or a build file"
   local d; d="$(mktemp -d)"
@@ -295,6 +314,7 @@ test_lint_runs_unscoped_without_a_footprint() {
 test_static_only_records_individual_exits
 test_static_check_reports_and_writes_nothing
 test_lint_placeholder_receives_only_existing_touched_files
+test_a_runner_written_for_people_is_still_the_runner
 test_eslint_placeholder_gets_only_files_eslint_reads
 test_files_placeholder_takes_an_extension_list
 test_lint_with_nothing_it_reads_is_not_run
