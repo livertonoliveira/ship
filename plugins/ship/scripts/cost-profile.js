@@ -136,21 +136,26 @@ function categoryOf(meta, file) {
   return t;
 }
 
-function profileSession(file, node, since) {
+function profileSession(file, node, since, timings) {
   const dir = file.replace(/\.jsonl$/, '');
   const stat = fs.statSync(file);
   if (since && stat.mtimeMs < since) return;
   node.sessions += 1;
   parseTranscript(file, node.categories.orchestration);
+  chargeTurnsToPhases(file, timings, node.orchestrationByPhase);
   const subDir = path.join(dir, 'subagents');
   if (!fs.existsSync(subDir)) return;
   for (const name of fs.readdirSync(subDir)) {
     if (!name.endsWith('.jsonl')) continue;
     let meta = null;
     try { meta = JSON.parse(fs.readFileSync(path.join(subDir, name.replace(/\.jsonl$/, '.meta.json')), 'utf8')); } catch { /* no meta */ }
-    const cat = categoryOf(meta, path.join(subDir, name));
+    const sub = path.join(subDir, name);
+    const cat = categoryOf(meta, sub);
     if (!node.categories[cat]) node.categories[cat] = emptyBucket();
-    parseTranscript(path.join(subDir, name), node.categories[cat]);
+    parseTranscript(sub, node.categories[cat]);
+    // A standalone /ship:run is a fork: the pipeline's orchestrating turns are
+    // in that subagent, not in the session that launched it.
+    if (cat === 'run') chargeTurnsToPhases(sub, timings, node.orchestrationByPhase);
   }
 }
 
@@ -173,12 +178,20 @@ function phaseAt(timings, ts) {
   return phase;
 }
 
+// The node's task id is the tail of its workspace name (`...-MOB-5670`,
+// `...-MOB-5655-2`). A workspace named otherwise (a smoke test's temp dir) is
+// matched when the artifacts dir holds exactly one task.
 function timingsFor(nodeName, artifactsDirs) {
   const m = /([A-Z]+-\d+)(?:-\d+)?$/.exec(nodeName);
-  if (!m) return [];
   for (const dir of artifactsDirs) {
-    const f = path.join(dir, m[1], 'timings.tsv');
-    if (fs.existsSync(f)) return readTimings(f);
+    if (m) {
+      const f = path.join(dir, m[1], 'timings.tsv');
+      if (fs.existsSync(f)) return readTimings(f);
+      continue;
+    }
+    let tasks = [];
+    try { tasks = fs.readdirSync(dir).filter((t) => fs.existsSync(path.join(dir, t, 'timings.tsv'))); } catch { /* not a dir */ }
+    if (tasks.length === 1) return readTimings(path.join(dir, tasks[0], 'timings.tsv'));
   }
   return [];
 }
@@ -209,10 +222,7 @@ function profileNode(input, since, artifactsDirs) {
   const timings = artifactsDirs && artifactsDirs.length ? timingsFor(node.name, artifactsDirs) : [];
   const sessions = input.endsWith('.jsonl') ? [input]
     : fs.readdirSync(input).sort().filter((n) => n.endsWith('.jsonl')).map((n) => path.join(input, n));
-  for (const s of sessions) {
-    profileSession(s, node, since);
-    chargeTurnsToPhases(s, timings, node.orchestrationByPhase);
-  }
+  for (const s of sessions) profileSession(s, node, since, timings);
   node.total = Object.values(node.categories).reduce((s, b) => s + b.cost, 0);
   return node;
 }
