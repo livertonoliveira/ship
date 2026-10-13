@@ -131,6 +131,64 @@ test_lint_placeholder_receives_only_existing_touched_files() {
   rm -rf "$d"
 }
 
+test_eslint_placeholder_gets_only_files_eslint_reads() {
+  local name="an eslint Lint command with {files} is not handed a manifest, a font or a build file"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: ./eslint {files}\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/eslint"
+  chmod +x "$d/eslint"
+  mkdir -p "$d/src" "$d/android"
+  : > "$d/src/a.tsx"; : > "$d/font.ttf"; : > "$d/android/build.gradle"
+  printf 'src/a.tsx\npackage.json\nfont.ttf\nandroid/build.gradle\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "src/a.tsx|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
+test_files_placeholder_takes_an_extension_list() {
+  local name="{files:py} hands any linter only the extensions it names"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: ./lint.sh {files:py}\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/lint.sh"
+  chmod +x "$d/lint.sh"
+  : > "$d/a.py"; : > "$d/b.toml"
+  printf 'a.py\nb.toml\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "a.py|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
+test_lint_with_nothing_it_reads_is_not_run() {
+  local name="when develop touched nothing the linter reads, the lint is not run and the gate is not failed by it"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: ./eslint {files}\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\n: > lint-ran.txt\nexit 1\n' > "$d/eslint"
+  chmod +x "$d/eslint"
+  : > "$d/font.ttf"
+  printf 'package.json\nfont.ttf\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ ! -e "$d/lint-ran.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc ran=$([ -e "$d/lint-ran.txt" ] && echo yes || echo no))"
+  fi
+  rm -rf "$d"
+}
+
 test_eslint_package_script_is_scoped_to_touched_files() {
   local name="a package.json eslint script keeps its flags, drops its globs and lints only touched files of a matching extension"
   local d; d="$(mktemp -d)"
@@ -237,6 +295,9 @@ test_lint_runs_unscoped_without_a_footprint() {
 test_static_only_records_individual_exits
 test_static_check_reports_and_writes_nothing
 test_lint_placeholder_receives_only_existing_touched_files
+test_eslint_placeholder_gets_only_files_eslint_reads
+test_files_placeholder_takes_an_extension_list
+test_lint_with_nothing_it_reads_is_not_run
 test_eslint_package_script_is_scoped_to_touched_files
 test_lint_runs_unscoped_without_a_footprint
 test_lint_fix_runs_only_on_touched_files
