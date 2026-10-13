@@ -495,8 +495,8 @@ test_the_wake_starts_a_turn_on_an_idle_coordinator() {
   # and the Enter is its own send: text and Enter in one is a paste, which eats
   # its own trailing newline and left every wake as a draft (2026-09-29).
   # A message to a mid-loop coordinator ends its turn (2026-09-06), so the text
-  # carries the resume — through ship:graph, which keeps the loop forked on the
-  # orchestration model. It never says the node finished: one that stopped on a
+  # carries the resume — through ship:graph, which is what restarts the loop.
+  # It never says the node finished: one that stopped on a
   # failure said so and the coordinator waited for a merge that was never
   # coming (MOB-7227, 2026-10-08).
   if [ "$out" = "wake=sent" ] && [ "$sends" = "2" ] \

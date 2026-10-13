@@ -14,7 +14,10 @@ prompt, and every `<task-notification>` from a background worker starts a new on
 677 graph nodes: `ship:run` declared Sonnet and every node still orchestrated on the session's
 Opus — 69% of a node's cost. So the multi-turn orchestrators run forked (`context: fork`,
 `background: false`), where the frontmatter model is the subagent's model for the whole run:
-`ship:run` and `ship:graph`. Graph nodes are also launched on the orchestration model
+`ship:run`. `ship:graph` is the exception by design: its loop is `graph.sh run`, a background
+process, so the skill takes a turn only to start it and when it exits for a decision — a handful
+per graph, on the session's model, with the session free for the user in between. A fork cannot
+wait on a background process, and one blocked inside the loop answered nobody. Graph nodes are also launched on the orchestration model
 (`driver-orca.sh` passes `--model`, `SHIP_NODE_MODEL` overrides, default `sonnet`), and a node
 session drives `pipeline.sh` itself — a `ship:run` fork on top of it would pay a second start.
 
@@ -54,7 +57,7 @@ Every skill and agent runs on **Sonnet** except specification (`ship:spec`), whi
 | Skill / Phase         | Role                                            |
 |-----------------------|-------------------------------------------------|
 | `ship:run`            | Executor of `pipeline.sh next`, forked on Sonnet — dispatches exactly what the state machine prints; ordering, scoping and gating live in the script. |
-| `ship:graph`          | Executor of `graph.sh run`, forked on Sonnet. |
+| `ship:graph`          | Starts `graph.sh run` in the background and acts when it exits — **not forked**. |
 | `ship:develop`        | Direct implementer — writes all modules sequentially in dependency order in one context, integrates, typechecks. |
 | `ship:test`           | Orchestrator — resolves/de-identifies scenarios by layer, fans out `ship-test-*` leaves. |
 | `ship:init`           | Orchestrator — config-file writing + interactive Q&A. Spawns detection agents for stack/conventions. |
