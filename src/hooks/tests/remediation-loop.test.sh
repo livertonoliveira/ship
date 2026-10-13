@@ -304,11 +304,11 @@ test_a_fix_that_changes_nothing_still_terminates() {
 # graph, so the residue is decided from the artifacts: fix while a round still
 # changes the picture, defer once it stops — and never a question.
 test_graph_node_defers_a_residue_that_stopped_moving() {
-  local name="a graph node whose remediation changed nothing defers on its own — never an ask"
+  local name="a graph node whose remediation left a finding open, with every check green, defers it on its own — never an ask"
   local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
   local scratch="$dir/.context/ship-run/G1"
   mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
-  SEED_FINDING=1 FIX_MODE=noop CONFIRM_VERDICT=unresolved
+  SEED_FINDING=1 FIX_MODE=full CONFIRM_VERDICT=unresolved
   drive "$dir" G1 || true
   if [ "$LAST_STATE" = "done" ] && [ ! -f "$scratch/ask.md" ] \
     && grep -q 'deferred' "$scratch/gate-resolved.txt" \
@@ -326,7 +326,7 @@ test_graph_node_with_on_fail_fix_never_asks() {
   local dir; dir="$(mktemp -d)"; ON_FAIL=fix setup_repo "$dir"; unset ON_FAIL
   local scratch="$dir/.context/ship-run/G3"
   mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
-  SEED_FINDING=1 FIX_MODE=noop CONFIRM_VERDICT=unresolved
+  SEED_FINDING=1 FIX_MODE=full CONFIRM_VERDICT=unresolved
   drive "$dir" G3 || true
   if [ "$LAST_STATE" = "done" ] && [ "$LAST_ACTION" != "ask" ] && [ ! -f "$scratch/ask.md" ] \
     && grep -q 'deferred' "$scratch/gate-resolved.txt" \
@@ -334,6 +334,25 @@ test_graph_node_with_on_fail_fix_never_asks() {
     log_pass "$name"
   else
     log_fail "$name (last=$LAST_STATE/$LAST_ACTION fix=$FIX_DISPATCHES gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(cat "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+test_graph_node_never_carries_a_red_check_into_a_pr() {
+  local name="a graph node whose typecheck is still red after remediation fails itself — no PR, no deferral, no ask"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
+  local scratch="$dir/.context/ship-run/G4"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'base=main\n' > "$scratch/pr-mode.txt"
+  SEED_FINDING=1 FIX_MODE=noop CONFIRM_VERDICT=unresolved
+  drive "$dir" G4 || true
+  if [ "$LAST_ACTION" = "stop" ] && [ ! -f "$scratch/ask.md" ] \
+    && grep -q '^typecheck still failing after remediation' "$scratch/node-failed.txt" 2>/dev/null \
+    && grep -q 'gate: fail-node' "$scratch/graph-decisions.md" \
+    && [ ! -f "$scratch/pr-created.txt" ] && [ ! -f "$scratch/homolog-approved.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (last=$LAST_STATE/$LAST_ACTION failed=$(cat "$scratch/node-failed.txt" 2>/dev/null) decisions=$(cat "$scratch/graph-decisions.md" 2>/dev/null | tr '\n' '|'))"
   fi
   rm -rf "$dir"
 }
@@ -361,6 +380,7 @@ test_graph_node_fixes_again_while_the_residue_moves() {
 
 test_one_batch_one_fix_one_confirmation
 test_graph_node_defers_a_residue_that_stopped_moving
+test_graph_node_never_carries_a_red_check_into_a_pr
 test_graph_node_fixes_again_while_the_residue_moves
 test_graph_node_with_on_fail_fix_never_asks
 test_static_failure_reaches_the_gate_not_its_own_loop

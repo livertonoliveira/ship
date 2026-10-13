@@ -1332,6 +1332,20 @@ graph_gate_choice() {
   printf 'fix'
 }
 
+# What a graph node may never carry into a PR: a check that ran and is red.
+# Findings a remediation round could not close are a judgment and go to the
+# batch homolog as pending; a typecheck, a lint or a suite that fails is not a
+# judgment. Until 2026-10-13 both were deferred alike, and a graph merged 12
+# PRs with the static gate red and 44 with a test gate that never ran.
+execution_red() {
+  local scratch="$1" red=""
+  grep -q '^typecheck=[1-9]' "$scratch/static-exits.txt" 2>/dev/null && red="$red typecheck"
+  grep -q '^lint=[1-9]' "$scratch/static-exits.txt" 2>/dev/null && red="$red lint"
+  awk -F'|' '$2 ~ /^ *test *$/ { g = $6 } END { gsub(/ /, "", g); exit !(g == "fail") }' "$scratch/phase-status-test.md" 2>/dev/null \
+    && red="$red tests"
+  printf '%s' "${red# }"
+}
+
 # The graph-node half of the ask channel. graph.sh answer writes answer.txt and
 # wakes the worker through the driver; the worker blocks here in the meantime,
 # bounded so a tool call never hangs past what a runtime allows.
@@ -2208,6 +2222,18 @@ cmd_next() {
           next_emit "gate" "ask" "$RUN" "gate $g_decision — user decision required"
           ;;
       esac
+    fi
+  fi
+
+  # --- a node never opens a PR over a red check ------------------------------------
+  if [ -f "$SCRATCH/graph-node.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
+    local red
+    red="$(execution_red "$SCRATCH")"
+    if [ -n "$red" ]; then
+      printf '%s still failing after remediation — no PR is opened over a red check. Details: %s/static-failures.md, %s/test-failures.md\n' "$red" "$SCRATCH" "$SCRATCH" > "$SCRATCH/node-failed.txt"
+      graph_decision "$SCRATCH" "gate" "fail-node" "$red still failing after remediation"
+      next_body_add "$red still failing after the remediation rounds. This node is marked failed for the graph coordinator; do not open a PR, stop here and take no further action on this task."
+      next_emit "gate" "stop" "$RUN" "$red red after remediation — node failed"
     fi
   fi
 
