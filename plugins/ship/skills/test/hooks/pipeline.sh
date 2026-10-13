@@ -1487,6 +1487,25 @@ next_deps_gate() {
   [ -n "$ids" ] || return 0
 
   unresolved="$(bash "$HOOK_DIR/deps-gate.sh" unresolved "$scratch" ${pargs[@]+"${pargs[@]}"})"
+  # Two ways to resolve a state without a model in the loop. Inside a work
+  # graph the answer is structural: admission already waited for every
+  # declared dependency's PR to merge, so each id is merged by construction.
+  # Outside it, a Linear token answers from the API. Measured live: the model
+  # route cost every node three turns and a 60k-token re-read before the plan.
+  if [ -n "$unresolved" ] && [ -f "$scratch/graph-node.txt" ]; then
+    printf '%s\n' "$unresolved" | awk 'NF { printf "%s\tmerged\n", $1 }' >> "$scratch/deps-state.tsv"
+    graph_decision "$scratch" "deps" "merged" "structural: the graph admitted this node only after its dependencies merged: $(printf '%s' "$unresolved" | tr '\n' ' ')"
+    unresolved=""
+  elif [ -n "$unresolved" ] && [ "$store" = "linear" ] && [ -n "${LINEAR_API_KEY:-}" ]; then
+    local dep_id dep_type
+    while IFS= read -r dep_id; do
+      [ -n "$dep_id" ] || continue
+      dep_type="$(bash "$HOOK_DIR/linear.sh" state "$dep_id" 2>/dev/null | awk -F= '$1 == "type" { print $2; exit }')" || dep_type=""
+      [ -n "$dep_type" ] || break
+      printf '%s\t%s\n' "$dep_id" "$([ "$dep_type" = completed ] && echo merged || echo pending)" >> "$scratch/deps-state.tsv"
+    done <<< "$unresolved"
+    unresolved="$(bash "$HOOK_DIR/deps-gate.sh" unresolved "$scratch" ${pargs[@]+"${pargs[@]}"})"
+  fi
   if [ -n "$unresolved" ]; then
     next_body_add "This task declares blocking dependencies. Resolve each one's state yourself (no sub-agent):"
     if [ "$store" = "linear" ]; then
