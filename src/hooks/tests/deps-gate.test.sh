@@ -211,6 +211,52 @@ test_pipeline_asks_before_planning() {
   fi
 }
 
+# Measured live on a 27-node graph: every node spent three turns and a 60k
+# re-read resolving dependencies the graph had already waited on.
+test_graph_node_resolves_deps_structurally() {
+  local name="inside a work graph a declared dependency is merged by construction — no resolution turn, no model, decision logged"
+  local dir out; dir="$(mktemp -d)"
+  setup_repo "$dir"
+  stage_task "$dir" 'ABC-1'
+  : > "$dir/.context/ship-run/TASK-1/graph-node.txt"
+  out="$(next "$dir" TASK-1)"
+  local state tsv decided
+  state="$(field "$out" state)"
+  tsv="$(cat "$dir/.context/ship-run/TASK-1/deps-state.tsv" 2>/dev/null | tr '\t' ' ')"
+  decided="no"; grep -q 'structural' "$dir/.context/ship-run/TASK-1/graph-decisions.md" 2>/dev/null && decided="yes"
+  rm -rf "$dir"
+  if [ "$state" != "deps" ] && [ "$tsv" = "ABC-1 merged" ] && [ "$decided" = "yes" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$state tsv='$tsv' decided=$decided)"
+  fi
+}
+
+test_linear_key_resolves_deps_from_the_api() {
+  local name="with LINEAR_API_KEY and Linear storage the gate asks the API, not the model — completed is merged, anything else pending"
+  local dir out; dir="$(mktemp -d)"
+  setup_repo "$dir"
+  sed -i.bak 's/^- Configured: no/- Configured: yes/' "$dir/ship/config.md"
+  mkdir -p "$dir/bin"
+  cat > "$dir/bin/curl" <<'EOF2'
+#!/usr/bin/env bash
+cat > /dev/null
+printf '{"data":{"issue":{"id":"u1","state":{"type":"completed","name":"Done"}}}}'
+EOF2
+  chmod +x "$dir/bin/curl"
+  stage_task "$dir" 'ABC-1'
+  out="$(cd "$dir" && PATH="$dir/bin:$PATH" LINEAR_API_KEY=lin_x bash "$PIPELINE" next TASK-1)"
+  local state tsv
+  state="$(field "$out" state)"
+  tsv="$(cat "$dir/.context/ship-run/TASK-1/deps-state.tsv" 2>/dev/null | tr '\t' ' ')"
+  rm -rf "$dir"
+  if [ "$state" != "deps" ] && [ "$tsv" = "ABC-1 merged" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$state tsv='$tsv')"
+  fi
+}
+
 test_pipeline_continue_is_not_reasked_on_resume() {
   local name="--answer deps-continue proceeds, and the same question never returns on resume"
   local dir after resume; dir="$(mktemp -d)"
@@ -292,6 +338,8 @@ test_a_horizontal_rule_is_not_a_dependency
 test_self_reference_is_dropped
 test_ack_is_per_id
 test_pipeline_asks_before_planning
+test_graph_node_resolves_deps_structurally
+test_linear_key_resolves_deps_from_the_api
 test_pipeline_continue_is_not_reasked_on_resume
 test_pipeline_abort_stops
 test_pipeline_merged_dep_never_gates
