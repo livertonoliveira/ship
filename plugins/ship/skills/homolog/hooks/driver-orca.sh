@@ -41,7 +41,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|resume|stop|dispose|probe> [args...]" >&2
+  echo "usage: driver-orca.sh <dispatch|collect|wait|ask|resume|stop|dispose|probe|wake> [args...]" >&2
 }
 
 STATE=""
@@ -504,21 +504,17 @@ verb_dispatch() {
   # a 59-node graph: every wake landed as an unsubmitted draft, each new one
   # appended to the last, and the coordinator's box filled with a run-on line
   # until someone pressed Enter by hand in nearly every workspace.
-  local spec
+  local spec SELF_DIR
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   spec="$prompt
 
 When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only.
 
 Immediately after that send, wake the coordinator directly — worker_done alone only reaches it if it happens to be inside a wait window:
 
-  coord=\$(cat \"$STATE/driver-orca-coordinator.txt\" 2>/dev/null || true)
-  if [ -n \"\$coord\" ]; then
-    orca terminal send --terminal \"\$coord\" --text 'graph-wake: $task has something to report (done, failed or asking — its files say which, not this message). Invoke the ship:graph skill again with the same arguments as before — it resumes the live graph.'
-    sleep 1
-    orca terminal send --terminal \"\$coord\" --text '' --enter
-  fi
+  bash \"$SELF_DIR/driver-orca.sh\" wake $task --state \"$STATE\"
 
-Run all of it exactly as written — the second send is the Enter that submits the first. Send it once, ignore any failure, and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
+Run it once, exactly as written; ignore any failure and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
 
 Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else. When YOU must stop for a decision the pipeline did not ask (a task rule says stop and report, a blocker outside the task), post it the same way — bash \"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pipeline.sh\" ask $task \"<the question, the options, and the one you recommend>\" — and wait as it tells you; never report failure and go idle on a question."
 
@@ -876,6 +872,48 @@ verb_resume() {
 # The CLI being on PATH is not enough: it answers fine with the app closed, and a
 # graph that picked this driver on that basis would fail at the first dispatch.
 # So the probe asks the runtime whether it is reachable, and reads only that.
+# The push a finishing node gives its coordinator. It was three lines of shell
+# in the worker's brief, sent every time; it lives here so it can look first. A
+# coordinator inside `graph.sh run` is already listening on the node's files,
+# and a message typed at it is not a no-op there: it queues behind the running
+# call and starts a second pass over the graph when that call returns — the
+# re-entered skill over a live loop that dispatched nodes twice (2026-10-09).
+# So the wake is for the coordinator that is NOT looping: stopped on a question
+# for its user, or gone idle with a graph still open.
+verb_wake() {
+  local task="${REST[0]:-}"
+  [ -n "$task" ] || { echo "driver-orca.sh wake: <task> is required" >&2; exit 1; }
+  require_state
+
+  local holder beat now
+  holder="$( { cat "$STATE/run.lock/pid" 2>/dev/null || true; } | tr -cd '0-9')"
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    printf 'wake=skipped\nreason=the graph loop (pid %s) is running and reads this node from its files\n' "$holder"
+    return 0
+  fi
+  # Between two slices of the loop nothing holds the lock, for the seconds the
+  # executor takes to call it again.
+  beat="$( { cat "$STATE/run-heartbeat.txt" 2>/dev/null || true; } | tr -cd '0-9')"
+  now="$(date +%s)"
+  if [ -n "$beat" ] && [ $((now - beat)) -lt "${SHIP_RUN_HEARTBEAT_S:-900}" ]; then
+    printf 'wake=skipped\nreason=the graph loop ran %ss ago and is about to run again\n' "$((now - beat))"
+    return 0
+  fi
+
+  local coord
+  coord="$(cat "$STATE/driver-orca-coordinator.txt" 2>/dev/null || true)"
+  if [ -z "$coord" ] || ! command -v orca >/dev/null 2>&1; then
+    printf 'wake=skipped\nreason=no coordinator terminal to reach\n'
+    return 0
+  fi
+  # Two sends: text and Enter in one is a paste, and a paste eats its own
+  # trailing newline (see the note above the brief).
+  orca terminal send --terminal "$coord" --text "graph-wake: $task has something to report (done, failed or asking — its files say which, not this message). Invoke the ship:graph skill again with the same arguments as before — it resumes the live graph." >/dev/null 2>&1 || true
+  sleep "${SHIP_WAKE_ENTER_DELAY_S:-1}"
+  orca terminal send --terminal "$coord" --text '' --enter >/dev/null 2>&1 || true
+  printf 'wake=sent\n'
+}
+
 verb_probe() {
   # Not a readiness fact: this driver's dispatch leaves a worker running, so a
   # script can take the whole dispatch step with no caller behind it.
@@ -998,5 +1036,6 @@ case "$VERB" in
   stop)     verb_stop ;;
   dispose)  verb_dispose ;;
   probe)    verb_probe ;;
+  wake)     verb_wake ;;
   *)        usage; exit 1 ;;
 esac
