@@ -31,6 +31,7 @@ die() { echo "linear.sh: $*" >&2; exit 1; }
 usage() {
   echo "usage: linear.sh context <issue> --out <dir> [--docs <dir>]" >&2
   echo "       linear.sh transition <issue> started|completed [--prefer <state name>]" >&2
+  echo "       linear.sh state <issue>" >&2
 }
 
 require_key() {
@@ -269,11 +270,35 @@ cmd_transition() {
   echo "type=$got"
 }
 
+# `state <issue>`: the issue's workflow state type, for the dependency gate.
+# One request per id; the answer is one line the gate can read without a model
+# in the loop — measured live, resolving each declared dependency through the
+# Linear MCP cost a graph node three turns and 60k tokens of re-read context.
+cmd_state() {
+  local issue="${1:-}"
+  [ $# -ge 1 ] && shift || { usage; exit 1; }
+  valid_issue "$issue"
+  require_key
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  local q='query($i:String!){issue(id:$i){id state{type name}}}'
+  printf '{"query":%s,"variables":{"i":%s}}' "$(json_str "$q")" "$(json_str "$issue")" > "$tmp/body.json"
+  gql "$tmp/body.json" "$tmp/answer.json"
+  local t n
+  t="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.type" { print $2; exit }')"
+  n="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.name" { print $2; exit }')"
+  [ -n "$t" ] || die "state: no issue $issue in Linear"
+  echo "type=$t"
+  echo "state=$n"
+}
+
 [ $# -ge 1 ] || { usage; exit 1; }
 sub="$1"; shift
 case "$sub" in
   context) cmd_context "$@" ;;
   transition) cmd_transition "$@" ;;
+  state) cmd_state "$@" ;;
   -h|--help) usage ;;
   *) usage; exit 1 ;;
 esac

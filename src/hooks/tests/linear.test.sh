@@ -284,7 +284,32 @@ test_context_writes_the_issue_and_the_documents
 test_cached_documents_are_not_fetched_again
 test_transition_prefers_the_configured_name
 test_transition_falls_back_to_the_type
+test_state_answers_the_issue_state_type() {
+  local name="state prints the issue's workflow state type and name, one request, for the dependency gate"
+  local dir; dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  local out rc=0
+  out="$(lin "$dir" state MOB-1 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qx 'type=unstarted' \
+    && printf '%s' "$out" | grep -qx 'state=Todo' \
+    && [ "$(grep -c 'state{type name}' "$dir/bodies")" = "1" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_state_without_a_key_exits_4() {
+  local name="state without LINEAR_API_KEY exits 4 like the other verbs"
+  local rc=0
+  env -u LINEAR_API_KEY bash "$LINEAR" state MOB-1 >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 4 ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
+}
+
 test_transition_checks_what_linear_reports
+test_state_answers_the_issue_state_type
+test_state_without_a_key_exits_4
 test_pipeline_stages_the_linear_context_itself
 test_pipeline_stages_the_spec_without_the_model
 test_pipeline_without_a_key_keeps_the_mcp_path
