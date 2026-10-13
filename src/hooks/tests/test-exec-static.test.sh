@@ -99,7 +99,7 @@ test_unrecognized_test_framework_fails_with_actionable_message() {
   printf -- '- Test Framework: node:assert (custom runner)\n' >> "$d/config.md"
   local out rc=0
   out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md 2>&1)" || rc=$?
-  if [ "$rc" -eq 2 ] \
+  if [ "$rc" -eq 3 ] \
     && printf '%s' "$out" | grep -qF "Test Framework 'node:assert (custom runner)' is not a known runner" \
     && printf '%s' "$out" | grep -qF "fix Test Framework in stack.md or ship/config.md"; then
     log_pass "$name"

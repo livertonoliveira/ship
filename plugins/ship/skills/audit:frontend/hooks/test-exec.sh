@@ -286,7 +286,9 @@ build_test_command() {
       # the run, with nothing pointing back at the config field to fix.
       if [ "${#CMD_WORDS[@]}" -eq 0 ] || ! command -v "${CMD_WORDS[0]}" >/dev/null 2>&1; then
         echo "test-exec.sh: Test Framework '$runner' is not a known runner (jest, vitest, mocha, ava, pytest, node --test) and '${CMD_WORDS[0]:-}' is not an executable command on PATH — fix Test Framework in stack.md or ship/config.md" >&2
-        exit 2
+        # Not 2: that is "this project has no tests to run". A runner that is
+        # configured and cannot run is a gate that did not happen.
+        exit 3
       fi
       ;;
   esac

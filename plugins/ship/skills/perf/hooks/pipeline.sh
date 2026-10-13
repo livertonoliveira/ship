@@ -2060,6 +2060,7 @@ cmd_next() {
         next_emit "test-exec" "stop" "$RUN" "suite timeout"
         ;;
       2)  next_write_row "$SCRATCH" test skip "runner unresolved" ;;
+      3)  next_write_row "$SCRATCH" test fail "the configured Test Framework could not be run — fix it in ship/config.md" ;;
     esac
     next_consolidate "$SCRATCH" "$RUN" test
     touch "$SCRATCH/test-exec-done.txt"
@@ -2109,6 +2110,7 @@ cmd_next() {
     rte_rc=$?
     set -e
     [ "$rte_rc" -eq 2 ] && next_write_row "$SCRATCH" test skip "runner unresolved"
+    [ "$rte_rc" -eq 3 ] && next_write_row "$SCRATCH" test fail "the configured Test Framework could not be run — fix it in ship/config.md"
     if [ -f "$SCRATCH/tests-pre.txt" ]; then
       bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
       local rtr_rc=0
