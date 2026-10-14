@@ -2152,6 +2152,24 @@ cmd_next() {
 
   # --- remediation fix returned → hand over to the confirmation pass -----------
   if [ -f "$SCRATCH/remediation-fix-inflight.txt" ]; then
+    # The fix agent has no self-check: measured live, 3 of 16 rounds left the
+    # typecheck or lint red and bought a whole second round (confirmation agent,
+    # re-run, new batch) for a compile error the author could see. One bounded
+    # re-entry with the static report, before anything else looks at the tree.
+    local rf_rc=0
+    set +e
+    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
+    rf_rc=$?
+    set -e
+    if [ "$rf_rc" -eq 1 ] && [ ! -f "$SCRATCH/remediation-fix-redo-$RUN.txt" ]; then
+      touch "$SCRATCH/remediation-fix-redo-$RUN.txt"
+      rm -f "$SCRATCH/static-exits.txt"
+      cmd_dispatch "$SCRATCH" remediation-fix Agent ship-remediation-fix sonnet >/dev/null
+      next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $TASK_ID | Artifact language: $LANG_ | Your previous pass left the static checks red — read $SCRATCH/static-failures.md and fix every error it lists (your own edits, and any test file they broke); change nothing else. Then append what you changed to $SCRATCH/remediation-fix-report.md.\""
+      next_body_add "Dispatch the fix agent alone — no other tool call this turn."
+      next_common_after
+      next_emit "remediation-fix" "dispatch" "$RUN" "the fix left the static checks red — one more fix pass before the confirmation"
+    fi
     rm -f "$SCRATCH/remediation-fix-inflight.txt"
     touch "$SCRATCH/remediation-verify-inflight.txt"
     if grep -q '|finding|' "$SCRATCH/remediation-items.txt" 2>/dev/null; then
