@@ -26,7 +26,10 @@ case "$1 $2" in
     while [ $# -gt 0 ]; do [ "$1" = "--body-file" ] && cp "$2" "$GH_FAKE_BODY"; shift; done
     echo "https://github.com/acme/repo/pull/42" ;;
   "pr view")
-    [ -n "${GH_FAKE_PR_STATE:-}" ] && printf '%s\n' "$GH_FAKE_PR_STATE" || exit 1 ;;
+    if [ -n "${GH_FAKE_PR_OID:-}" ]; then
+      printf '{"url":"https://github.com/acme/repo/pull/42","number":42,"state":"%s","headRefOid":"%s"}\n' "${GH_FAKE_PR_STATE:-MERGED}" "$GH_FAKE_PR_OID"
+    elif [ -n "${GH_FAKE_PR_STATE:-}" ]; then printf '%s\n' "$GH_FAKE_PR_STATE"
+    else exit 1; fi ;;
   "pr merge") exit "${GH_FAKE_MERGE_EXIT:-0}" ;;
   *) exit 0 ;;
 esac
@@ -144,7 +147,54 @@ test_a_failed_automerge_is_reported_not_fatal() {
   rm -rf "$root"
 }
 
+# Measured live (MOB-7912): the first run's output was lost in hook noise, the
+# second saw a merged PR on the branch, reported "exists", and the node stopped
+# with its PR merged and the pipeline never told.
+test_a_second_run_over_its_own_landed_pr_is_landed_again() {
+  local name="a PR on the branch whose head is our HEAD is ours — the re-run reports landed (reused=1), pushes nothing, finalizes"
+  local root; root="$(mktemp -d)"; setup "$root"
+  local oid; oid="$(git -C "$root/repo" rev-parse HEAD)"
+  local out rc=0; out="$(cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" GH_FAKE_PR_OID="$oid" GH_FAKE_PR_STATE=MERGED PATH="$root/bin:$PATH" bash "$LAND" T1)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(field "$out" result)" = "landed" ] && [ "$(field "$out" reused)" = "1" ] \
+    && [ "$(field "$out" number)" = "42" ] && ! grep -q '^pr create' "$root/gh.log" \
+    && ! git -C "$root/remote.git" rev-parse -q --verify fix/T1-x >/dev/null 2>&1 \
+    && [ -f "$root/repo/.context/ship-run/T1/pr-created.txt" ] \
+    && grep -q '^result=landed' "$root/repo/.context/ship-run/T1/pr-land.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out log=$(tr '\n' '|' < "$root/gh.log" 2>/dev/null))"
+  fi
+  rm -rf "$root"
+}
+
+test_the_result_line_is_also_on_disk() {
+  local name="a landed run writes its result line to <scratch>/pr-land.txt for a caller whose output got lost"
+  local root; root="$(mktemp -d)"; setup "$root"
+  land "$root" T1 >/dev/null 2>&1 || true
+  if grep -q '^result=landed pr=https://github.com/acme/repo/pull/42' "$root/repo/.context/ship-run/T1/pr-land.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(cat "$root/repo/.context/ship-run/T1/pr-land.txt" 2>/dev/null))"
+  fi
+  rm -rf "$root"
+}
+
+test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is() {
+  local name="a MERGED PR on the task's branch is this task landed even after a squash moved our HEAD — landed (reused=1)"
+  local root; root="$(mktemp -d)"; setup "$root"
+  local out rc=0; out="$(cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" GH_FAKE_PR_OID=0000000000000000000000000000000000000000 GH_FAKE_PR_STATE=MERGED PATH="$root/bin:$PATH" bash "$LAND" T1)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(field "$out" result)" = "landed" ] && [ "$(field "$out" reused)" = "1" ] && ! grep -q '^pr create' "$root/gh.log"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$root"
+}
+
 test_a_committed_branch_lands_in_one_call
+test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is
+test_a_second_run_over_its_own_landed_pr_is_landed_again
+test_the_result_line_is_also_on_disk
 test_uncommitted_changes_are_handed_back_first
 test_a_stale_retry_branch_is_overwritten_with_a_lease
 test_a_remote_branch_with_an_open_pr_is_handed_back
