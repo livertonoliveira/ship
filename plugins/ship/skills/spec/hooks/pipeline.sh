@@ -22,7 +22,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
+REQUIRED_HOOKS="deps-bootstrap.sh test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1717,6 +1717,24 @@ cmd_next() {
   RUN="$(next_run_number "$SCRATCH")"
   LANG_="$(artifact_lang "$CONFIG")"
   STORE="$(storage_mode "$CONFIG")"
+
+  # --- dependencies (a fresh workspace may have none) ---------------------------
+  # Measured live on a multi-repo graph: the runtime installed deps for one repo's
+  # workspaces and not the other's, and every node of the second died on
+  # "Cannot find module" before a line of code was checked. Once per run.
+  if [ ! -f "$SCRATCH/deps-bootstrap.txt" ]; then
+    local db_rc=0
+    set +e
+    bash "$HOOK_DIR/deps-bootstrap.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    db_rc=$?
+    set -e
+    if [ "$db_rc" -eq 1 ]; then
+      printf 'environment: dependency install failed in this workspace — see %s/deps-bootstrap.log (fix the workspace, then resume)\n' "$SCRATCH" > "$SCRATCH/node-failed.txt"
+      rm -f "$SCRATCH/deps-bootstrap.txt"
+      next_body_add "The dependency install failed in this workspace (see $SCRATCH/deps-bootstrap.log). This is an environment failure, not a finding: nothing is implemented, no PR is opened. Report it and stop."
+      next_emit "deps-bootstrap" "stop" "$RUN" "environment: dependency install failed"
+    fi
+  fi
 
   # --- context staging (judgment: Linear/local artifact slicing) ---------------
   local docs_dir="" graph_dir
