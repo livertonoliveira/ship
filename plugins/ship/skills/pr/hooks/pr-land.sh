@@ -26,6 +26,8 @@ set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH="${GH_BIN:-gh}"
+# Whatever still slips through set -e says so instead of printing nothing.
+trap 'rc=$?; [ "$rc" -ne 0 ] && echo "pr-land.sh: aborted at line $LINENO (exit $rc)" >&2' EXIT
 
 usage() { echo "usage: pr-land.sh <task-id> [--config <path>] [--summary <file>] [--title <text>]" >&2; }
 
@@ -44,7 +46,10 @@ done
 case "$task" in *[!A-Za-z0-9_-]*) echo "pr-land.sh: invalid task id: $task" >&2; exit 1 ;; esac
 scratch=".context/ship-run/$task"
 
-field() { printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-; }
+# Every lookup below is a grep that may match nothing; under set -e/pipefail an
+# empty match must be an empty value, never a silent exit — measured live on
+# three nodes whose pr-land printed nothing and whose PRs landed untold.
+field() { { printf '%s\n' "$1" | grep -m1 "^$2=" || true; } | cut -d= -f2-; }
 
 pre="$(bash "$HOOK_DIR/pr-preflight.sh" --task "$task" --config "$config")"
 storage="$(field "$pre" storage)"
@@ -79,7 +84,7 @@ fi
 sync_out="$(bash "$HOOK_DIR/pr-sync.sh" --remote "$remote" --base "$pr_base" 2>/dev/null || true)"
 sync_result="$(field "$sync_out" result)"
 if [ "$sync_result" = "conflict" ]; then
-  printf 'result=conflict files=%s\n' "$(printf '%s\n' "$sync_out" | grep '^conflict:' | sed 's/^conflict://' | paste -sd, -)"
+  printf 'result=conflict files=%s\n' "$(printf '%s\n' "$sync_out" | { grep '^conflict:' || true; } | sed 's/^conflict://' | paste -sd, -)"
   exit 4
 fi
 # A rebase moved the tree the checks were proven on: prove it again.
@@ -87,6 +92,33 @@ if [ "$sync_result" = "clean" ] && [ "$verified" = "yes" ]; then
   rc=0
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
   case "$rc" in 0|2) ;; *) printf 'result=red exit=%s report=%s/test-failures.md\n' "$rc" "$scratch"; exit 3 ;; esac
+fi
+
+# --- an earlier run already landed this exact tree -----------------------------------
+# Measured live: the first run's output was lost in the caller's hook noise, the
+# second run saw a merged PR on the branch and reported "exists" — and the
+# node stopped with its PR merged. A PR whose head is our HEAD is ours.
+existing="$("$GH" pr view "$branch" --json url,number,state,headRefOid 2>/dev/null || true)"
+if [ -n "$existing" ]; then
+  ex_oid="$(printf '%s' "$existing" | { grep -oE '"headRefOid":"[0-9a-f]+"' || true; } | cut -d'"' -f4)"
+  ex_state="$(printf '%s' "$existing" | { grep -oE '"state":"[A-Z]+"' || true; } | cut -d'"' -f4)"
+  # The branch is this task's: a PR merged from it IS this task landed (after a
+  # squash merge our HEAD is the squash commit, so the head oid no longer tells).
+  # An open PR counts only when its head is our HEAD.
+  if [ "$ex_state" = "MERGED" ] || [ "$ex_oid" = "$(git rev-parse HEAD)" ]; then
+    pr_url="$(printf '%s' "$existing" | { grep -oE '"url":"[^"]+"' || true; } | cut -d'"' -f4)"
+    number="${pr_url##*/}"
+    automerge="skipped"
+    if [ "$keep_context" = "yes" ] && [ "$ex_state" = "OPEN" ]; then
+      if "$GH" pr merge --auto --squash "$branch" >/dev/null 2>&1; then automerge="armed"; else automerge="failed"; fi
+    fi
+    fin_args=(); [ "$keep_context" = "yes" ] && fin_args+=(--keep-context)
+    fin_out="$(bash "$HOOK_DIR/pr-finalize.sh" "$task" ${fin_args[@]+"${fin_args[@]}"} 2>/dev/null || true)"
+    line="result=landed pr=$pr_url number=$number branch=$branch automerge=$automerge linear=already context=$(field "$fin_out" context) reused=1"
+    [ -d "$scratch" ] && printf '%s\n' "$line" > "$scratch/pr-land.txt"
+    printf '%s\n' "$line"
+    exit 0
+  fi
 fi
 
 # --- push ---------------------------------------------------------------------------
@@ -120,7 +152,7 @@ subjects="$(git log --reverse --format='%s' "$remote/$pr_base..HEAD" 2>/dev/null
 if [ -z "$title" ]; then
   # The PR's type is the change's, not its tests': test/docs/chore count only
   # when nothing else was committed; ties go to the earliest commit.
-  types="$(printf '%s\n' "$subjects" | grep -oE '^[a-z]+(\([^)]*\))?!?:' | sed -E 's/[(!:].*//')"
+  types="$(printf '%s\n' "$subjects" | { grep -oE '^[a-z]+(\([^)]*\))?!?:' || true; } | sed -E 's/[(!:].*//')"
   main_types="$(printf '%s\n' "$types" | grep -vE '^(test|docs|chore|style|ci)$' || true)"
   [ -n "$main_types" ] || main_types="$types"
   type="$(printf '%s\n' "$main_types" | awk 'NF { c[$1]++; if (!($1 in o)) o[$1] = NR } END { best = ""; for (t in c) if (best == "" || c[t] > c[best] || (c[t] == c[best] && o[t] < o[best])) best = t; print best }')"
@@ -129,7 +161,7 @@ if [ -z "$title" ]; then
   if [ -s "$scratch/linear/issue.md" ]; then
     issue_title="$(head -1 "$scratch/linear/issue.md" | sed -E 's/^#+[[:space:]]*//; s/^[A-Z]+-?[0-9]+[[:space:]]*(—|-|:)[[:space:]]*//')"
   elif [ -s "$scratch/spec.md" ]; then
-    issue_title="$(grep -m1 -E '^#+ ' "$scratch/spec.md" | sed -E 's/^#+[[:space:]]*//; s/^[A-Z]+-?[0-9]+[[:space:]]*(—|-|:)[[:space:]]*//')"
+    issue_title="$({ grep -m1 -E '^#+ ' "$scratch/spec.md" || true; } | sed -E 's/^#+[[:space:]]*//; s/^[A-Z]+-?[0-9]+[[:space:]]*(—|-|:)[[:space:]]*//')"
   fi
   [ -n "$issue_title" ] || issue_title="$(printf '%s\n' "$subjects" | head -1 | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//')"
   title="$type: $issue_title ($task)"
@@ -183,7 +215,7 @@ if [ "$storage" = "linear" ]; then
     { printf 'PR aberto: %s\n\n' "$pr_url"; printf '%s\n' "$subjects" | sed 's/^/- /'; } > "$note"
     bash "$HOOK_DIR/linear.sh" comment "$task" --body-file "$note" >/dev/null 2>&1 || linear="partial"
     rm -f "$note"
-    done_name="$(grep -m1 -E '^- Done Status:' "$config" 2>/dev/null | sed -E 's/^- Done Status:[[:space:]]*//')"
+    done_name="$({ grep -m1 -E '^- Done Status:' "$config" 2>/dev/null || true; } | sed -E 's/^- Done Status:[[:space:]]*//')"
     [ "$done_name" = "not configured" ] && done_name=""
     bash "$HOOK_DIR/linear.sh" transition "$task" completed ${done_name:+--prefer "$done_name"} >/dev/null 2>&1 || linear="partial"
   else
@@ -197,4 +229,6 @@ fin_args=()
 fin_out="$(bash "$HOOK_DIR/pr-finalize.sh" "$task" ${fin_args[@]+"${fin_args[@]}"} 2>/dev/null || true)"
 context="$(field "$fin_out" context)"
 
-printf 'result=landed pr=%s number=%s branch=%s automerge=%s linear=%s context=%s\n' "$pr_url" "$number" "$branch" "$automerge" "$linear" "${context:-unknown}"
+line="result=landed pr=$pr_url number=$number branch=$branch automerge=$automerge linear=$linear context=${context:-unknown}"
+[ -d "$scratch" ] && printf '%s\n' "$line" > "$scratch/pr-land.txt"
+printf '%s\n' "$line"
