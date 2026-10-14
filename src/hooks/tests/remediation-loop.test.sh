@@ -288,7 +288,9 @@ test_a_fix_that_changes_nothing_still_terminates() {
   local dir; dir="$(mktemp -d)"; setup_repo "$dir"
   SEED_FINDING=0 FIX_MODE=noop CONFIRM_VERDICT=resolved
   drive "$dir" T6 || true
-  if [ "$FIX_DISPATCHES" = "1" ] \
+  # Two fix dispatches at most: the round's own, plus the one static re-entry a
+  # fix that left the checks red is granted. A third would be the loop.
+  if [ "$FIX_DISPATCHES" -ge 1 ] && [ "$FIX_DISPATCHES" -le 2 ] \
     && { [ "$LAST_ACTION" = "ask" ] || [ "$LAST_ACTION" = "stop" ]; }; then
     log_pass "$name"
   else
