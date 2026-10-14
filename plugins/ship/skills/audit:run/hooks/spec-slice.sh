@@ -30,7 +30,6 @@ fi
 [ -s "$proposal" ] || { echo "spec-slice.sh: proposal not found: $proposal" >&2; exit 3; }
 
 cited="$(grep -oE 'REQ-[0-9]+' "$issue" | awk '!seen[$0]++' || true)"
-[ -n "$cited" ] || exit 3
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
@@ -42,28 +41,38 @@ awk '
     if (id != "") printf "%s\t%s\t%s\t%s\n", id, task, first, text
     id = ""; text = ""
   }
+  # A requirement may open as a heading ("### REQ-001 — ...") — measured on a
+  # spec whose Proposal wrote every REQ that way, and whose 90 issues were all
+  # staged by hand because no block ever matched.
+  /^(#+[[:space:]]+)?REQ-[0-9]+[^0-9]/ {
+    flush()
+    line = $0
+    sub(/^#+[[:space:]]+/, "", line)
+    match(line, /^REQ-[0-9]+/)
+    id = substr(line, 1, RLENGTH)
+    first = line
+    text = line
+    next
+  }
   /^#/ {
     flush()
     if (match($0, /TASK-[0-9]+/)) task = substr($0, RSTART, RLENGTH)
-    next
-  }
-  /^REQ-[0-9]+[^0-9]/ {
-    flush()
-    match($0, /^REQ-[0-9]+/)
-    id = substr($0, 1, RLENGTH)
-    first = $0
-    text = $0
     next
   }
   id != "" { text = text "\001" $0 }
   END { flush() }
 ' "$proposal" > "$tmp"
 
+# An issue that cites no requirement the Proposal defines still gets a spec:
+# its own text (the ACs and scenarios live there) plus the one-line scope index
+# of every REQ. Measured: a 90-issue spec keyed by audit ids, not REQs, had every
+# node stage this by hand — five turns and ~60k tokens of Proposal each.
 found=0
 for r in $cited; do
   awk -F'\t' -v r="$r" '$1 == r { f = 1 } END { exit !f }' "$tmp" && found=1
 done
-[ "$found" = 1 ] || exit 3
+[ "$found" = 1 ] || cited=""
+[ -s "$tmp" ] || exit 3
 
 {
   cat "$issue"
@@ -94,4 +103,4 @@ done
 } > "$out"
 
 printf 'spec=%s\n' "$out"
-printf 'cited=%s\n' "$(printf '%s ' $cited | sed 's/ $//')"
+printf 'cited=%s\n' "$([ -n "$cited" ] && printf '%s ' $cited | sed 's/ $//' || printf 'none')"
