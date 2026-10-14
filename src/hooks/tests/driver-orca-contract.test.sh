@@ -81,6 +81,13 @@ case "$1 ${2:-}" in
     exit 0 ;;
   "orchestration run-create")
     printf '{ "ok": true, "result": { "run": { "id": "run_deadbeef01" } } }' ;;
+  "orchestration run-current")
+    # ORCA_FAKE_BOUND is the Run this terminal is bound to (the measured case:
+    # a new coordinator terminal, bound to nothing, holding a Run id on disk).
+    if [ -n "${ORCA_FAKE_BOUND:-}" ]; then printf '{ "ok": true, "result": { "run": { "id": "%s" } } }' "$ORCA_FAKE_BOUND"
+    else printf '{ "ok": false, "error": { "code": "not_bound" } }'; fi ;;
+  "orchestration run-use")
+    printf '{ "ok": true, "result": { "run": { "id": "run_deadbeef01" } } }' ;;
   "orchestration task-create")
     printf '{ "ok": true, "result": { "task": { "id": "task_deadbeef02", "created_by_terminal_handle": "term_c" } } }' ;;
   "orchestration worker-start")
@@ -129,6 +136,42 @@ new_case() {
   root="$(mktemp -d)"
   new_fake_orca "$root"
   printf '%s' "$root"
+}
+
+# Measured live 2026-10-14: the coordinator moved to a new terminal (plugin
+# upgrade mid-graph), the Run id stayed on disk, and five dispatches in a row
+# were refused with "this coordinator terminal is no longer bound to Run".
+test_a_terminal_not_bound_to_the_stored_run_rebinds_before_dispatching() {
+  local root
+  root="$(new_case)"
+  mkdir -p "$root/state"
+  printf 'run_deadbeef01\n' > "$root/state/driver-orca-run.txt"
+  run_dispatch "$root"
+  local use_line create_count
+  use_line="$(grep -n '^orchestration run-use ' "$root/argv.log" | head -1 | cut -d: -f1)"
+  task_line="$(grep -n '^orchestration task-create ' "$root/argv.log" | head -1 | cut -d: -f1)"
+  create_count="$(grep -c '^orchestration run-create ' "$root/argv.log" || true)"
+  if [ -n "$use_line" ] && [ -n "$task_line" ] && [ "$use_line" -lt "$task_line" ] && [ "$create_count" -eq 0 ] \
+    && grep -q -- '--id run_deadbeef01' "$root/argv.log"; then
+    log_pass "a terminal not bound to the stored Run rebinds (run-use) before task-create, and creates no second Run"
+  else
+    log_fail "a terminal not bound to the stored Run rebinds before task-create (use=$use_line task=$task_line creates=$create_count)"
+  fi
+  rm -rf "$root"
+}
+
+test_a_bound_terminal_does_not_rebind() {
+  local root
+  root="$(new_case)"
+  mkdir -p "$root/state"
+  printf 'run_deadbeef01\n' > "$root/state/driver-orca-run.txt"
+  ORCA_FAKE_BOUND=run_deadbeef01 run_dispatch "$root"
+  if ! grep -q '^orchestration run-use ' "$root/argv.log"; then
+    log_pass "a terminal already bound to the stored Run makes no run-use call"
+  else
+    log_fail "a terminal already bound to the stored Run makes no run-use call"
+  fi
+  rm -rf "$root"
 }
 
 # --- the exact failure that was measured -------------------------------------
@@ -1042,6 +1085,8 @@ test_dispose_waits_for_the_runtime_to_finish_removing() {
   rm -rf "$root"
 }
 
+test_a_terminal_not_bound_to_the_stored_run_rebinds_before_dispatching
+test_a_bound_terminal_does_not_rebind
 test_a_run_is_created_before_anything_else
 test_task_create_carries_the_run
 test_the_retired_call_is_never_made

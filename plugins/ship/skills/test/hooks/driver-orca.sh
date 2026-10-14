@@ -198,6 +198,7 @@ ensure_run() {
 
   run="$(cat "$f" 2>/dev/null || true)"
   if [ -n "$run" ]; then
+    ensure_bound "$run"
     printf '%s' "$run"
     return 0
   fi
@@ -224,6 +225,20 @@ ensure_run() {
 
   [ -n "$run" ] || return 1
   printf '%s' "$run"
+}
+
+# A Run is bound to the terminal that created it. A coordinator that moved to a
+# new terminal (a plugin upgrade mid-graph, a closed pane) still holds the Run
+# id on disk but is no longer its coordinator, and every task-create answers
+# "this coordinator terminal is no longer bound to Run" — measured live on
+# 2026-10-14: five refused dispatches and a node marked failed before anyone
+# noticed. `run-use` rebinds the calling terminal; it is idempotent, so the
+# check costs one read and the rebind happens only when the handle differs.
+ensure_bound() {
+  local run="$1" current
+  current="$(orca orchestration run-current --json 2>/dev/null | json_id run_ || true)"
+  [ "$current" = "$run" ] && return 0
+  orca orchestration run-use --id "$run" --json >/dev/null 2>&1 || true
 }
 
 # --- proving the worker is actually working ---------------------------------
