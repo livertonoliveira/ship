@@ -75,74 +75,25 @@ Only if `on_default_branch=yes`; otherwise reuse `branch=` from the preflight.
 
 Analyze `git diff`/`git status`, group into atomic commits, stage per file (`git add <files>`, never `git add .` across multiple commits). Suggested order: infrastructure (types/schemas/migrations) → business logic → presentation → configuration → tests → quality fixes.
 
-### 4. Pre-push validation
-
-Preflight printed `verified_tree=yes` → skip: the pipeline already passed typecheck, lint and the suite on this exact tree, and commits do not change it. Otherwise `bash "@@ship/hooks/test-exec.sh" <scratch-dir> --config ship/config.md` (the gate's own checks: typecheck, lint, suite — never an invocation of your own; exit 0 = green, failures in `<scratch-dir>/test-failures.md`); on failure fix, re-commit, re-run.
-
-### 5. Sync onto the base, then push
+### 4. Land (one deterministic call)
 
 ```bash
-bash "@@ship/hooks/pr-sync.sh" --remote <remote> --base <pr_base>
+bash "@@ship/hooks/pr-land.sh" <task-id> [--summary <file>]
 ```
 
-`<remote>` and `<pr_base>` are the preflight's — never the literal `origin`/`main`, which are conventions this repo may not follow.
+It runs the gate's own checks (skipped when the preflight printed `verified_tree=yes`), syncs onto `pr_base` with pr-sync.sh, pushes, writes the title and body from the commits and the gate rows (`--summary` replaces the Summary section with your own prose), opens the PR with `gh pr create --base <pr_base>`, arms GitHub's auto-merge for graph nodes (`keep_context=yes`), links and comments the PR in Linear and completes the issue when `LINEAR_API_KEY` is set, and runs pr-finalize.sh. Act on its `result=` line:
 
-- `result=clean` (or any `skipped-`) → `git push -u <remote> <branch-name>`.
-- `result=conflict` → resolve every `conflict:<path>` **yourself, here**: you implemented this change and hold its intent, so never delegate it and never ask the user to arbitrate what you already know. Keep both sides' behavior; drop nothing you cannot justify. Then `bash "@@ship/hooks/pr-sync.sh" --continue`, repeating while it still reports `conflict`. Once clean, run step 4's checks in full (the resolution changed the tree, so `verified_tree` no longer applies), then push.
+- `uncommitted` → step 3 first, then run it again.
+- `red` → fix what `<scratch>/test-failures.md` lists, re-commit, run it again.
+- `conflict files=…` → resolve every listed file **yourself, here**: you implemented this change and hold its intent, so never delegate it and never ask the user to arbitrate what you already know. Keep both sides' behavior. Then `bash "@@ship/hooks/pr-sync.sh" --continue` and run it again. Ask the user only when the conflict encodes a product decision your task never made.
+- `remote-branch-exists` → a PR is open or merged for this branch already; never rename it and never force-push — report it.
+- `linear=mcp-needed` → `create_attachment` with the PR URL, `save_comment` with a one-line summary, then @@ship/patterns/linear-status.md to its completed state. **Local:** mark `tasks.md` items 4.2 and 4.3 completed.
 
-Ask the user only when the conflict encodes a product decision your task never made.
+**Strict profile** (preflight `profile=strict`): before landing, require the user to have run `/ship:audit:run` and report its gate — `FAIL` blocks the PR, `WARN` needs a literal `yes`, `PASS` continues. Audit commands are never invoked from inside the pipeline.
 
-### 6. Strict-profile audit gate
+### 5. Finalize
 
-Skip unless the preflight printed `profile=strict`.
-
-Audit commands are never invoked from inside the pipeline — require the user to have already run `/ship:audit:run` and report the gate (`PASS`/`WARN`/`FAIL`, case-insensitive) plus a findings summary; ask again if missing/ambiguous.
-- **FAIL:** block PR creation, tell the user to resolve critical/high findings, STOP.
-- **WARN:** ask for the findings list, then require a literal `yes`/`no` to proceed; `no` → STOP.
-- **PASS:** continue.
-
-### 7. Create PR
-
-#### Quality Report Aggregation
-
-Apply the lazy-load algorithm at @@ship/patterns/lazy-load-findings.md per phase (perf, security, review). **Linear:** findings come from the cached quality-report comment (from Prerequisites); link = that comment's URL. **Local:** read `ship/changes/<feature>/report-<task-id>.md`; path = same file.
-
-Build the body from the loaded artifacts following the PR Body Template section of @@ship/report-templates.md, then create via HEREDOC:
-
-```bash
-gh pr create --base <pr_base> --title "<conventional commit style title>" --body "$(cat <<'EOF'
-<body content>
-EOF
-)"
-```
-
-#### Graph nodes: arm auto-merge
-
-`keep_context=yes` only — the gate that produced this PR (test ∥ quality) already came back green, so there is nothing left for a human to wait on:
-
-```bash
-gh pr merge --auto --squash <branch-name>
-```
-
-This arms GitHub's native auto-merge — it still waits on the forge's own required checks/branch protection and merges nothing itself; `graph.sh poll` (never this skill) is what later reads the merge back. If the command fails (auto-merge not enabled on the repo, or branch protection missing), log it plainly and report it in Step 10 — never treat the failure as a pipeline error.
-
-### 8. Update artifacts
-
-**Linear (all mandatory):** `create_attachment` with the PR URL; `save_comment` with the PR URL and a brief summary; re-`get_issue`, confirm `state.type == "completed"` — a stale-name `save_issue` no-op earlier can leave it open, so re-run @@ship/patterns/linear-status.md if needed.
-
-**Local:** mark `tasks.md` items 4.2 and 4.3 (if applicable) completed.
-
-### 9. Clean up & archive (one deterministic call)
-
-```bash
-bash "@@ship/hooks/pr-finalize.sh" <task-id> [--keep-context] [--feature <feature-name>]
-```
-
-Pass `--keep-context` when the preflight printed `keep_context=yes` or the user asked for it (log the printed `context=` result); pass `--feature` in Local mode only, and never alongside `keep_context=yes` (the graph's other nodes still need that feature folder). It removes the task's scratch dir — never the shared parent — and archives `ship/changes/<feature>` under `archive/<date>-<feature>`.
-
-### 10. Finalize
-
-Inform the user of the PR URL, commit count, and branch name.
+Inform the user of the PR URL (`pr=`), commit count, and branch name (`branch=`).
 
 - `keep_context=yes` and auto-merge armed: say auto-merge is armed and will complete once the forge's required checks pass — no action needed; the graph polls this PR and releases dependent nodes once it lands.
 - `keep_context=yes` and arming failed: say auto-merge could not be armed (reason from the failed command); the graph merges the PR once the forge reports it CLEAN, unless its merge-policy is `human`.
