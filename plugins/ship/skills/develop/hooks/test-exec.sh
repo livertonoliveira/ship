@@ -82,6 +82,14 @@ resolve_static_checks() {
     LINT_CMD="$runner run lint"
     LINT_FROM_PKG=1
   fi
+  # A config that spells the package script out ("Lint: pnpm lint") is the same
+  # script — measured live on four repos at once: every static gate ran eslint
+  # over the whole tree (two cores for a minute, two or three times a node, load
+  # 30 on 14 cores with five nodes in flight) because the literal was opaque.
+  case "$LINT_CMD" in
+    npm\ run\ lint|pnpm\ run\ lint|yarn\ run\ lint|bun\ run\ lint|pnpm\ lint|yarn\ lint|bun\ lint|npm\ lint)
+      pkg_script_exists lint && LINT_FROM_PKG=1 ;;
+  esac
   scope_lint_cmd "$scratch"
 }
 
@@ -113,7 +121,10 @@ eslint_collect_exts() {
   case "$tok" in
     *'*.{'*'}'*) e="${tok##*\*.\{}"; e="${e%%\}*}"; EXTS="$EXTS ${e//,/ }" ;;
     *'*.'*)      e="${tok##*\*.}"; case "$e" in *[/\*\{\}]*) ;; *) EXTS="$EXTS $e" ;; esac ;;
-    .*|*,*)      EXTS="$EXTS ${tok//,/ }" ;;
+    # `.ts,.tsx` is an extension list; a bare `.` (or `./src`) is a directory
+    # target and restricts nothing — measured live: treating `.` as an empty
+    # extension emptied the file list and the whole tree was linted instead.
+    .[A-Za-z]*|*,*) EXTS="$EXTS ${tok//,/ }" ;;
   esac
 }
 

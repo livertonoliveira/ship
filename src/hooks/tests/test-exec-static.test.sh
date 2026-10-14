@@ -318,7 +318,32 @@ test_a_runner_written_for_people_is_still_the_runner
 test_eslint_placeholder_gets_only_files_eslint_reads
 test_files_placeholder_takes_an_extension_list
 test_lint_with_nothing_it_reads_is_not_run
+# Measured live on four repos (2026-10-14): "Lint: pnpm lint" in the config and
+# "eslint . --max-warnings 0" in package.json — the gate linted the whole tree
+# on every static run, two cores for a minute, two or three times per node.
+test_a_configured_package_lint_is_scoped_like_a_derived_one() {
+  local name="'Lint: pnpm lint' in the config is the package script — its globs drop and only touched files are linted"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf -- '- Lint: pnpm lint\n- Package Manager: pnpm\n' >> "$d/config.md"
+  printf '{"scripts":{"lint":"eslint . --max-warnings 0"}}\n' > "$d/package.json"
+  mkdir -p "$d/node_modules/.bin" "$d/src"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/node_modules/.bin/eslint"
+  chmod +x "$d/node_modules/.bin/eslint"
+  : > "$d/src/a.ts"
+  printf 'src/a.ts\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|')" = "--max-warnings|0|src/a.ts|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
 test_eslint_package_script_is_scoped_to_touched_files
+test_a_configured_package_lint_is_scoped_like_a_derived_one
 test_lint_runs_unscoped_without_a_footprint
 test_lint_fix_runs_only_on_touched_files
 test_lint_fix_without_placeholder_never_runs_repo_wide
