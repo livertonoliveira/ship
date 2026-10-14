@@ -37,6 +37,12 @@ done
 cat > /dev/null
 printf '%s\n' "$body" >> "$FAKE_DIR/bodies"
 case "$body" in
+  *attachmentLinkURL*)
+    printf '{"data":{"attachmentLinkURL":{"success":true}}}' ;;
+  *commentCreate*)
+    printf '{"data":{"commentCreate":{"success":true}}}' ;;
+  *'issue(id:$i){id}'*)
+    printf '{"data":{"issue":{"id":"uuid-1"}}}' ;;
   *issueUpdate*)
     printf '{"data":{"issueUpdate":{"success":true,"issue":{"state":{"name":"x","type":"%s"}}}}}' "${FAKE_REPORTED:-started}" ;;
   *team*)
@@ -308,7 +314,39 @@ test_state_without_a_key_exits_4() {
 }
 
 test_transition_checks_what_linear_reports
+test_attach_links_the_pr_to_the_issue() {
+  local name="attach resolves the issue uuid and links the URL in one mutation"
+  local dir; dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  local out rc=0
+  out="$(lin "$dir" attach MOB-1 https://github.com/x/y/pull/7 --title "PR #7" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "attached=1" ] \
+    && grep -q 'attachmentLinkURL' "$dir/bodies" && grep -q 'uuid-1' "$dir/bodies" && grep -q 'pull/7' "$dir/bodies"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
+test_comment_posts_the_body_file() {
+  local name="comment posts the file's text as a comment on the issue"
+  local dir; dir="$(mktemp -d)"
+  install_fake_curl "$dir"
+  printf 'PR aberto: https://x/pull/7\n\n- fix: a\n' > "$dir/note.md"
+  local out rc=0
+  out="$(lin "$dir" comment MOB-1 --body-file "$dir/note.md" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "commented=1" ] && grep -q 'commentCreate' "$dir/bodies" && grep -q 'PR aberto' "$dir/bodies"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$dir"
+}
+
 test_state_answers_the_issue_state_type
+test_attach_links_the_pr_to_the_issue
+test_comment_posts_the_body_file
 test_state_without_a_key_exits_4
 test_pipeline_stages_the_linear_context_itself
 test_pipeline_stages_the_spec_without_the_model

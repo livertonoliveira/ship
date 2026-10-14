@@ -32,6 +32,8 @@ usage() {
   echo "usage: linear.sh context <issue> --out <dir> [--docs <dir>]" >&2
   echo "       linear.sh transition <issue> started|completed [--prefer <state name>]" >&2
   echo "       linear.sh state <issue>" >&2
+  echo "       linear.sh attach <issue> <url> [--title <t>]" >&2
+  echo "       linear.sh comment <issue> --body-file <file>" >&2
 }
 
 require_key() {
@@ -293,12 +295,74 @@ cmd_state() {
   echo "state=$n"
 }
 
+# `attach <issue> <url> [--title <t>]`: link the PR to the issue (attachmentLinkURL).
+# `comment <issue> --body-file <f>`: post a comment. Both one request, for the
+# PR step — measured live, the model made these two MCP calls at ~90k tokens of
+# context on every node.
+issue_uuid() {
+  local issue="$1" tmp="$2"
+  local q='query($i:String!){issue(id:$i){id}}'
+  printf '{"query":%s,"variables":{"i":%s}}' "$(json_str "$q")" "$(json_str "$issue")" > "$tmp/uuid-body.json"
+  gql "$tmp/uuid-body.json" "$tmp/uuid.json"
+  flat < "$tmp/uuid.json" | awk -F '\t' '$1 == "data.issue.id" { print $2; exit }'
+}
+
+cmd_attach() {
+  local issue="${1:-}" url="${2:-}" title=""
+  [ $# -ge 2 ] && shift 2 || { usage; exit 1; }
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --title) title="$2"; shift 2 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  valid_issue "$issue"
+  require_key
+  local tmp uuid
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  uuid="$(issue_uuid "$issue" "$tmp")"
+  [ -n "$uuid" ] || die "attach: no issue $issue in Linear"
+  local q='mutation($i:String!,$u:String!,$t:String){attachmentLinkURL(issueId:$i,url:$u,title:$t){success}}'
+  printf '{"query":%s,"variables":{"i":%s,"u":%s,"t":%s}}' "$(json_str "$q")" "$(json_str "$uuid")" "$(json_str "$url")" "$(json_str "${title:-$url}")" > "$tmp/body.json"
+  gql "$tmp/body.json" "$tmp/answer.json"
+  grep -q '"success"[[:space:]]*:[[:space:]]*true' "$tmp/answer.json" || die "attach: Linear did not confirm the attachment"
+  echo "attached=1"
+}
+
+cmd_comment() {
+  local issue="${1:-}" body_file=""
+  [ $# -ge 1 ] && shift || { usage; exit 1; }
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --body-file) body_file="$2"; shift 2 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  valid_issue "$issue"
+  [ -n "$body_file" ] && [ -f "$body_file" ] || die "comment: --body-file <file> is required"
+  require_key
+  local tmp uuid body
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  uuid="$(issue_uuid "$issue" "$tmp")"
+  [ -n "$uuid" ] || die "comment: no issue $issue in Linear"
+  body="$(cat "$body_file")"
+  local q='mutation($i:String!,$b:String!){commentCreate(input:{issueId:$i,body:$b}){success}}'
+  printf '{"query":%s,"variables":{"i":%s,"b":%s}}' "$(json_str "$q")" "$(json_str "$uuid")" "$(json_str "$body")" > "$tmp/body.json"
+  gql "$tmp/body.json" "$tmp/answer.json"
+  grep -q '"success"[[:space:]]*:[[:space:]]*true' "$tmp/answer.json" || die "comment: Linear did not confirm the comment"
+  echo "commented=1"
+}
+
 [ $# -ge 1 ] || { usage; exit 1; }
 sub="$1"; shift
 case "$sub" in
   context) cmd_context "$@" ;;
   transition) cmd_transition "$@" ;;
   state) cmd_state "$@" ;;
+  attach) cmd_attach "$@" ;;
+  comment) cmd_comment "$@" ;;
   -h|--help) usage ;;
   *) usage; exit 1 ;;
 esac
