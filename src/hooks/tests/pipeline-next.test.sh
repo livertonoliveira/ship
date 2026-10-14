@@ -932,6 +932,45 @@ test_a_second_spec_break_is_not_re_entered() {
   fi
 }
 
+# Measured live (2026-10-14): a multi-repo graph's platform-agendx workspaces
+# arrived without node_modules and every node died on "Cannot find module".
+test_fresh_workspace_gets_its_dependencies_before_anything_runs() {
+  local name="a lockfile with no packages installed → the pipeline installs once at init; a failing install stops the run as an environment failure"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  mkdir -p "$dir/bin"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/pm-calls.txt"\nmkdir -p node_modules/left-pad\nexit 0\n' "$dir" > "$dir/bin/pnpm"
+  chmod +x "$dir/bin/pnpm"
+  (cd "$dir" && : > pnpm-lock.yaml && echo '{}' > package.json && git add -A && git commit -qm lock) >/dev/null 2>&1
+  local scratch="$dir/.context/ship-run/TD1"
+  (cd "$dir" && PATH="$dir/bin:$PATH" bash "$PIPELINE" next TD1 >/dev/null)
+  (cd "$dir" && PATH="$dir/bin:$PATH" bash "$PIPELINE" next TD1 >/dev/null) || true
+  local calls marker
+  calls="$(wc -l < "$dir/pm-calls.txt" 2>/dev/null | tr -d ' ')"
+  marker="$(cat "$scratch/deps-bootstrap.txt" 2>/dev/null)"
+  # a second repo whose install fails
+  local dir2; dir2="$(mktemp -d)"
+  setup_repo "$dir2" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  mkdir -p "$dir2/bin"
+  printf '#!/usr/bin/env bash\necho "ERR_PNPM_NO_OFFLINE_META"\nexit 1\n' > "$dir2/bin/pnpm"
+  chmod +x "$dir2/bin/pnpm"
+  (cd "$dir2" && : > pnpm-lock.yaml && git add -A && git commit -qm lock) >/dev/null 2>&1
+  local out; out="$(cd "$dir2" && PATH="$dir2/bin:$PATH" bash "$PIPELINE" next TD2)"
+  local st ac failed; st="$(field "$out" state)"; ac="$(field "$out" action)"
+  failed="no"; grep -q '^environment: dependency install failed' "$dir2/.context/ship-run/TD2/node-failed.txt" 2>/dev/null && failed="yes"
+  rm -rf "$dir" "$dir2"
+  if [ "$calls" = "1" ] && [ "$marker" = "installed=pnpm" ] \
+    && [ "$st" = "deps-bootstrap" ] && [ "$ac" = "stop" ] && [ "$failed" = "yes" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (calls=$calls marker='$marker' second=$st/$ac failed='$failed')"
+  fi
+}
+
 test_static_failure_does_not_block_the_fan_out() {
   local name="a red typecheck no longer halts the pipeline — the fan-out runs and the failure is recorded"
   local dir; dir="$(mktemp -d)"
@@ -1093,6 +1132,7 @@ test_remediation_round_is_not_repeated_automatically
 test_confirmation_cannot_mint_new_findings
 test_warn_is_remediated_like_fail
 test_static_that_never_ran_stops_the_node_with_the_cause
+test_fresh_workspace_gets_its_dependencies_before_anything_runs
 test_specs_broken_by_the_change_go_back_to_develop_once
 test_a_second_spec_break_is_not_re_entered
 test_static_failure_does_not_block_the_fan_out
