@@ -77,20 +77,58 @@ test_a_long_line_is_cut_on_a_word_and_stays_utf8() {
   rm -rf "$dir"
 }
 
-test_an_uncited_proposal_falls_back() {
-  local name="exit 3 when the issue cites no requirement the Proposal defines, so the model stages it"
-  local dir rc=0
+test_a_heading_shaped_requirement_is_a_block() {
+  local name="a requirement written as a heading (### REQ-nnn — ...) is sliced like a bare one"
+  local dir
+  dir="$(mktemp -d)"
+  {
+    printf '# Proposal\n\n## Requisitos\n\n### %s-001 — Foto usa chave gerada pelo servidor  ·  catálogo\n\nTexto do primeiro.\n\n### %s-002 — Transferência valida alcance\n\nTexto do segundo.\n' "$R" "$R"
+  } > "$dir/proposal.md"
+  printf '# MOB-2 — Foto\n\nCobre %s-001.\n' "$R" > "$dir/issue.md"
+  local out; out="$(bash "$SLICE" "$dir/issue.md" "$dir/proposal.md" "$dir/spec.md")"
+  if grep -q "^## Proposal — ${R}-001$" "$dir/spec.md" && grep -q '^Texto do primeiro.$' "$dir/spec.md" \
+     && ! grep -q 'Texto do segundo' "$dir/spec.md" && grep -q "^- ${R}-002 — Transferência valida alcance" "$dir/spec.md" \
+     && printf '%s' "$out" | grep -q "^cited=${R}-001$"; then
+    log_pass "$name"
+  else
+    log_fail "$name (out=$out spec=$(cat "$dir/spec.md"))"
+  fi
+  rm -rf "$dir"
+}
+
+test_an_issue_citing_no_requirement_still_gets_a_spec() {
+  local name="an issue that cites no requirement gets its own text plus the full scope index, exit 0, cited=none"
+  local dir
   dir="$(mktemp -d)"; fixture "$dir"
-  printf '# MOB-2 — Outra\n\nSem requisito.\n' > "$dir/issue.md"
-  bash "$SLICE" "$dir/issue.md" "$dir/proposal.md" "$dir/spec.md" >/dev/null 2>&1 || rc=$?
-  if [ "$rc" -eq 3 ] && [ ! -e "$dir/spec.md" ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
+  printf '# MOB-3 — [AW·082] delete() lança not-found\n\n## Contexto\n\nContinuação de AW·081.\n' > "$dir/issue.md"
+  local out rc=0; out="$(bash "$SLICE" "$dir/issue.md" "$dir/proposal.md" "$dir/spec.md")" || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '^# MOB-3 — ' "$dir/spec.md" && ! grep -q '^## Proposal — ' "$dir/spec.md" \
+     && grep -q "^- ${R}-101 — " "$dir/spec.md" && grep -q "^- ${R}-103 — " "$dir/spec.md" \
+     && printf '%s' "$out" | grep -q '^cited=none$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out spec=$(cat "$dir/spec.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+test_a_proposal_with_no_requirements_is_still_exit_3() {
+  local name="a Proposal that defines no requirement at all keeps exit 3 — the caller stages the old way"
+  local dir
+  dir="$(mktemp -d)"
+  printf '# Proposal\n\nSem requisitos numerados.\n' > "$dir/proposal.md"
+  printf '# MOB-4\n\nNada.\n' > "$dir/issue.md"
+  local rc=0; bash "$SLICE" "$dir/issue.md" "$dir/proposal.md" "$dir/spec.md" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 3 ] && [ ! -s "$dir/spec.md" ]; then log_pass "$name"; else log_fail "$name (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
 test_the_cited_block_is_copied_whole
+test_a_heading_shaped_requirement_is_a_block
+test_an_issue_citing_no_requirement_still_gets_a_spec
+test_a_proposal_with_no_requirements_is_still_exit_3
 test_the_rest_is_a_one_line_index
 test_a_long_line_is_cut_on_a_word_and_stays_utf8
-test_an_uncited_proposal_falls_back
 
 echo
 echo "$pass_count passed, $fail_count failed"
