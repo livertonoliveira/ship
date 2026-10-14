@@ -848,6 +848,90 @@ test_static_that_never_ran_stops_the_node_with_the_cause() {
   rm -rf "$dir"
 }
 
+# Like drive_to_static_gate, but also returns at the develop re-entry the
+# static gate can ask for.
+drive_to_static_or_specfix() {
+  local dir="$1" task="$2" scratch out state i
+  scratch="$dir/.context/ship-run/$task"
+  next "$dir" "$task" >/dev/null
+  multi_module_spec > "$scratch/spec.md"
+  mkdir -p "$dir/src"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
+  seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
+  for i in 1 2 3 4 5 6; do
+    out="$(next "$dir" "$task")"
+    state="$(field "$out" state)"
+    case "$state" in
+      plan) valid_plan > "$scratch/plan.md" ;;
+      verify-a|develop-specfix) printf '%s' "$out"; return 0 ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Measured live on 4.45.0: the author's self-check names the committed specs a
+# change broke, but one node in fifteen skipped the self-check and the gate
+# bought a remediation round for a call-site edit.
+test_specs_broken_by_the_change_go_back_to_develop_once() {
+  local name="typecheck errors confined to committed test files re-enter develop once with the list, then static re-runs — no remediation, no second re-entry"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  (cd "$dir" && mkdir -p test/unit && echo "old" > test/unit/old.spec.js && git add -A && git commit -qm specs) >/dev/null 2>&1
+  local f="$dir/fake-tsc.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '[ -f "%s" ] && exit 0\n' "$dir/.fixed"
+    printf 'echo "test/unit/old.spec.js(66,13): error TS2554: Expected 10 arguments, but got 9."\n'
+    printf 'exit 2\n'
+  } > "$f"
+  chmod +x "$f"
+  printf -- '- Typecheck: %s\n' "$f" >> "$dir/ship/config.md"
+  local scratch="$dir/.context/ship-run/TS6"
+  local out; out="$(drive_to_static_or_specfix "$dir" TS6)"
+  local st1 ac1; st1="$(field "$out" state)"; ac1="$(field "$out" action)"
+  local listed="no"; printf '%s' "$out" | grep -q 'test/unit/old.spec.js' && listed="yes"
+  local marker="no"; [ -f "$scratch/develop-specfix-done.txt" ] && marker="yes"
+  local done_early="no"; [ -f "$scratch/static-exec-done.txt" ] && done_early="yes"
+  : > "$dir/.fixed"
+  out="$(next "$dir" TS6)"
+  local st2; st2="$(field "$out" state)"
+  local static_pass="no"; grep -qE '^\| static \| #1 \|.*\| pass \|' "$scratch/phase-status.md" && static_pass="yes"
+  local dev_dispatches; dev_dispatches="$(grep -c '^| dev ' "$scratch/dispatch-log.md")"
+  rm -rf "$dir"
+  if [ "$st1" = "develop-specfix" ] && [ "$ac1" = "dispatch" ] && [ "$listed" = "yes" ] && [ "$marker" = "yes" ] && [ "$done_early" = "no" ] \
+    && [ "$st2" = "verify-a" ] && [ "$static_pass" = "yes" ] && [ "$dev_dispatches" = "2" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (first=$st1/$ac1 listed=$listed marker=$marker done_early=$done_early second=$st2 static_pass=$static_pass dev_dispatches=$dev_dispatches)"
+  fi
+}
+
+test_a_second_spec_break_is_not_re_entered() {
+  local name="when the re-entry leaves the specs red, the gate records static fail and carries on — never a loop"
+  local dir; dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: disabled' '- test: disabled'
+  (cd "$dir" && mkdir -p test/unit && echo "old" > test/unit/old.spec.js && git add -A && git commit -qm specs) >/dev/null 2>&1
+  local f="$dir/fake-tsc.sh"
+  printf '#!/usr/bin/env bash\necho "test/unit/old.spec.js(1,1): error TS2554: Expected 10 arguments, but got 9."\nexit 2\n' > "$f"
+  chmod +x "$f"
+  printf -- '- Typecheck: %s\n' "$f" >> "$dir/ship/config.md"
+  local scratch="$dir/.context/ship-run/TS7"
+  drive_to_static_or_specfix "$dir" TS7 >/dev/null
+  local out; out="$(next "$dir" TS7)"
+  local st; st="$(field "$out" state)"
+  local red="no"; grep -qE '^\| static \| #1 \|.*\| fail \|' "$scratch/phase-status.md" && red="yes"
+  rm -rf "$dir"
+  if [ "$st" = "verify-a" ] && [ "$red" = "yes" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$st red=$red)"
+  fi
+}
+
 test_static_failure_does_not_block_the_fan_out() {
   local name="a red typecheck no longer halts the pipeline — the fan-out runs and the failure is recorded"
   local dir; dir="$(mktemp -d)"
@@ -1009,6 +1093,8 @@ test_remediation_round_is_not_repeated_automatically
 test_confirmation_cannot_mint_new_findings
 test_warn_is_remediated_like_fail
 test_static_that_never_ran_stops_the_node_with_the_cause
+test_specs_broken_by_the_change_go_back_to_develop_once
+test_a_second_spec_break_is_not_re_entered
 test_static_failure_does_not_block_the_fan_out
 test_static_failure_joins_the_findings_in_one_batch
 test_static_gate_skip_when_no_checks
