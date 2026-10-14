@@ -22,7 +22,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="deps-bootstrap.sh test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
+REQUIRED_HOOKS="pr-land.sh pr-preflight.sh pr-sync.sh pr-finalize.sh deps-bootstrap.sh test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -2343,8 +2343,12 @@ cmd_next() {
   if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"
-    next_body_add "Invoke ship:pr via the Skill tool in this same context (not forked, not through Agent). Args: \"Task: $TASK_ID | Artifact language: $LANG_ | Storage mode: $STORE | Scratch dir: $SCRATCH\"."
-    next_body_add "Graph mode is already in the preflight output: it prints pr_base=${pr_base:-<base>} (the branch to sync onto and target) and keep_context=yes (pr-finalize.sh keeps the scratch dir the graph polls, and archives nothing)."
+    # Measured on 37 nodes: the PR skill took 9.6 of a node's 26 orchestrating
+    # turns at 75-100k tokens each, for work that is the same every time. Only
+    # the commits need judgment; pr-land.sh does the rest in one call.
+    next_body_add "Open this node's PR in two steps, no Skill:"
+    next_body_add "1. Commit the pending changes as atomic Conventional Commits (git add <files> per commit, never git add .; one logical change per commit; Co-Authored-By: Claude Fable 5 <noreply@anthropic.com> in each). Nothing else this step."
+    next_body_add "2. Run: bash \"$HOOK_DIR/pr-land.sh\" $TASK_ID — it runs the checks, syncs onto pr_base=${pr_base:-<base>}, pushes, writes the title and body from the commits and the gate rows, opens the PR, arms auto-merge, updates Linear and finalizes. Act on its result= line: uncommitted → commit and run it again; red → fix what <scratch>/test-failures.md lists, re-commit, run it again; conflict → resolve the listed files yourself (keep both sides' behavior), bash \"$HOOK_DIR/pr-sync.sh\" --continue, run it again; remote-branch-exists → a PR is already open or merged for this branch on the forge; never rename the branch (the graph tracks it) and never force-push — report it and stop; linear=mcp-needed → attach the PR URL and post a one-line comment via the Linear MCP, then move the issue to its completed state."
     next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
     next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
   fi
