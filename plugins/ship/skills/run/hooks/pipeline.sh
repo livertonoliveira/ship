@@ -1940,6 +1940,23 @@ cmd_next() {
         next_body_add "The static checks could not run in this workspace (see $SCRATCH/static-failures.md). This is an environment failure, not a finding: nothing is remediated, no PR is opened. Report it and stop."
         next_emit "static" "stop" "$RUN" "environment: static checks could not run"
         ;;
+      1)
+        # Every typecheck error sits in a committed test file: the change is
+        # right and the specs are stale. Measured live (4.44.0 → 4.45.0): the
+        # author's self-check names them, but the self-check is a skill rule and
+        # one node in fifteen skipped it — so the pipeline re-enters develop
+        # once, with the list, before the gate buys a whole remediation round
+        # (fix agent + confirmation agent + re-run) for a call-site edit.
+        if [ -s "$SCRATCH/static-broken-tests.txt" ] && [ ! -f "$SCRATCH/develop-specfix-done.txt" ]; then
+          touch "$SCRATCH/develop-specfix-done.txt"
+          rm -f "$SCRATCH/static-exits.txt"
+          cmd_dispatch "$SCRATCH" dev Skill ship:develop sonnet >/dev/null
+          next_body_add "- Skill ship:develop (forked), args: \"Task: $TASK_ID | Artifact language: $LANG_ | Scratch dir: $SCRATCH | Storage mode: $STORE | Spec/design: read from the scratch dir | Spec fix only: your change compiles, but these committed test files no longer do — update their call sites, mocks and fixtures to the new signatures and change nothing else: $(tr '\n' ' ' < "$SCRATCH/static-broken-tests.txt")\""
+          next_body_add "Dispatch develop alone — no other tool call this turn."
+          next_common_after
+          next_emit "develop-specfix" "dispatch" "$RUN" "committed specs broken by the change — one develop re-entry before the gate"
+        fi
+        ;;
       # Non-zero: test-exec.sh already wrote phase-status-static.md with gate=fail
       # plus static-failures.md. Leave both for the gate and the batch.
     esac

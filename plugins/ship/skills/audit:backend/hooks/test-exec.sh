@@ -395,18 +395,43 @@ tool_never_ran() {
 # author left them "for the test phase" — which only adds cases. The gate went
 # red and a whole remediation round did what one edit here would have. A
 # committed test file (in HEAD) with a compile error is the author's to update.
-broken_existing_tests() {
-  local out="$1" files f
+# Files the typecheck output names, one per line.
+typecheck_error_files() {
+  local out="$1"
   [ -n "$out" ] && [ -f "$out" ] || return 0
-  files="$(grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null | sed -E 's/[(:]$//' | sort -u | while IFS= read -r f; do
+  grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null | sed -E 's/[(:]$//' | sort -u
+}
+
+# Those of them that are committed test files (in HEAD): the author's to update.
+broken_existing_tests_list() {
+  local out="$1" f
+  typecheck_error_files "$out" | while IFS= read -r f; do
     case "$f" in *.test.*|*.spec.*|*/__tests__/*|*/tests/*|test/*|tests/*) ;; *) continue ;; esac
     git cat-file -e "HEAD:$f" 2>/dev/null && printf '%s\n' "$f"
-  done)"
+  done
+}
+
+broken_existing_tests() {
+  local out="$1" files
+  files="$(broken_existing_tests_list "$out")"
   [ -n "$files" ] || return 0
   printf '\n## Existing test files broken by this change\n\n'
   printf 'These suites are committed and no longer compile against your change. They are yours to update now (call sites, mocks, fixtures): the test phase only adds cases, and a red typecheck here costs a full remediation round.\n\n'
   printf '%s\n' "$files" | sed 's/^/- /'
   printf 'broken-existing-tests=%s\n' "$(printf '%s\n' "$files" | grep -c .)"
+}
+
+# For the pipeline: when EVERY typecheck error sits in a committed test file,
+# the change is right and the specs are stale — the author fixes them in one
+# re-entry instead of the gate buying a remediation round. Written only then.
+write_broken_tests_file() {
+  local scratch="$1" out="$2" all broken
+  rm -f "$scratch/static-broken-tests.txt"
+  [ "${TYPECHECK_EXIT:-0}" -gt 0 ] || return 0
+  all="$(typecheck_error_files "$out" | grep -c . || true)"
+  broken="$(broken_existing_tests_list "$out")"
+  [ "${all:-0}" -gt 0 ] && [ "$(printf '%s\n' "$broken" | grep -c .)" = "$all" ] || return 0
+  printf '%s\n' "$broken" > "$scratch/static-broken-tests.txt"
 }
 
 # Constructs that keep a case from ever running, scanned in the contract's own
@@ -683,6 +708,7 @@ main() {
     else
       printf 'typecheck=%s\nlint=%s\n' "$TYPECHECK_EXIT" "$LINT_EXIT" > "$scratch/static-exits.txt"
       write_static_report "$scratch" "$st_overall"
+      write_broken_tests_file "$scratch" "$TYPECHECK_OUT"
     fi
     [ -n "$TYPECHECK_OUT" ] && rm -f "$TYPECHECK_OUT"
     [ -n "$LINT_OUT" ] && rm -f "$LINT_OUT"
