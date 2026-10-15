@@ -92,6 +92,24 @@ test_repo_prefix_and_escapes_are_dropped_from_the_inventory() {
   rm -rf "$(dirname "$scratch")"
 }
 
+test_a_comma_separated_entry_lists_each_file() {
+  local name="a Files entry listing two paths with a comma ('modify a.tsx, b.test.tsx — note') inventories both, without the comma"
+  local scratch; scratch="$(make_scratch)"
+  local root; root="$(dirname "$scratch")"
+  mkdir -p "$root/src" "$root/tests"
+  : > "$root/src/a.tsx"; : > "$root/tests/a.test.tsx"
+  printf '## Files\n\n* create src/a.tsx, tests/a.test.tsx — mover métrica\n' > "$scratch/spec.md"
+  run_scaffold "$scratch"
+  if grep -q '^- src/a.tsx (create) -> M?$' "$scratch/plan-scaffold.md" \
+     && grep -q '^- tests/a.test.tsx (create) -> M?$' "$scratch/plan-scaffold.md" \
+     && ! grep -q 'tsx,' "$scratch/plan-scaffold.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(tr '\n' '|' < "$scratch/plan-scaffold.md"))"
+  fi
+  rm -rf "$(dirname "$scratch")"
+}
+
 test_a_counted_set_is_not_an_inventory_row() {
   local name="a Files entry that names a set by count ('modify ~67 arquivos em src/ — …') yields no inventory row"
   local scratch; scratch="$(make_scratch)"
@@ -384,6 +402,7 @@ test_one_slot_per_occurrence_not_per_id
 test_files_nested_under_a_deeper_heading_are_inventoried
 test_star_bullets_from_linear_are_inventoried
 test_repo_prefix_and_escapes_are_dropped_from_the_inventory
+test_a_comma_separated_entry_lists_each_file
 test_a_counted_set_is_not_an_inventory_row
 test_a_note_after_the_path_is_not_part_of_the_path
 test_duplicate_ids_are_reported_but_never_fatal

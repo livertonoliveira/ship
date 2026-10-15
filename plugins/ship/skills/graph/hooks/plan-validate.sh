@@ -422,13 +422,22 @@ spec_files() {
       # The path is the first word: whatever follows it before the dash is a
       # note ("src/a.ts (localizar)"), and carried along it names a file no
       # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
-      sub(/[[:space:]].*$/, "", line)
-      if (line == "") next
-      # A set described by a count ("modify ~67 arquivos em src/") is not a
-      # path and gets no row here either — same rule as plan-scaffold.sh.
-      if (line !~ /\// && line !~ /\.[A-Za-z0-9]+$/) next
-      if (kind != "" && verb != kind) next
-      print line
+      # One entry may list several files ("modify a.ts, b.ts — note"): split
+      # on commas, and a trailing comma is never part of a path — MOB-8123
+      # failed plan validation twice on "services-section.tsx,", 2026-10-15.
+      n = split(line, parts, /[[:space:]]*,[[:space:]]*/)
+      for (pi = 1; pi <= n; pi++) {
+        item = parts[pi]
+        sub(/[[:space:]].*$/, "", item)
+        sub(/[,;]+$/, "", item)
+        if (item == "") continue
+        if (item !~ /\// && item !~ /\.[A-Za-z0-9]+$/) continue
+        emit[++ne] = item
+      }
+      if (ne == 0) next
+      if (kind != "" && verb != kind) { ne = 0; delete emit; next }
+      for (pi = 1; pi <= ne; pi++) print emit[pi]
+      ne = 0; delete emit
     }
   ' 2>/dev/null | sort -u || true
 }
