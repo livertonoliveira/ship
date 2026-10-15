@@ -207,7 +207,19 @@ test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is() {
   rm -rf "$root"
 }
 
+test_the_push_runs_the_repo_hooks_under_ci() {
+  local name="the push carries CI=true so the repo's pre-push hooks cap their own parallelism as in CI"
+  local root; root="$(mktemp -d)"; setup "$root"
+  mkdir -p "$root/repo/.git/hooks"
+  printf '#!/usr/bin/env sh\nprintf "CI=%%s\\n" "${CI:-}" > "%s/hook-env.txt"\nexit 0\n' "$root" > "$root/repo/.git/hooks/pre-push"
+  chmod +x "$root/repo/.git/hooks/pre-push"
+  land "$root" T1 >/dev/null 2>&1 || true
+  if grep -qx 'CI=true' "$root/hook-env.txt" 2>/dev/null; then log_pass "$name"; else log_fail "$name ($(cat "$root/hook-env.txt" 2>/dev/null))"; fi
+  rm -rf "$root"
+}
+
 test_a_committed_branch_lands_in_one_call
+test_the_push_runs_the_repo_hooks_under_ci
 test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is
 test_a_second_run_over_its_own_landed_pr_is_landed_again
 test_the_result_line_is_also_on_disk
