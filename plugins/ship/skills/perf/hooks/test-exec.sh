@@ -269,6 +269,19 @@ start_static_check() {
   STARTED_PID=$!
 }
 
+# jest and vitest default to one worker per core. Half the cores, never fewer
+# than two: measured live, four workers turned platform's 1750-file suite into
+# a 15-minute gate, and the full core count drove a 14-core machine to load 75
+# with seven nodes in flight. SHIP_TEST_WORKERS overrides.
+test_workers() {
+  if [ -n "${SHIP_TEST_WORKERS:-}" ]; then printf '%s' "$SHIP_TEST_WORKERS"; return; fi
+  local n
+  n="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
+  case "$n" in ''|*[!0-9]*) n=4 ;; esac
+  n=$((n / 2)); [ "$n" -lt 2 ] && n=2
+  printf '%s' "$n"
+}
+
 # Does the package script run jest or vitest itself (optionally through npx or
 # a `cross-env VAR=value` prefix)? Anything else is opaque and gets no flags.
 script_is_jest_or_vitest() {
@@ -305,9 +318,9 @@ build_test_command() {
       # that really is jest or vitest — a package script wrapping anything else
       # runs exactly as written.
       if [ "$CMD_USES_PKG_SCRIPT" -eq 1 ]; then
-        if script_is_jest_or_vitest test; then RUNNER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}"; fi
+        if script_is_jest_or_vitest test; then RUNNER_WORKER_FLAG="--maxWorkers=$(test_workers)"; fi
       else
-        case "$runner" in jest|vitest) RUNNER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}" ;; esac
+        case "$runner" in jest|vitest) RUNNER_WORKER_FLAG="--maxWorkers=$(test_workers)" ;; esac
       fi
       ;;
     "node --test"|"node:test")
@@ -372,7 +385,7 @@ layer_command_words() {
     LAYER_CMD_WORDS=("$PKG" run "test:$layer")
     LAYER_USES_PKG_SCRIPT=1
     LAYER_WORKER_FLAG=""
-    if script_is_jest_or_vitest "test:$layer"; then LAYER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}"; fi
+    if script_is_jest_or_vitest "test:$layer"; then LAYER_WORKER_FLAG="--maxWorkers=$(test_workers)"; fi
   fi
 }
 

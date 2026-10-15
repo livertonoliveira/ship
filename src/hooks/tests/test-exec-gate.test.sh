@@ -179,7 +179,7 @@ test_static_check_names_existing_tests_the_change_broke() {
 # Measured live: two vitest runs from two nodes took every core (384% CPU each);
 # the same configs cap themselves under CI, and jest/vitest take --maxWorkers.
 test_the_suite_runs_under_ci_with_a_worker_cap() {
-  local name="the suite runs with CI=true and, for jest/vitest, -- --maxWorkers=4 after the package script (SHIP_TEST_WORKERS overrides; pnpm rejects options before --)"
+  local name="the suite runs with CI=true and, for jest/vitest, -- --maxWorkers=<half the cores> after the package script (SHIP_TEST_WORKERS overrides; pnpm rejects options before --)"
   local d; d="$(mktemp -d)"
   setup_repo "$d"
   sed -i.bak '/^- Test Framework:/d' "$d/config.md"
