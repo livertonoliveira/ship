@@ -65,6 +65,8 @@ Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `#
 - **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4) → `## Deps`. Both omitted at depth `none`. `What to do` never instructs running project-wide typecheck, lint or the suite — the pipeline runs typecheck, lint scoped to the touched files, and the suite; a task saying "run pnpm lint" made every node lint the whole tree twice (measured on 134 nodes).
 - `## Deps`: one blocking ID per line, bare (`none` if independent) — parsed by `/ship:graph`; free text is not. Linear: also set the native **blocked by** relation.
 
+**Files format:** `bash "@@ship/hooks/files-check.sh" --issues <dir>` (local: `--tasks <file>`) — one verb and one path per entry (`create|modify|delete <path> — intent`); fix every violation and re-run until clean, before §7. A set named by a count or two paths on one line fails plan validation on every attempt of the node that reads it.
+
 **SC↔task cross-reference:** `bash "@@ship/hooks/sc-crossref.sh" --index <file> --issues <dir> --proposal <file>`; fix violations, re-run until clean, before §7. A `duplicate:` violation is never a numbering nit — one id cannot key two test slots, so a plan for that spec cannot exist. Renumber; never merge the scenarios to make it go away.
 
 ## 7. Present to the user
