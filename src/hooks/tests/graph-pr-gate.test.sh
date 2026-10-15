@@ -192,6 +192,72 @@ test_a_closed_pr_fails_the_node() {
   fi
 }
 
+# The retried node's branch carries "-2"; its first attempt's PR, on the bare
+# branch, is MERGED. The stub answers no PR for the "-2" branch and MERGED #9
+# for the bare one.
+test_a_landed_node_with_nothing_to_land_is_settled_by_its_earlier_attempt() {
+  local name="a landed node whose pr-land found nothing ahead of the base is merged through its earlier attempt's merged PR"
+  local dir out json
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  (
+    cd "$dir"
+    git worktree add -q wt-TASK-001 -b ship/TASK-001-2 main
+    mkdir -p wt-TASK-001/.context/ship-run/TASK-001
+    printf 'result=empty base=main branch=ship/TASK-001-2\n' > wt-TASK-001/.context/ship-run/TASK-001/pr-land.txt
+    bash "$GRAPH" claim TASK-001 --worktree wt-TASK-001 --branch ship/TASK-001-2 >/dev/null
+    bash "$GRAPH" land TASK-001 >/dev/null
+  )
+  cat > "$dir/fake-gh" <<'EOF'
+#!/usr/bin/env bash
+branch="$3"
+case "$branch" in
+  ship/TASK-001-2) exit 1 ;;
+  ship/TASK-001) printf '{"number":9,"state":"MERGED","url":"https://forge.test/acme/repo/pull/9","autoMergeRequest":null}\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$dir/fake-gh"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  local logline; logline="$(cat "$dir"/.context/ship-graph/*/graph-log.md 2>/dev/null | grep -c 'through PR #9 of an earlier attempt' || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && printf '%s' "$json" | grep -q '"status": "merged"' \
+    && [ "${logline:-0}" -ge 1 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' log=$logline)"
+  fi
+}
+
+test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason() {
+  local name="a landed node with nothing to land and no earlier attempt's merged PR is failed with a hold, never left waiting"
+  local dir out json
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  (
+    cd "$dir"
+    git worktree add -q wt-TASK-001 -b ship/TASK-001-2 main
+    mkdir -p wt-TASK-001/.context/ship-run/TASK-001
+    printf 'result=empty base=main branch=ship/TASK-001-2\n' > wt-TASK-001/.context/ship-run/TASK-001/pr-land.txt
+    bash "$GRAPH" claim TASK-001 --worktree wt-TASK-001 --branch ship/TASK-001-2 >/dev/null
+    bash "$GRAPH" land TASK-001 >/dev/null
+  )
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/fake-gh"; chmod +x "$dir/fake-gh"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  json="$(cd "$dir" && bash "$GRAPH" status --json)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^failed=TASK-001$' \
+    && printf '%s' "$json" | grep -q '"status": "failed"'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out')"
+  fi
+}
+
 test_a_missing_pr_is_surfaced_not_assumed() {
   local name="a landed node with no PR on the forge is reported, never taken as merged"
   local dir out json
@@ -844,6 +910,8 @@ test_a_graph_without_the_key_merges_by_default
 test_init_takes_merge_policy_like_max_in_flight
 test_an_open_pr_keeps_the_node_landed
 test_a_closed_pr_fails_the_node
+test_a_landed_node_with_nothing_to_land_is_settled_by_its_earlier_attempt
+test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason
 test_a_missing_pr_is_surfaced_not_assumed
 test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace

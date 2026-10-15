@@ -18,6 +18,7 @@
 #   result=red                           checks failed — <scratch>/test-failures.md
 #   result=conflict files=<a,b>          rebase stopped — resolve, pr-sync.sh --continue, call again
 #   result=remote-branch-exists          the remote branch has other history — the caller decides
+#   result=empty base=<b> branch=<br>    no commit ahead of the base after the sync — nothing to open
 #   result=landed pr=<url> number=<n> branch=<b> automerge=armed|failed|skipped linear=done|mcp-needed|skipped context=<finalize>
 # Exit 0 on landed, 2 on uncommitted, 3 on red, 4 on conflict, 5 on push refused,
 # 1 on anything the caller cannot act on (message on stderr).
@@ -92,6 +93,20 @@ if [ "$sync_result" = "clean" ] && [ "$verified" = "yes" ]; then
   rc=0
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
   case "$rc" in 0|2) ;; *) printf 'result=red exit=%s report=%s/test-failures.md\n' "$rc" "$scratch"; exit 3 ;; esac
+fi
+
+# --- nothing to land ----------------------------------------------------------------
+# A retried node whose first attempt already merged, or a task someone finished
+# on the base meanwhile, rebases onto the base and has no commit left. There is
+# no PR to open; the caller decides what that means (the graph checks the
+# earlier attempt's PR). Measured 2026-10-15: a node sat 55 minutes here.
+if base_ref="$(git rev-parse -q --verify "refs/remotes/$remote/$pr_base" 2>/dev/null)" && [ -n "$base_ref" ]; then
+  if [ "$(git rev-list --count "$base_ref..HEAD" 2>/dev/null || echo 1)" -eq 0 ]; then
+    line="result=empty base=$pr_base branch=$branch"
+    [ -d "$scratch" ] && printf '%s\n' "$line" > "$scratch/pr-land.txt"
+    printf '%s\n' "$line"
+    exit 6
+  fi
 fi
 
 # --- an earlier run already landed this exact tree -----------------------------------
