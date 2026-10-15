@@ -126,10 +126,7 @@ fi
 # so the branch is never renamed. A remote branch with other history is a
 # previous attempt of the same task: overwritten with a lease when no PR is
 # open for it, handed back to the caller when one is.
-# CI=true on the push: the repo's own pre-push hooks run as they would in CI —
-# measured live, a hook's vitest took every core (384% CPU) on each of seven
-# nodes pushing at once; the same config caps itself to one worker under CI.
-if ! push_err="$(CI=true git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
+if ! push_err="$(git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
   if printf '%s' "$push_err" | grep -qiE 'non-fast-forward|fetch first|rejected'; then
     open_pr="$("$GH" pr view "$branch" --json state --jq .state 2>/dev/null || true)"
     # A graph node owns its task branch by construction: an OPEN PR there is
@@ -140,7 +137,7 @@ if ! push_err="$(CI=true git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
     if [ "$keep_context" = "yes" ] && [ "$open_pr" != "MERGED" ]; then
       git fetch -q "$remote" "$branch" 2>/dev/null || true
       lease="$(git rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
-      if ! CI=true git push -u "--force-with-lease=$branch:${lease:-}" "$remote" "$branch" >/dev/null 2>&1; then
+      if ! git push -u "--force-with-lease=$branch:${lease:-}" "$remote" "$branch" >/dev/null 2>&1; then
         printf 'result=remote-branch-exists branch=%s pr_state=%s\n' "$branch" "${open_pr:-none}"
         exit 5
       fi

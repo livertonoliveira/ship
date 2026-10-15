@@ -269,27 +269,10 @@ start_static_check() {
   STARTED_PID=$!
 }
 
-# Does the package script run jest or vitest itself (optionally through npx or
-# a `cross-env VAR=value` prefix)? Anything else is opaque and gets no flags.
-script_is_jest_or_vitest() {
-  local script tok
-  script="$(pkg_script_value "$1")"
-  [ -n "$script" ] || return 1
-  for tok in $script; do
-    case "$tok" in
-      npx|cross-env|*=*) continue ;;
-      jest|vitest) return 0 ;;
-      *) return 1 ;;
-    esac
-  done
-  return 1
-}
-
 build_test_command() {
   local runner="$1" pkg="$2"
   CMD_WORDS=()
   CMD_USES_PKG_SCRIPT=0
-  RUNNER_WORKER_FLAG=""
   case "$runner" in
     jest|vitest|mocha|ava)
       if is_resolved "$pkg"; then
@@ -297,17 +280,6 @@ build_test_command() {
         CMD_USES_PKG_SCRIPT=1
       else
         CMD_WORDS=(npx "$runner")
-      fi
-      # jest and vitest default to one worker per core; measured live, two
-      # suites from two nodes took every core of a 14-core machine (384% CPU
-      # each) and the load hit 38 with seven nodes in flight. A node is one of
-      # many: it gets a share, not the machine. The flag goes only to a command
-      # that really is jest or vitest — a package script wrapping anything else
-      # runs exactly as written.
-      if [ "$CMD_USES_PKG_SCRIPT" -eq 1 ]; then
-        if script_is_jest_or_vitest test; then RUNNER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}"; fi
-      else
-        case "$runner" in jest|vitest) RUNNER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}" ;; esac
       fi
       ;;
     "node --test"|"node:test")
@@ -367,12 +339,9 @@ layer_command_words() {
     unit|integration|e2e) ;;
     *) return 0 ;;
   esac
-  LAYER_WORKER_FLAG="$RUNNER_WORKER_FLAG"
   if is_resolved "$PKG" && pkg_script_exists "test:$layer"; then
     LAYER_CMD_WORDS=("$PKG" run "test:$layer")
     LAYER_USES_PKG_SCRIPT=1
-    LAYER_WORKER_FLAG=""
-    if script_is_jest_or_vitest "test:$layer"; then LAYER_WORKER_FLAG="--maxWorkers=${SHIP_TEST_WORKERS:-4}"; fi
   fi
 }
 
@@ -380,13 +349,7 @@ layer_command_words() {
 # see every failure regardless of which runner produced it.
 run_suites_by_layer() {
   if [ -z "$TEST_ENTRIES" ]; then
-    # A package manager parses options before `--` as its own: pnpm rejected
-    # --maxWorkers with "Unknown option" and failed a live node's gate.
-    if [ "$CMD_USES_PKG_SCRIPT" -eq 1 ] && [ -n "$RUNNER_WORKER_FLAG" ]; then
-      run_suite "${CMD_WORDS[@]}" -- "$RUNNER_WORKER_FLAG"
-    else
-      run_suite "${CMD_WORDS[@]}" ${RUNNER_WORKER_FLAG:+"$RUNNER_WORKER_FLAG"}
-    fi
+    run_suite "${CMD_WORDS[@]}"
     return 0
   fi
   local combined layers l p rc=0
@@ -398,11 +361,9 @@ run_suites_by_layer() {
     if [ "$LAYER_USES_PKG_SCRIPT" -eq 1 ] && [ "$PKG" = "npm" ]; then
       words+=(--)
     fi
-    [ "$LAYER_USES_PKG_SCRIPT" -eq 1 ] && words+=(--)
     while IFS= read -r p; do
       [ -n "$p" ] && words+=("$p")
     done < <(printf '%s\n' "$TEST_ENTRIES" | awk -F'\t' -v L="$l" '$1==L{print $2}')
-    [ -n "$LAYER_WORKER_FLAG" ] && words+=("$LAYER_WORKER_FLAG")
     run_suite "${words[@]}"
     cat "$RUN_OUTPUT_FILE" >> "$combined"
     rm -f "$RUN_OUTPUT_FILE"
@@ -413,14 +374,12 @@ run_suites_by_layer() {
   return 0
 }
 
-# CI=true: the suite runs as it would in CI — no watch mode, no prompts, and
-# a config that caps its workers under CI (both platform repos do) caps them.
 run_suite() {
   local out
   out="$(mktemp)"
   local exit_code=0
   set +e
-  CI=true "$@" > "$out" 2>&1
+  "$@" > "$out" 2>&1
   exit_code=$?
   set -e
   RUN_OUTPUT_FILE="$out"
@@ -709,8 +668,6 @@ main() {
   SUITE_SKIPPED_COUNT=0
   LAYER_CMD_WORDS=()
   LAYER_USES_PKG_SCRIPT=0
-  LAYER_WORKER_FLAG=""
-  RUNNER_WORKER_FLAG=""
 
   # --lint-fix: apply the linter's own fixes to the touched files before anything
   # records a static result, so mechanical lint errors never reach the
