@@ -93,7 +93,7 @@ case "$1 ${2:-}" in
   "orchestration worker-start")
     printf '{ "ok": true, "result": { "dispatchId": "ctx_deadbeef03", "effects": [ { "id": "repo1::/tmp/ws/N1" }, { "id": "term_w1" } ] } }' ;;
   "worktree show")
-    printf '{ "ok": true, "result": { "path": "/tmp/ws/N1", "branch": "refs/heads/ship/N1", "baseRef": "main" } }' ;;
+    printf '{ "ok": true, "result": { "path": "%s", "branch": "refs/heads/ship/N1", "baseRef": "main" } }' "${ORCA_FAKE_WT:-/tmp/ws/N1}" ;;
   "repo list")
     printf '{\n "id": "envelope-uuid",\n "ok": true,\n "result": {\n  "repos": [\n   {\n    "id": "REPO-ID-HERE",\n    "path": "REPO-PATH-HERE",\n    "displayName": "the-repo"\n   }\n  ]\n }\n}\n' ;;
   "status "*|"status")
@@ -125,6 +125,7 @@ run_dispatch() {
   # contract, so the caller's cwd is not incidental here.
   ( cd "$repo" && ORCA_FAKE_LOG="$root/argv.log" PATH="$root/bin:$PATH" \
     ORCA_FAKE_TUI="${ORCA_FAKE_TUI:-dirty}" ORCA_FAKE_TUI_STATE="$root/tui" ORCA_FAKE_TICK="$root/tick" \
+    ORCA_FAKE_WT="${ORCA_FAKE_WT:-/tmp/ws/N1}" \
     SHIP_ORCA_BUSY_SAMPLE_S=0 \
     bash "$DRIVER" dispatch N1 "/ship:run N1" --state "$state" --base main "$@" ) \
     >"$root/out.txt" 2>"$root/err.txt" || rc=$?
@@ -504,20 +505,21 @@ test_the_worker_is_told_how_to_report_completion() {
   rm -rf "$root"
 }
 
-test_the_worker_is_told_to_wake_the_coordinator() {
-  local root line
-  root="$(new_case)"; run_dispatch "$root"
+test_the_wake_is_left_in_the_workspace_for_the_pipeline_to_run() {
+  local root
+  root="$(new_case)"
+  mkdir -p "$root/wt"
+  ORCA_FAKE_WT="$root/wt" run_dispatch "$root"
+  local line f="$root/wt/.context/ship-run/N1/on-done.sh"
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
-  # worker_done goes to a pull-only mailbox: it reaches the coordinator only
-  # while it happens to be inside a wait window. Measured 2026-09-14, one sat
-  # unread for 25 minutes while two merged PRs stayed in_flight. The worker runs
-  # in its own workspace, so both paths in the call have to be absolute —
-  # matched by shape, not by $root: mktemp -d hands back /var/folders/... and
-  # `cd && pwd` resolves it to /private/var/folders/....
-  if printf '%s' "$line" | grep -qE 'bash "/[^"]*/driver-orca\.sh" wake N1 --state "/[^"]*"'; then
-    log_pass "the brief tells the worker to wake the coordinator through the driver"
+  # Measured on 61 nodes: the model spent two turns per node sending worker_done
+  # and narrating a summary nobody reads. The wake the coordinator needs is now
+  # a file pipeline.sh runs at done; the brief tells the worker to send nothing.
+  if [ -x "$f" ] && grep -qE 'bash "/[^"]*/driver-orca\.sh" wake N1 --state "/[^"]*"' "$f" \
+    && printf '%s' "$line" | grep -q 'Send no worker_done, run no wake, write no summary'; then
+    log_pass "dispatch leaves the coordinator wake in <workspace>/.context/ship-run/N1/on-done.sh and tells the worker to send nothing"
   else
-    log_fail "the brief tells the worker to wake the coordinator through the driver (got: $line)"
+    log_fail "dispatch leaves the coordinator wake in on-done.sh (file=$([ -f "$f" ] && cat "$f" || echo missing) brief=$(printf '%s' "$line" | cut -c1-200))"
   fi
   rm -rf "$root"
 }
@@ -1109,7 +1111,7 @@ test_an_unconfirmed_worker_is_still_stoppable
 test_a_working_worker_is_reported_confirmed
 test_a_working_worker_is_not_disturbed
 test_the_worker_is_told_how_to_report_completion
-test_the_worker_is_told_to_wake_the_coordinator
+test_the_wake_is_left_in_the_workspace_for_the_pipeline_to_run
 test_the_wake_starts_a_turn_on_an_idle_coordinator
 test_the_wake_stays_silent_while_the_loop_is_running
 test_the_wake_stays_silent_between_two_slices_of_the_loop

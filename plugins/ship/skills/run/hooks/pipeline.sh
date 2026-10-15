@@ -1464,7 +1464,7 @@ cmd_ask() {
 }
 
 next_common_after() {
-  next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself."
+  next_body_add "After every listed call returns, run: bash \"$HOOK_DIR/pipeline.sh\" next <task-id> — do not evaluate results yourself, and write no narration between the calls."
 }
 
 # The `## Deps` gate. Runs twice: before the planner (the spec's own block) and
@@ -2383,15 +2383,23 @@ cmd_next() {
     next_body_add "Remediation: $(tr '\n' ' ' < "$SCRATCH/remediation-verdict.txt")"
   fi
   if [ "$STORE" = "linear" ] && linear_complete "$SCRATCH" "$TASK_ID" "$CONFIG"; then
-    next_body_add "Linear: the pipeline moved the issue to its completed state ($(sed -n 's/^state=//p' "$SCRATCH/linear-completed.txt")) — make no status call. Confirm the quality-report comment exists on the issue."
-  elif [ "$STORE" = "linear" ]; then
+    next_body_add "Linear: the pipeline moved the issue to its completed state ($(sed -n 's/^state=//p' "$SCRATCH/linear-completed.txt")) — make no status call."
+  elif [ "$STORE" = "linear" ] && [ ! -f "$SCRATCH/graph-node.txt" ]; then
     next_body_add "Verify the Linear lifecycle: resolve the completed state per $HOOK_DIR/../patterns/linear-status.md (never hardcode), confirm state.type == \"completed\" and that the quality-report comment exists."
-  else
+  elif [ "$STORE" != "linear" ]; then
     next_body_add "Write report-$TASK_ID.md under ship/changes/<feature>/ and mark the task done in tasks.md."
   fi
-  next_body_add "Surface the per-phase wall-clock to the user:"
-  next_body_add "$timings"
-  next_body_add "Then inform: task complete — run /ship:pr when ready. The user runs /ship:pr; don't invoke it. Multi-task: ask to continue with the next task."
+  if [ -f "$SCRATCH/graph-node.txt" ]; then
+    # A graph node reports to nobody: the coordinator reads this run's files,
+    # and the driver left the wake it needs in on-done.sh. Measured on 61 nodes:
+    # the summary the model wrote here cost two turns per node and was never read.
+    [ -x "$SCRATCH/on-done.sh" ] && { sh "$SCRATCH/on-done.sh" > "$SCRATCH/on-done.log" 2>&1 || true; }
+    next_body_add "Graph node complete. The coordinator reads this run's files and the pipeline has signalled it — send nothing, write no summary, end your turn now."
+  else
+    next_body_add "Surface the per-phase wall-clock to the user:"
+    next_body_add "$timings"
+    next_body_add "Then inform: task complete — run /ship:pr when ready. The user runs /ship:pr; don't invoke it. Multi-task: ask to continue with the next task."
+  fi
   next_emit "done" "done" "$RUN" "pipeline complete"
 }
 

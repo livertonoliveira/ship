@@ -178,6 +178,35 @@ test_pipeline_emits_the_node_pr_step_before_homolog() {
   fi
 }
 
+# Measured on 61 nodes: at done the model sent worker_done and narrated a
+# summary nobody reads — two turns per node. The pipeline now runs the signal
+# the driver left in on-done.sh and tells the node to end its turn.
+test_a_graph_node_done_runs_on_done_and_ends_the_turn() {
+  local name="a graph node's done runs <scratch>/on-done.sh and asks for no summary; a standalone run keeps its report"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  pipeline_repo "$dir"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  scratch="$dir/.context/ship-run/T1"
+  printf '## Files\n- src/a.js\n- src/b.js\n\nTwo modules\n' > "$scratch/spec.md"
+  printf 'mode=graph\nbase=feat/base\n' > "$scratch/pr-mode.txt"
+  printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+  printf '#!/usr/bin/env sh\necho woke > "%s/woke.txt"\n' "$dir" > "$scratch/on-done.sh"; chmod +x "$scratch/on-done.sh"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  printf 'created\n' > "$scratch/pr-created.txt"
+  out="$(cd "$dir" && bash "$PIPELINE" next T1)"
+  local woke="no"; [ -f "$dir/woke.txt" ] && woke="yes"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" = "done" ] && [ "$woke" = "yes" ] \
+    && printf '%s' "$out" | grep -q 'end your turn now' \
+    && ! printf '%s' "$out" | grep -q 'run /ship:pr'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) woke=$woke)"
+  fi
+}
+
 test_pipeline_moves_past_node_pr_once_the_pr_exists() {
   local name="with pr-created.txt on disk the step is not re-emitted and the run finishes"
   local dir out scratch
@@ -378,6 +407,7 @@ test_claim_writes_the_pr_marker_with_the_graph_base
 test_node_pr_off_writes_no_marker
 test_set_flips_node_pr_on_a_live_graph
 test_pipeline_emits_the_node_pr_step_before_homolog
+test_a_graph_node_done_runs_on_done_and_ends_the_turn
 test_pipeline_moves_past_node_pr_once_the_pr_exists
 test_no_marker_means_no_node_pr_step
 test_pr_created_marker_retires_the_step

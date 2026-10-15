@@ -523,13 +523,7 @@ verb_dispatch() {
   SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   spec="$prompt
 
-When you report completion, your orchestration send MUST carry --run $run in addition to the --dispatch-capability from your preamble. Without --run the runtime resolves a retained legacy coordinator and rejects the message with legacy_read_only.
-
-Immediately after that send, wake the coordinator directly — worker_done alone only reaches it if it happens to be inside a wait window:
-
-  bash \"$SELF_DIR/driver-orca.sh\" wake $task --state \"$STATE\"
-
-Run it once, exactly as written; ignore any failure and never wait for a reply — the coordinator's own disk poll is the fallback if this does not land.
+Completion: when pipeline.sh next prints action=done it has already signalled the coordinator (the graph reads this run's files and the pipeline wakes it). Send no worker_done, run no wake, write no summary — end your turn. If you still send a completion message, it MUST carry --run $run in addition to the --dispatch-capability from your preamble, or the runtime rejects it with legacy_read_only.
 
 Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use AskUserQuestion. pipeline.sh next posts any question it needs answered to .context/ship-run/$task/ask.md and tells you how to wait for the answer; do exactly what it prints and nothing else. When YOU must stop for a decision the pipeline did not ask (a task rule says stop and report, a blocker outside the task), post it the same way — bash \"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pipeline.sh\" ask $task \"<the question, the options, and the one you recommend>\" — and wait as it tells you; never report failure and go idle on a question."
 
@@ -635,6 +629,19 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   shown="$(orca worktree show --worktree "id:$wt_id" --json 2>/dev/null)"
   path="$(printf '%s' "$shown" | json_val path)"
   branch="$(short_branch "$(printf '%s' "$shown" | json_val branch)")"
+
+  # The node's completion signal, left where pipeline.sh runs it at `done`.
+  # Measured on 61 nodes: the model spent two turns per node sending
+  # worker_done and narrating a summary nobody reads — the graph reads files,
+  # and the driver's wait returns on them. The wake stays, because it is what
+  # revives a coordinator that is not inside a wait window; it just runs from
+  # the pipeline now, deterministically, not from the model.
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    mkdir -p "$path/.context/ship-run/$task" 2>/dev/null && {
+      printf '#!/usr/bin/env sh\n# Written by driver-orca.sh at dispatch; run by pipeline.sh at done.\nbash "%s/driver-orca.sh" wake %s --state "%s" >/dev/null 2>&1 || true\n' "$SELF_DIR" "$task" "$STATE" > "$path/.context/ship-run/$task/on-done.sh"
+      chmod +x "$path/.context/ship-run/$task/on-done.sh"
+    } || true
+  fi
 
   {
     printf 'run=%s\n' "$run"
