@@ -129,7 +129,12 @@ fi
 if ! push_err="$(git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
   if printf '%s' "$push_err" | grep -qiE 'non-fast-forward|fetch first|rejected'; then
     open_pr="$("$GH" pr view "$branch" --json state --jq .state 2>/dev/null || true)"
-    if [ "$keep_context" = "yes" ] && [ "$open_pr" != "OPEN" ] && [ "$open_pr" != "MERGED" ]; then
+    # A graph node owns its task branch by construction: an OPEN PR there is
+    # this node's own earlier landing (a later commit, a rebase onto a moved
+    # base), so the branch is updated with a lease and the PR follows. Measured
+    # live: a node that re-ran after one more commit was told "exists" over its
+    # own PR and stopped. A merged PR was already returned as landed above.
+    if [ "$keep_context" = "yes" ] && [ "$open_pr" != "MERGED" ]; then
       git fetch -q "$remote" "$branch" 2>/dev/null || true
       lease="$(git rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
       if ! git push -u "--force-with-lease=$branch:${lease:-}" "$remote" "$branch" >/dev/null 2>&1; then
