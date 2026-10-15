@@ -80,7 +80,7 @@ Local: `ship/changes/<feature>/{proposal,design,tasks}.md` (`## Milestone N`, `#
 
 - **Proposal:** Source, Why, Scope, Technical Context, Requirements per §4, plus Scenario Index (`SC-XX → AC-YY · layer · title`).
 - **Design:** per §4 (architecture, decisions, files+lines, data/API, risks), plus Sequence Diagrams (Mermaid) for complex flows.
-- **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4) → `## Deps`. Both omitted at depth `none`.
+- **Task/Issue:** Context (why+files) → What to do → `## Files` (`create|modify <path> — <intent>`; optional `Âncora: siga o padrão de <path> — <reason>`, real analogs only) → `AC-XX`+typecheck/tests → Scenarios (Gherkin/§4) → `## Deps`. Both omitted at depth `none`. `What to do` never instructs running project-wide typecheck, lint or the suite — the pipeline runs typecheck, lint scoped to the touched files, and the suite; a task saying "run pnpm lint" made every node lint the whole tree twice (measured on 134 nodes).
 - `## Deps`: one blocking ID per line, bare (`none` if independent) — parsed by `/ship:graph`; free text is not. Linear: also set the native **blocked by** relation.
 
 **SC↔task cross-reference:** `bash "${CLAUDE_SKILL_DIR}/hooks/sc-crossref.sh" --index <file> --issues <dir> --proposal <file>`; fix violations, re-run until clean, before §7. A `duplicate:` violation is never a numbering nit — one id cannot key two test slots, so a plan for that spec cannot exist. Renumber; never merge the scenarios to make it go away.
