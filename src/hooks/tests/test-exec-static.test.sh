@@ -228,6 +228,27 @@ test_eslint_package_script_is_scoped_to_touched_files() {
   rm -rf "$d"
 }
 
+test_scoped_eslint_under_flat_config_does_not_warn_on_ignored_files() {
+  local name="a scoped eslint under flat config carries --no-warn-ignored, so a touched file the config ignores is not a warning"
+  local d; d="$(mktemp -d)"
+  setup_pkg_repo "$d"
+  printf '{"scripts":{"lint":"eslint . --max-warnings 0"}}\n' > "$d/package.json"
+  printf 'export default [{ ignores: ["eslint-rules/**"] }];\n' > "$d/eslint.config.mjs"
+  mkdir -p "$d/node_modules/.bin" "$d/src" "$d/eslint-rules"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > lint-args.txt\nexit 0\n' > "$d/node_modules/.bin/eslint"
+  chmod +x "$d/node_modules/.bin/eslint"
+  : > "$d/src/a.ts"; : > "$d/eslint-rules/rule.mjs"
+  printf 'src/a.ts\neslint-rules/rule.mjs\n' > "$d/scratch/develop-touched-files.txt"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/lint-args.txt" | tr '\n' '|')" = "--max-warnings|0|--no-warn-ignored|src/a.ts|eslint-rules/rule.mjs|" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(cat "$d/lint-args.txt" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$d"
+}
+
 test_lint_fix_runs_only_on_touched_files() {
   local name="--lint-fix runs the configured Lint fix on the touched files only"
   local d; d="$(mktemp -d)"
@@ -345,6 +366,7 @@ test_a_configured_package_lint_is_scoped_like_a_derived_one() {
 test_eslint_package_script_is_scoped_to_touched_files
 test_a_configured_package_lint_is_scoped_like_a_derived_one
 test_lint_runs_unscoped_without_a_footprint
+test_scoped_eslint_under_flat_config_does_not_warn_on_ignored_files
 test_lint_fix_runs_only_on_touched_files
 test_lint_fix_without_placeholder_never_runs_repo_wide
 test_lint_fix_derives_from_a_scoped_eslint

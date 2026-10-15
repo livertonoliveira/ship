@@ -224,6 +224,18 @@ scope_lint_cmd() {
     files=("${kept[@]}")
   fi
 
+  # The scoped list is explicit, and eslint warns about an explicit file its
+  # config ignores ("File ignored because of a matching ignore pattern"); under
+  # --max-warnings 0 that warning alone failed a node whose change touched a
+  # file under an ignored directory. The flag exists only for flat config.
+  local flat=0 cfg
+  for cfg in eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts eslint.config.mts eslint.config.cts; do
+    [ -f "$cfg" ] && { flat=1; break; }
+  done
+  if [ "$flat" -eq 1 ]; then
+    case " ${args[*]} " in *" --no-warn-ignored "*) ;; *) args+=(--no-warn-ignored) ;; esac
+  fi
+
   LINT_CMD="$(printf '%q ' node_modules/.bin/eslint "${args[@]}" "${files[@]}")"
   LINT_CMD="${LINT_CMD% }"
 }
