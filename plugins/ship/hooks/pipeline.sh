@@ -2313,6 +2313,43 @@ cmd_next() {
     fi
   fi
 
+  # --- checks red at landing → one bounded fix round, then the verdict ---------
+  # pr-land.sh proves the tree again before it pushes (the base moved, or the
+  # gate's proof was not for this exact tree). A red there used to fall straight
+  # into the block below as "still failing after remediation" with no fix
+  # attempted: MOB-8075 (2026-10-15) was failed 16 seconds after its own PR
+  # merged. A red at landing is a verification failure like any other: it gets
+  # a fix round while the node's remediation cap allows one, and only then the
+  # verdict — on a fresh run, never on the files the last run left behind.
+  if [ -f "$SCRATCH/graph-node.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ] \
+    && grep -q '^result=red' "$SCRATCH/pr-land.txt" 2>/dev/null; then
+    rm -f "$SCRATCH/pr-land.txt"
+    local lr_rc=0 lr_out lr_items
+    set +e
+    ( cmd_iter "$SCRATCH" graph-remediation-rounds --max 2 ) >/dev/null
+    lr_rc=$?
+    set -e
+    lr_items=0
+    if [ "$lr_rc" -ne 2 ]; then
+      lr_out="$(bash "$HOOK_DIR/remediation.sh" "$SCRATCH" 2>/dev/null || true)"
+      lr_items="$(printf '%s\n' "$lr_out" | grep '^items=' | cut -d= -f2)"
+    fi
+    if [ "${lr_items:-0}" -gt 0 ]; then
+      graph_decision "$SCRATCH" "landing" "fix" "checks red at landing — one fix round before the verdict"
+      rm -f "$SCRATCH/remediation-verify.md"
+      touch "$SCRATCH/remediation-done.txt" "$SCRATCH/remediation-fix-inflight.txt"
+      next_fix_dispatch "$SCRATCH" "$TASK_ID" "$LANG_"
+      next_common_after
+      next_emit "remediation-fix" "dispatch" "$RUN" "checks red at landing — dispatching one fix agent for all $lr_items item(s)"
+    fi
+    local lr_red
+    lr_red="$(execution_red "$SCRATCH")"
+    printf '%s red at landing after the remediation rounds — no PR is opened over a red check. Details: %s/static-failures.md, %s/test-failures.md\n' "${lr_red:-checks}" "$SCRATCH" "$SCRATCH" > "$SCRATCH/node-failed.txt"
+    graph_decision "$SCRATCH" "landing" "fail-node" "${lr_red:-checks} red at landing after the remediation rounds"
+    next_body_add "${lr_red:-checks} red at landing and the remediation rounds are spent. This node is marked failed for the graph coordinator; do not open a PR, stop here and take no further action on this task."
+    next_emit "landing" "stop" "$RUN" "${lr_red:-checks} red at landing — node failed"
+  fi
+
   # --- a node never opens a PR over a red check ------------------------------------
   if [ -f "$SCRATCH/graph-node.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
     local red
