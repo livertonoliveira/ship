@@ -424,6 +424,9 @@ spec_files() {
       # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
       sub(/[[:space:]].*$/, "", line)
       if (line == "") next
+      # A set described by a count ("modify ~67 arquivos em src/") is not a
+      # path and gets no row here either — same rule as plan-scaffold.sh.
+      if (line !~ /\// && line !~ /\.[A-Za-z0-9]+$/) next
       if (kind != "" && verb != kind) next
       print line
     }

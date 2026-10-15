@@ -112,6 +112,12 @@ spec_files() {
       # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
       sub(/[[:space:]].*$/, "", line)
       if (line == "") next
+      # A set described by a count ("modify ~67 arquivos em src/ — lista pelo
+      # grep") is not a path: an inventory row for "~67" can be neither
+      # assigned nor logged as a divergence (the log only reads path-shaped
+      # tokens), and MOB-8114 failed plan validation twice on it, 2026-10-15.
+      # The spec keeps the set as prose; the inventory keeps only paths.
+      if (line !~ /\// && line !~ /\.[A-Za-z0-9]+$/) next
       print verb "\t" line
     }
   ' 2>/dev/null | sort -u || true

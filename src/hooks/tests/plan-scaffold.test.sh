@@ -92,6 +92,20 @@ test_repo_prefix_and_escapes_are_dropped_from_the_inventory() {
   rm -rf "$(dirname "$scratch")"
 }
 
+test_a_counted_set_is_not_an_inventory_row() {
+  local name="a Files entry that names a set by count ('modify ~67 arquivos em src/ — …') yields no inventory row"
+  local scratch; scratch="$(make_scratch)"
+  printf '## Files\n\n* modify src/a.ts — real path\n* modify \\~67 arquivos em src/ (features/x, features/y) — import por caminho; lista obtida com grep\n* modify \\~71 arquivos em tests/unit — idem\n' > "$scratch/spec.md"
+  run_scaffold "$scratch"
+  if grep -q '^- src/a.ts (modify)' "$scratch/plan-scaffold.md" \
+     && ! grep -qE '^- ~' "$scratch/plan-scaffold.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(tr '\n' '|' < "$scratch/plan-scaffold.md"))"
+  fi
+  rm -rf "$(dirname "$scratch")"
+}
+
 test_a_note_after_the_path_is_not_part_of_the_path() {
   local name="a Files entry with a note after the path ('src/a.ts (localizar) — x') inventories the bare path"
   local scratch; scratch="$(make_scratch)"
@@ -370,6 +384,7 @@ test_one_slot_per_occurrence_not_per_id
 test_files_nested_under_a_deeper_heading_are_inventoried
 test_star_bullets_from_linear_are_inventoried
 test_repo_prefix_and_escapes_are_dropped_from_the_inventory
+test_a_counted_set_is_not_an_inventory_row
 test_a_note_after_the_path_is_not_part_of_the_path
 test_duplicate_ids_are_reported_but_never_fatal
 test_same_id_same_title_is_not_a_defect
