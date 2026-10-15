@@ -119,13 +119,29 @@ test_a_stale_retry_branch_is_overwritten_with_a_lease() {
   rm -rf "$root"
 }
 
-test_a_remote_branch_with_an_open_pr_is_handed_back() {
-  local name="a remote branch that already has an open PR → result=remote-branch-exists, exit 5, no force-push"
+test_a_graph_node_updates_its_own_open_pr_after_a_rebase() {
+  local name="graph node: an OPEN PR on the task branch with other history is this node's earlier landing — the branch is pushed with a lease and the PR is reused"
   local root; root="$(mktemp -d)"; setup "$root"
+  ( cd "$root/repo" && git checkout -q -b tmp main && echo old > old.txt && git add old.txt && git commit -qm "earlier landing" \
+    && git push -q origin tmp:fix/T1-x && git checkout -q fix/T1-x && git branch -q -D tmp ) >/dev/null 2>&1
+  local out rc=0; out="$(cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" GH_FAKE_PR_OID=1111111111111111111111111111111111111111 GH_FAKE_PR_STATE=OPEN PATH="$root/bin:$PATH" bash "$LAND" T1)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(field "$out" result)" = "landed" ] && [ "$(field "$out" branch)" = "fix/T1-x" ] \
+    && [ "$(git -C "$root/remote.git" rev-parse fix/T1-x)" = "$(git -C "$root/repo" rev-parse HEAD)" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out=$out)"
+  fi
+  rm -rf "$root"
+}
+
+test_a_standalone_run_never_overwrites_a_remote_branch() {
+  local name="standalone (no graph marker): a remote branch with other history → result=remote-branch-exists, exit 5, no force-push"
+  local root; root="$(mktemp -d)"; setup "$root"
+  rm -f "$root/repo/.context/ship-run/T1/pr-mode.txt"
   ( cd "$root/repo" && git checkout -q -b tmp main && echo old > old.txt && git add old.txt && git commit -qm "old attempt" \
     && git push -q origin tmp:fix/T1-x && git checkout -q fix/T1-x && git branch -q -D tmp ) >/dev/null 2>&1
   local old; old="$(git -C "$root/remote.git" rev-parse fix/T1-x)"
-  local out rc=0; out="$(cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" GH_FAKE_PR_STATE=OPEN PATH="$root/bin:$PATH" bash "$LAND" T1)" || rc=$?
+  local out rc=0; out="$(cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" PATH="$root/bin:$PATH" bash "$LAND" T1)" || rc=$?
   if [ "$rc" -eq 5 ] && [ "$(field "$out" result)" = "remote-branch-exists" ] \
     && [ "$(git -C "$root/remote.git" rev-parse fix/T1-x)" = "$old" ]; then
     log_pass "$name"
@@ -197,7 +213,8 @@ test_a_second_run_over_its_own_landed_pr_is_landed_again
 test_the_result_line_is_also_on_disk
 test_uncommitted_changes_are_handed_back_first
 test_a_stale_retry_branch_is_overwritten_with_a_lease
-test_a_remote_branch_with_an_open_pr_is_handed_back
+test_a_graph_node_updates_its_own_open_pr_after_a_rebase
+test_a_standalone_run_never_overwrites_a_remote_branch
 test_a_failed_automerge_is_reported_not_fatal
 
 echo ""
