@@ -181,6 +181,62 @@ test_pipeline_emits_the_node_pr_step_before_homolog() {
 # Measured on 61 nodes: at done the model sent worker_done and narrated a
 # summary nobody reads — two turns per node. The pipeline now runs the signal
 # the driver left in on-done.sh and tells the node to end its turn.
+# pr-land.sh proved the tree again and found it red. Measured 2026-10-15
+# (MOB-8075): the pipeline failed the node on the spot, 16 s after its own PR
+# merged, with no fix attempted. A red at landing gets one fix round while the
+# node's remediation cap allows it; past the cap it fails with that reason.
+landing_red_node() {
+  local dir="$1" scratch="$1/.context/ship-run/T1"
+  pipeline_repo "$dir"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  printf '## Files\n- src/a.js\n- src/b.js\n\nTwo modules\n' > "$scratch/spec.md"
+  printf 'mode=graph\nbase=feat/base\n' > "$scratch/pr-mode.txt"
+  printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  printf 'result=red exit=1 report=%s/test-failures.md\n' "$scratch" > "$scratch/pr-land.txt"
+  printf '| test | #1 | 2026-10-15T01:25:00Z | - | fail | 0 | 0 | 0 | 0 | |\n' > "$scratch/phase-status-test.md"
+  printf '# Test Failures\n\n## Test suite failed\n\n```\nFAIL test/a.spec.js\n```\n' > "$scratch/test-failures.md"
+}
+
+test_a_red_at_landing_gets_a_fix_round() {
+  local name="checks red at landing dispatch one fix agent while the remediation cap allows, instead of failing the node on the spot"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  landing_red_node "$dir"
+  scratch="$dir/.context/ship-run/T1"
+  out="$(cd "$dir" && bash "$PIPELINE" next T1)"
+  local inflight="no"; [ -f "$scratch/remediation-fix-inflight.txt" ] && inflight="yes"
+  local failed="no"; [ -f "$scratch/node-failed.txt" ] && failed="yes"
+  local landfile="gone"; [ -f "$scratch/pr-land.txt" ] && landfile="kept"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" = "remediation-fix" ] && [ "$inflight" = "yes" ] && [ "$failed" = "no" ] && [ "$landfile" = "gone" ] \
+    && printf '%s' "$out" | grep -q 'ship-remediation-fix'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) inflight=$inflight failed=$failed pr-land=$landfile)"
+  fi
+}
+
+test_a_red_at_landing_past_the_cap_fails_with_its_reason() {
+  local name="checks red at landing with the remediation cap spent fail the node, naming the landing, never a stale 'after remediation'"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  landing_red_node "$dir"
+  scratch="$dir/.context/ship-run/T1"
+  printf '2\n' > "$scratch/iteration-graph-remediation-rounds.txt"
+  out="$(cd "$dir" && bash "$PIPELINE" next T1)"
+  local reason; reason="$(cat "$scratch/node-failed.txt" 2>/dev/null)"
+  local inflight="no"; [ -f "$scratch/remediation-fix-inflight.txt" ] && inflight="yes"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "stop" ] && [ "$inflight" = "no" ] \
+    && printf '%s' "$reason" | grep -q 'red at landing'; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) action=$(field "$out" action) inflight=$inflight reason='$reason')"
+  fi
+}
+
 test_an_empty_landing_completes_the_pr_step() {
   local name="pr-land's result=empty completes the node-pr step: the node reaches done with pr-empty.txt and no PR"
   local dir out scratch
@@ -431,6 +487,8 @@ test_claim_writes_the_pr_marker_with_the_graph_base
 test_node_pr_off_writes_no_marker
 test_set_flips_node_pr_on_a_live_graph
 test_pipeline_emits_the_node_pr_step_before_homolog
+test_a_red_at_landing_gets_a_fix_round
+test_a_red_at_landing_past_the_cap_fails_with_its_reason
 test_an_empty_landing_completes_the_pr_step
 test_a_graph_node_done_runs_on_done_and_ends_the_turn
 test_pipeline_moves_past_node_pr_once_the_pr_exists
