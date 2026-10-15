@@ -388,11 +388,24 @@ node_gh() {
 
 # The forge's own verdict on whether the PR can merge right now: CLEAN, BLOCKED
 # (checks running or a review required), BEHIND, DIRTY (conflicts), UNKNOWN.
+# UNKNOWN is the forge still computing, not a verdict: GitHub drops every open
+# PR's mergeability the moment one merges into the base and recomputes it on
+# the next read, a few seconds later. Measured 2026-10-15 on a 134-node graph:
+# each poll merged the lowest landed node, read the rest as UNKNOWN right after,
+# and seven CLEAN PRs sat open for 40 minutes while new nodes kept landing in
+# front of them. So UNKNOWN is read again, a short wait apart, before it counts.
 pr_merge_state() {
-  local dir="$1" id="$2" branch out
+  local dir="$1" id="$2" branch out state tries=0
   branch="$(node_field "$dir" "$id" 8)"
-  out="$(node_gh "$dir" "$id" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
-  json_field "$out" mergeStateStatus
+  while :; do
+    out="$(node_gh "$dir" "$id" pr view "$branch" --json mergeStateStatus 2>>"$dir/pr-$id.log" || true)"
+    state="$(json_field "$out" mergeStateStatus)"
+    case "$state" in UNKNOWN|"") ;; *) break ;; esac
+    tries=$((tries + 1))
+    [ "$tries" -ge "${SHIP_PR_MSTATE_TRIES:-4}" ] && break
+    sleep "${SHIP_PR_MSTATE_WAIT_S:-3}"
+  done
+  printf '%s' "$state"
 }
 
 # gh merges on the forge first and tidies up locally afterwards, so a local

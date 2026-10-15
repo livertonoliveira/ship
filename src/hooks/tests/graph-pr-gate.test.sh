@@ -84,6 +84,13 @@ if [ "\$1 \$2" = "pr merge" ]; then
   exit 0
 fi
 if printf '%s' "\$*" | grep -q mergeStateStatus; then
+  # A queue in mstate-queue answers one line per read before mstate takes over:
+  # the forge recomputing after a merge answers UNKNOWN first, then the verdict.
+  if [ -s "\$d/mstate-queue" ]; then
+    head -1 "\$d/mstate-queue" | tr -d '\n' | sed 's/^/{"mergeStateStatus":"/; s/$/"}/'; echo
+    sed -i.bak 1d "\$d/mstate-queue"
+    exit 0
+  fi
   printf '{"mergeStateStatus":"%s"}\n' "\$(cat "\$d/mstate")"
   exit 0
 fi
@@ -599,6 +606,25 @@ test_the_graph_has_no_merge_verb_left() {
   fi
 }
 
+test_graph_merge_policy_reads_unknown_again_before_waiting_a_poll() {
+  local name="an UNKNOWN merge state is read again a short wait apart — the forge recomputing after a merge is not a verdict"
+  local dir out
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  printf 'UNKNOWN\nUNKNOWN\n' > "$dir/mstate-queue"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" SHIP_PR_MSTATE_WAIT_S=0 bash "$GRAPH" set --merge-policy graph >/dev/null && GH_BIN="$dir/fake-gh" SHIP_PR_MSTATE_WAIT_S=0 bash "$GRAPH" poll --stall-after 0)"
+  local merged="no"; [ -s "$dir/merged" ] && merged="yes"
+  rm -rf "$dir"
+  if [ "$merged" = "yes" ] && printf '%s' "$out" | grep -q '^merged=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (merged=$merged out=$(printf '%s' "$out" | tr '\n' '|' | cut -c1-200))"
+  fi
+}
+
 test_graph_merge_policy_merges_a_clean_unarmed_pr() {
   local name="merge-policy=graph merges an unarmed PR the forge reports CLEAN, with a squash, and releases the dependents"
   local dir out json merged
@@ -806,6 +832,7 @@ test_init_takes_merge_policy_like_max_in_flight() {
 }
 
 test_a_merged_pr_completes_the_node
+test_graph_merge_policy_reads_unknown_again_before_waiting_a_poll
 test_graph_merge_policy_merges_a_clean_unarmed_pr
 test_a_merge_that_fails_locally_but_landed_releases_now
 test_graph_merge_policy_waits_while_checks_run
