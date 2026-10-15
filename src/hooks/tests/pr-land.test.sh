@@ -67,6 +67,22 @@ setup() {
 land() { local root="$1"; shift; (cd "$root/repo" && GH_FAKE_LOG="$root/gh.log" GH_FAKE_BODY="$root/body.md" PATH="$root/bin:$PATH" bash "$LAND" "$@"); }
 
 # Measured on 37 graph nodes: the PR step was 9.6 of 26 orchestrating turns.
+test_a_branch_with_nothing_ahead_of_the_base_says_so() {
+  local name="a task branch with no commit ahead of the base after the sync answers result=empty (exit 6), on disk too, and opens nothing"
+  local root; root="$(mktemp -d)"; setup "$root"
+  (cd "$root/repo" && git checkout -q main && git branch -q -D fix/T1-x && git checkout -q -b fix/T1-x) >/dev/null 2>&1
+  local out rc=0
+  out="$(land "$root" T1)" || rc=$?
+  if [ "$rc" -eq 6 ] && printf '%s' "$out" | grep -q '^result=empty base=main branch=fix/T1-x' \
+    && grep -q '^result=empty' "$root/repo/.context/ship-run/T1/pr-land.txt" \
+    && ! grep -q '^pr create' "$root/gh.log" 2>/dev/null; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' log=$(cat "$root/gh.log" 2>/dev/null | tr '\n' '|'))"
+  fi
+  rm -rf "$root"
+}
+
 test_a_committed_branch_lands_in_one_call() {
   local name="checks, sync, push, title and body from disk, PR, auto-merge, finalize — one call, result=landed"
   local root; root="$(mktemp -d)"; setup "$root"
@@ -207,6 +223,7 @@ test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is() {
   rm -rf "$root"
 }
 
+test_a_branch_with_nothing_ahead_of_the_base_says_so
 test_a_committed_branch_lands_in_one_call
 test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is
 test_a_second_run_over_its_own_landed_pr_is_landed_again

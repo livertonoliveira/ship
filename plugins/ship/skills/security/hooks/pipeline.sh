@@ -2340,6 +2340,15 @@ cmd_next() {
   # to land a node, and landing seals the workspace into one blob commit. Running
   # /ship:pr first means the tree is already committed atomically and the seal
   # finds nothing to do.
+  # pr-land.sh found no commit ahead of the base: the work is already there
+  # (an earlier attempt's PR merged, or someone landed it meanwhile). The step
+  # is complete with no PR; the graph settles the node from the base, not from
+  # a PR that cannot exist. Measured 2026-10-15: a node sat 55 minutes here.
+  if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ] \
+    && grep -q '^result=empty' "$SCRATCH/pr-land.txt" 2>/dev/null; then
+    printf 'empty\n' > "$SCRATCH/pr-created.txt"
+    sed -n 1p "$SCRATCH/pr-land.txt" > "$SCRATCH/pr-empty.txt"
+  fi
   if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ]; then
     local pr_base
     pr_base="$(grep -m1 '^base=' "$SCRATCH/pr-mode.txt" 2>/dev/null | sed 's/^base=//' || true)"

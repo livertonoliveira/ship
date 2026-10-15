@@ -452,6 +452,39 @@ pr_probe() {
     "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)" "$armed"
 }
 
+# pr-land.sh left `result=empty` in the node's own scratch: no commit ahead of
+# the base, so there is no PR to wait for.
+node_landed_empty() {
+  local dir="$1" id="$2" wt
+  wt="$(node_field "$dir" "$id" 7)"
+  [ -n "$wt" ] && grep -q '^result=empty' "$wt/.context/ship-run/$id/pr-land.txt" 2>/dev/null
+}
+
+# "<number>\t<url>" of a MERGED PR on an earlier attempt's branch, or nothing.
+# Attempt branches are the task branch plus "-<n>" from the second attempt on,
+# so the candidates are the bare branch and every lower suffix.
+prior_attempt_merged_pr() {
+  local dir="$1" id="$2" branch base n k cand out
+  branch="$(node_field "$dir" "$id" 8)"
+  [ -n "$branch" ] || return 0
+  base="$branch"; n=1
+  case "$branch" in
+    *-[0-9]|*-[0-9][0-9]) base="${branch%-*}"; n="${branch##*-}" ;;
+  esac
+  [ "$base" != "$branch" ] || return 0
+  k=1
+  while [ "$k" -lt "$n" ]; do
+    cand="$base"; [ "$k" -gt 1 ] && cand="$base-$k"
+    out="$(node_gh "$dir" "$id" pr view "$cand" --json number,state,url 2>/dev/null || true)"
+    if [ -n "$out" ] && [ "$(json_field "$out" state)" = "MERGED" ]; then
+      printf '%s\t%s' "$(json_field "$out" number)" "$(json_field "$out" url)"
+      return 0
+    fi
+    k=$((k + 1))
+  done
+  return 0
+}
+
 # --- nodes -------------------------------------------------------------------
 
 node_field() {
@@ -1876,6 +1909,30 @@ settle_landed() {
         SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
         ;;
       none)
+        if node_landed_empty "$dir" "$id"; then
+          # Nothing was ahead of the base when the node went to open its PR.
+          # The one route this is expected on: a retried node whose earlier
+          # attempt's PR merged (the pipeline failed that attempt 16 seconds
+          # after its own merge, 2026-10-15). That PR is the forge's record.
+          local prior
+          prior="$(prior_attempt_merged_pr "$dir" "$id")"
+          if [ -n "$prior" ]; then
+            transition "$dir" "$id" landed merged
+            meta_set "$dir" last_merged "$id"
+            log_line "$dir" "$id had nothing to land — its work reached the base through PR #${prior%%	*} of an earlier attempt (${prior#*	}) — its dependents are free"
+            dispose_workspace "$dir" "$id"
+            printf 'merged=%s\n' "$id"
+            SETTLE_MERGED=$((SETTLE_MERGED + 1))
+          else
+            node_set "$dir" "$id" 6 failed
+            node_set "$dir" "$id" 10 ""
+            hold_node "$dir" "$id" "nothing to land and no merged PR of an earlier attempt"
+            log_line "$dir" "$id → failed: nothing to land (no commit ahead of the base) and no earlier attempt's PR is merged — complete it if the work is on the base, fail it otherwise"
+            printf 'failed=%s\n' "$id"
+            SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
+          fi
+          continue
+        fi
         log_line "$dir" "$id landed but the forge reports no PR for $(node_field "$dir" "$id" 8)"
         printf 'pr_missing=%s\n' "$id"
         SETTLE_AWAITING=$((SETTLE_AWAITING + 1))

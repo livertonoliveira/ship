@@ -181,6 +181,30 @@ test_pipeline_emits_the_node_pr_step_before_homolog() {
 # Measured on 61 nodes: at done the model sent worker_done and narrated a
 # summary nobody reads — two turns per node. The pipeline now runs the signal
 # the driver left in on-done.sh and tells the node to end its turn.
+test_an_empty_landing_completes_the_pr_step() {
+  local name="pr-land's result=empty completes the node-pr step: the node reaches done with pr-empty.txt and no PR"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  pipeline_repo "$dir"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  scratch="$dir/.context/ship-run/T1"
+  printf '## Files\n- src/a.js\n- src/b.js\n\nTwo modules\n' > "$scratch/spec.md"
+  printf 'mode=graph\nbase=feat/base\n' > "$scratch/pr-mode.txt"
+  printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+  (cd "$dir" && bash "$PIPELINE" next T1) >/dev/null
+  printf 'result=empty base=feat/base branch=ship/T1-2\n' > "$scratch/pr-land.txt"
+  out="$(cd "$dir" && bash "$PIPELINE" next T1)"
+  local created; created="$(cat "$scratch/pr-created.txt" 2>/dev/null)"
+  local empty="no"; [ -s "$scratch/pr-empty.txt" ] && empty="yes"
+  rm -rf "$dir"
+  if [ "$(field "$out" state)" = "done" ] && [ "$created" = "empty" ] && [ "$empty" = "yes" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) created=$created empty=$empty)"
+  fi
+}
+
 test_a_graph_node_done_runs_on_done_and_ends_the_turn() {
   local name="a graph node's done runs <scratch>/on-done.sh and asks for no summary; a standalone run keeps its report"
   local dir out scratch
@@ -407,6 +431,7 @@ test_claim_writes_the_pr_marker_with_the_graph_base
 test_node_pr_off_writes_no_marker
 test_set_flips_node_pr_on_a_live_graph
 test_pipeline_emits_the_node_pr_step_before_homolog
+test_an_empty_landing_completes_the_pr_step
 test_a_graph_node_done_runs_on_done_and_ends_the_turn
 test_pipeline_moves_past_node_pr_once_the_pr_exists
 test_no_marker_means_no_node_pr_step
