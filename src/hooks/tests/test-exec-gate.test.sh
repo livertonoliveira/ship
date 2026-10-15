@@ -176,7 +176,43 @@ test_static_check_names_existing_tests_the_change_broke() {
   rm -rf "$d"
 }
 
+# Measured live: two vitest runs from two nodes took every core (384% CPU each);
+# the same configs cap themselves under CI, and jest/vitest take --maxWorkers.
+test_the_suite_runs_under_ci_with_a_worker_cap() {
+  local name="the suite runs with CI=true and, for jest/vitest, -- --maxWorkers=4 after the package script (SHIP_TEST_WORKERS overrides; pnpm rejects options before --)"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  sed -i.bak '/^- Test Framework:/d' "$d/config.md"
+  printf -- '- Test Framework: jest\n- Package Manager: pnpm\n' >> "$d/config.md"
+  printf '{"scripts":{"test":"jest --config j.json"}}\n' > "$d/package.json"
+  mkdir -p "$d/node_modules/.bin" "$d/bin"
+  cat > "$d/bin/pnpm" <<'PNPM'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > pm-args.txt
+[ "$1" = "run" ] && shift
+name="$1"; shift
+for a in "$@"; do case "$a" in --) break ;; --*) echo "ERROR Unknown option: '${a#--}'" >&2; exit 1 ;; esac; done
+[ "${1:-}" = "--" ] && shift
+exec ./node_modules/.bin/jest "$@"
+PNPM
+  chmod +x "$d/bin/pnpm"
+  printf '#!/usr/bin/env bash\nprintf "CI=%%s\\n" "${CI:-}" > suite-env.txt\nprintf "%%s\\n" "$@" > suite-args.txt\nexit 0\n' > "$d/node_modules/.bin/jest"
+  chmod +x "$d/node_modules/.bin/jest"
+  printf 'it("x", () => {});\n' > "$d/test/a.spec.ts"
+  printf -- '- test/a.spec.ts (unit)\n' > "$d/scratch/generated-tests.md"
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" SHIP_TEST_WORKERS=3 bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -qx 'CI=true' "$d/suite-env.txt" && grep -qx -- '--maxWorkers=3' "$d/suite-args.txt" && grep -qx 'test/a.spec.ts' "$d/suite-args.txt" \
+    && grep -q -- ' -- ' "$d/pm-args.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc env=$(cat "$d/suite-env.txt" 2>/dev/null) args=$(tr '\n' '|' < "$d/suite-args.txt" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
 test_skip_in_contract_file_fails_the_gate
+test_the_suite_runs_under_ci_with_a_worker_cap
 test_skip_outside_the_contract_is_only_reported
 test_pytest_skip_marker_is_caught
 test_static_that_never_ran_is_an_environment_stop
