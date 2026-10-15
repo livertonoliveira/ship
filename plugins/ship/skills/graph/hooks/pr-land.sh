@@ -51,6 +51,10 @@ scratch=".context/ship-run/$task"
 # empty match must be an empty value, never a silent exit — measured live on
 # three nodes whose pr-land printed nothing and whose PRs landed untold.
 field() { { printf '%s\n' "$1" | grep -m1 "^$2=" || true; } | cut -d= -f2-; }
+# Every result line is also written to <scratch>/pr-land.txt: the pipeline
+# reads the file, never the caller's screen (where hook noise truncated it on
+# four nodes of one graph, 2026-10-15).
+say() { [ -d "$scratch" ] && printf '%s\n' "$1" > "$scratch/pr-land.txt"; printf '%s\n' "$1"; }
 
 pre="$(bash "$HOOK_DIR/pr-preflight.sh" --task "$task" --config "$config")"
 storage="$(field "$pre" storage)"
@@ -62,7 +66,7 @@ pending="$(field "$pre" pending_changes)"
 verified="$(field "$pre" verified_tree)"
 
 if [ "${pending:-0}" -gt 0 ]; then
-  printf 'result=uncommitted files=%s\n' "$pending"
+  say "result=uncommitted files=$pending"
   exit 2
 fi
 [ -n "$remote" ] || { echo "pr-land.sh: no git remote — nothing to push to" >&2; exit 1; }
@@ -77,7 +81,7 @@ if [ "$verified" != "yes" ]; then
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     0|2) ;;
-    *) printf 'result=red exit=%s report=%s/test-failures.md\n' "$rc" "$scratch"; exit 3 ;;
+    *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;;
   esac
 fi
 
@@ -85,14 +89,14 @@ fi
 sync_out="$(bash "$HOOK_DIR/pr-sync.sh" --remote "$remote" --base "$pr_base" 2>/dev/null || true)"
 sync_result="$(field "$sync_out" result)"
 if [ "$sync_result" = "conflict" ]; then
-  printf 'result=conflict files=%s\n' "$(printf '%s\n' "$sync_out" | { grep '^conflict:' || true; } | sed 's/^conflict://' | paste -sd, -)"
+  say "result=conflict files=$(printf '%s\n' "$sync_out" | { grep '^conflict:' || true; } | sed 's/^conflict://' | paste -sd, -)"
   exit 4
 fi
 # A rebase moved the tree the checks were proven on: prove it again.
 if [ "$sync_result" = "clean" ] && [ "$verified" = "yes" ]; then
   rc=0
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
-  case "$rc" in 0|2) ;; *) printf 'result=red exit=%s report=%s/test-failures.md\n' "$rc" "$scratch"; exit 3 ;; esac
+  case "$rc" in 0|2) ;; *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;; esac
 fi
 
 # --- nothing to land ----------------------------------------------------------------
@@ -153,11 +157,11 @@ if ! push_err="$(git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
       git fetch -q "$remote" "$branch" 2>/dev/null || true
       lease="$(git rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
       if ! git push -u "--force-with-lease=$branch:${lease:-}" "$remote" "$branch" >/dev/null 2>&1; then
-        printf 'result=remote-branch-exists branch=%s pr_state=%s\n' "$branch" "${open_pr:-none}"
+        say "result=remote-branch-exists branch=$branch pr_state=${open_pr:-none}"
         exit 5
       fi
     else
-      printf 'result=remote-branch-exists branch=%s pr_state=%s\n' "$branch" "${open_pr:-none}"
+      say "result=remote-branch-exists branch=$branch pr_state=${open_pr:-none}"
       exit 5
     fi
   else
