@@ -83,6 +83,21 @@ test_a_branch_with_nothing_ahead_of_the_base_says_so() {
   rm -rf "$root"
 }
 
+test_every_result_is_on_disk() {
+  local name="a result that is not a landing (uncommitted) is written to pr-land.txt too — the pipeline reads the file, never the screen"
+  local root; root="$(mktemp -d)"; setup "$root"
+  echo dirty > "$root/repo/three.txt"
+  local out rc=0
+  out="$(land "$root" T1)" || rc=$?
+  local disk; disk="$(cat "$root/repo/.context/ship-run/T1/pr-land.txt" 2>/dev/null || true)"
+  rm -rf "$root"
+  if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q '^result=uncommitted' && printf '%s' "$disk" | grep -q '^result=uncommitted'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' disk='$disk')"
+  fi
+}
+
 test_a_committed_branch_lands_in_one_call() {
   local name="checks, sync, push, title and body from disk, PR, auto-merge, finalize — one call, result=landed"
   local root; root="$(mktemp -d)"; setup "$root"
@@ -224,6 +239,7 @@ test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is() {
 }
 
 test_a_branch_with_nothing_ahead_of_the_base_says_so
+test_every_result_is_on_disk
 test_a_committed_branch_lands_in_one_call
 test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is
 test_a_second_run_over_its_own_landed_pr_is_landed_again

@@ -2313,6 +2313,26 @@ cmd_next() {
     fi
   fi
 
+  # --- landing, by the pipeline -------------------------------------------------
+  # Measured on 36 nodes (2026-10-15): the commits-and-PR window took 8.7 of a
+  # node's 15.6 orchestrating turns — the model ran pr-land.sh, read its
+  # result off a screen full of hook output (truncated on four nodes, so it ran
+  # it again), then called next. The commits need judgment; nothing after them
+  # does. Once the tree is committed, next runs pr-land.sh itself and routes
+  # its result below: landed, empty, red, or a case that needs a hand.
+  if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ] && [ ! -s "$SCRATCH/pr-land.txt" ]; then
+    local pl_pending
+    pl_pending="$( { bash "$HOOK_DIR/pr-preflight.sh" --task "$TASK_ID" --config "$CONFIG" 2>/dev/null || true; } | { grep -m1 '^pending_changes=' || true; } | cut -d= -f2)"
+    if [ "${pl_pending:-1}" -eq 0 ] 2>/dev/null; then
+      ( cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && bash "$HOOK_DIR/pr-land.sh" "$TASK_ID" --config "$CONFIG" ) > "$SCRATCH/pr-land.log" 2>&1 || true
+      [ -s "$SCRATCH/pr-land.txt" ] || { grep -m1 '^result=' "$SCRATCH/pr-land.log" > "$SCRATCH/pr-land.txt" 2>/dev/null || true; }
+    fi
+  fi
+  if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ] \
+    && grep -q '^result=landed' "$SCRATCH/pr-land.txt" 2>/dev/null; then
+    sed -n 1p "$SCRATCH/pr-land.txt" > "$SCRATCH/pr-created.txt"
+  fi
+
   # --- checks red at landing → one bounded fix round, then the verdict ---------
   # pr-land.sh proves the tree again before it pushes (the base moved, or the
   # gate's proof was not for this exact tree). A red there used to fall straight
@@ -2392,11 +2412,24 @@ cmd_next() {
     # Measured on 37 nodes: the PR skill took 9.6 of a node's 26 orchestrating
     # turns at 75-100k tokens each, for work that is the same every time. Only
     # the commits need judgment; pr-land.sh does the rest in one call.
-    next_body_add "Open this node's PR in two steps, no Skill:"
-    next_body_add "1. Commit the pending changes as atomic Conventional Commits (git add <files> per commit, never git add .; one logical change per commit; Co-Authored-By: Claude Fable 5 <noreply@anthropic.com> in each). Nothing else this step."
-    next_body_add "2. Run: bash \"$HOOK_DIR/pr-land.sh\" $TASK_ID — it runs the checks, syncs onto pr_base=${pr_base:-<base>}, pushes, writes the title and body from the commits and the gate rows, opens the PR, arms auto-merge, updates Linear and finalizes. Act on its result= line (also written to $SCRATCH/pr-land.txt — read that file if the command output was truncated or lost): uncommitted → commit and run it again; red → fix what <scratch>/test-failures.md lists, re-commit, run it again; conflict → resolve the listed files yourself (keep both sides' behavior), bash \"$HOOK_DIR/pr-sync.sh\" --continue, run it again; remote-branch-exists → the remote branch holds history that is not yours and a PR is open for it; never rename the branch (the graph tracks it) and never force-push — report it and stop; linear=mcp-needed → attach the PR URL and post a one-line comment via the Linear MCP, then move the issue to its completed state."
-    next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID"
-    next_emit "node-pr" "work" "$RUN" "opening this node's PR against ${pr_base:-the graph base}"
+    local pl_result
+    pl_result="$(sed -n 1p "$SCRATCH/pr-land.txt" 2>/dev/null || true)"
+    case "$pl_result" in
+      result=conflict*)
+        rm -f "$SCRATCH/pr-land.txt"
+        next_body_add "pr-land.sh stopped on a rebase conflict (${pl_result#result=conflict }). Resolve the conflicted files in this workspace, then: bash \"$HOOK_DIR/pr-sync.sh\" --continue — and re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID (it lands the PR itself)."
+        next_emit "node-pr" "work" "$RUN" "rebase conflict — resolve, then next lands the PR" ;;
+      result=remote-branch-exists*|result=uncommitted*)
+        rm -f "$SCRATCH/pr-land.txt" ;;
+    esac
+    if [ -s "$SCRATCH/pr-land.log" ] && ! grep -q '^result=' "$SCRATCH/pr-land.log" 2>/dev/null; then
+      next_body_add "pr-land.sh failed before producing a result (pr_base=${pr_base:-<base>}): $(tail -3 "$SCRATCH/pr-land.log" | tr '\n' ' ' | cut -c1-300). Fix the cause in this workspace, then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID."
+      rm -f "$SCRATCH/pr-land.log"
+      next_emit "node-pr" "work" "$RUN" "landing failed — fix the cause, then next lands the PR" ;
+    fi
+    next_body_add "Commit the pending changes as atomic Conventional Commits (git add <files> per commit, never git add .; one logical change per commit; Co-Authored-By: Claude Fable 5 <noreply@anthropic.com> in each). Nothing else this step."
+    next_body_add "Then re-run: bash \"$HOOK_DIR/pipeline.sh\" next $TASK_ID — it runs pr-land.sh itself (checks, sync onto pr_base=${pr_base:-<base>}, push, title and body from the commits and the gate rows, PR, auto-merge, Linear) and reads the result."
+    next_emit "node-pr" "work" "$RUN" "commit atomically, then next lands this node's PR against ${pr_base:-the graph base}"
   fi
 
   # --- homolog ------------------------------------------------------------------

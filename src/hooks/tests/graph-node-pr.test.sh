@@ -237,6 +237,88 @@ test_a_red_at_landing_past_the_cap_fails_with_its_reason() {
   fi
 }
 
+# Measured on 36 nodes: the commits-and-PR window took 8.7 of 15.6 turns. Once
+# the tree is committed, next runs pr-land.sh itself and reads its result.
+landing_repo() {
+  local root="$1"
+  mkdir -p "$root/remote.git" "$root/repo" "$root/bin"
+  git init -q --bare "$root/remote.git"
+  (
+    cd "$root/repo"
+    git init -q -b main .
+    git config user.email t@t; git config user.name T
+    mkdir ship
+    printf '# Config\n\n- Artifact language: en\n\n## Linear Integration\n- Configured: no\n\n## Pipeline Profile\n- profile: standard\n\n## Test Scope\n- unit: disabled\n- integration: disabled\n- e2e: disabled\n\n- Test Framework: none\n' > ship/config.md
+    printf '.context/\n' > .gitignore
+    echo base > a.txt
+    git add -A; git commit -qm init
+    git remote add origin "$root/remote.git"
+    git push -q -u origin main
+    git checkout -q -b fix/T1-x
+    echo one > one.txt; git add one.txt; git commit -qm "fix: handle the empty case"
+  ) >/dev/null 2>&1
+  cat > "$root/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${GH_FAKE_LOG:?}"
+case "$1 $2" in
+  "pr create") echo "https://github.com/acme/repo/pull/42" ;;
+  "pr view") exit 1 ;;
+  "pr merge") exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x "$root/bin/gh"
+}
+
+test_a_committed_tree_is_landed_by_next_itself() {
+  local name="once the tree is committed, next runs pr-land.sh itself: the PR is created, pr-created.txt holds the result and the node reaches done in that same call"
+  local root out scratch
+  root="$(mktemp -d)"
+  landing_repo "$root"
+  (cd "$root/repo" && bash "$PIPELINE" next T1) >/dev/null
+  scratch="$root/repo/.context/ship-run/T1"
+  printf '## Files\n- src/a.js\n- src/b.js\n\nTwo modules\n' > "$scratch/spec.md"
+  printf 'mode=graph\nbase=main\n' > "$scratch/pr-mode.txt"
+  printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+  (cd "$root/repo" && PATH="$root/bin:$PATH" GH_FAKE_LOG="$root/gh.log" bash "$PIPELINE" next T1) >/dev/null
+  out="$(cd "$root/repo" && PATH="$root/bin:$PATH" GH_FAKE_LOG="$root/gh.log" bash "$PIPELINE" next T1)"
+  local created="no"; [ -s "$scratch/pr-created.txt" ] && created="yes"
+  local landed; landed="$(cat "$scratch/pr-land.txt" 2>/dev/null || true)"
+  local creates; creates="$(grep -c '^pr create' "$root/gh.log" 2>/dev/null || true)"
+  rm -rf "$root"
+  if [ "$(field "$out" state)" = "done" ] && [ "$created" = "yes" ] \
+    && printf '%s' "$landed" | grep -q '^result=landed pr=https://github.com/acme/repo/pull/42' \
+    && [ "${creates:-0}" -eq 1 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) created=$created landed='$landed' creates=$creates)"
+  fi
+}
+
+test_an_uncommitted_tree_is_handed_to_the_model_first() {
+  local name="with pending changes, next asks for the atomic commits and runs no pr-land"
+  local root out scratch
+  root="$(mktemp -d)"
+  landing_repo "$root"
+  (cd "$root/repo" && bash "$PIPELINE" next T1) >/dev/null
+  scratch="$root/repo/.context/ship-run/T1"
+  printf '## Files\n- src/a.js\n- src/b.js\n\nTwo modules\n' > "$scratch/spec.md"
+  printf 'mode=graph\nbase=main\n' > "$scratch/pr-mode.txt"
+  printf '/graph\n' > "$scratch/graph-node.txt"
+  printf 'defer\n' > "$scratch/homolog-mode.txt"
+  echo dirty > "$root/repo/two.txt"
+  (cd "$root/repo" && PATH="$root/bin:$PATH" GH_FAKE_LOG="$root/gh.log" bash "$PIPELINE" next T1) >/dev/null
+  out="$(cd "$root/repo" && PATH="$root/bin:$PATH" GH_FAKE_LOG="$root/gh.log" bash "$PIPELINE" next T1)"
+  local creates; creates="$(grep -c '^pr create' "$root/gh.log" 2>/dev/null || true)"
+  rm -rf "$root"
+  if [ "$(field "$out" state)" = "node-pr" ] && printf '%s' "$out" | grep -q 'atomic Conventional Commits' && [ "${creates:-0}" -eq 0 ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) creates=$creates)"
+  fi
+}
+
 test_an_empty_landing_completes_the_pr_step() {
   local name="pr-land's result=empty completes the node-pr step: the node reaches done with pr-empty.txt and no PR"
   local dir out scratch
@@ -489,6 +571,8 @@ test_set_flips_node_pr_on_a_live_graph
 test_pipeline_emits_the_node_pr_step_before_homolog
 test_a_red_at_landing_gets_a_fix_round
 test_a_red_at_landing_past_the_cap_fails_with_its_reason
+test_a_committed_tree_is_landed_by_next_itself
+test_an_uncommitted_tree_is_handed_to_the_model_first
 test_an_empty_landing_completes_the_pr_step
 test_a_graph_node_done_runs_on_done_and_ends_the_turn
 test_pipeline_moves_past_node_pr_once_the_pr_exists
