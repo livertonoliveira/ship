@@ -271,6 +271,7 @@ settle_dispatch_failures() {
 # The forge client is resolved through a variable so a test can point it at a
 # stub, and so a repo whose client is wrapped keeps working.
 GH="${GH_BIN:-gh}"
+LINEAR_SH="${LINEAR_SH:-$HOOK_DIR/linear.sh}"
 
 # There is a forge gate only when there is a forge to gate on: node PRs enabled,
 # a client on PATH, and a remote for it to talk about. Without all three nothing
@@ -1809,6 +1810,28 @@ dispose_previous() {
   mv "$keep" "$f"
 }
 
+# The Linear issue of a node that merged follows the merge. The pipeline moves
+# it at done and pr-land.sh at landing; a node settled by the graph instead
+# (landed by hand, its earlier attempt's PR, a PR the forge merged after the
+# node stopped) left its issue In Progress with the work on the base — MOB-8077
+# and MOB-8075, 2026-10-15, moved by hand. Best effort: without the API key
+# or in local mode there is nothing to do, and a failure is logged, not fatal.
+settle_linear() {
+  local dir="$1" id="$2" url="${3:-}" wt scratch
+  [ "$(meta_get "$dir" mode)" = "linear" ] || return 0
+  [ -n "${LINEAR_API_KEY:-}" ] || return 0
+  wt="$(node_field "$dir" "$id" 7)"
+  scratch="$wt/.context/ship-run/$id"
+  [ -s "$scratch/linear-completed.txt" ] && return 0
+  grep -qE '^result=landed .*linear=(done|already)' "$scratch/pr-land.txt" 2>/dev/null && return 0
+  if bash "$LINEAR_SH" transition "$id" completed >/dev/null 2>&1; then
+    [ -n "$url" ] && { bash "$LINEAR_SH" attach "$id" "$url" --title "PR #${url##*/}" >/dev/null 2>&1 || true; }
+    log_line "$dir" "$id Linear issue moved to its completed state by the graph — the node had not"
+  else
+    log_line "$dir" "$id Linear issue NOT moved to its completed state (linear.sh transition failed) — move it by hand"
+  fi
+}
+
 dispose_workspace() {
   local dir="$1" id="$2" force="${3:-}" wt driver out disposed reason
   dispose_previous "$dir" "$id" "$force"
@@ -1876,6 +1899,7 @@ settle_landed() {
       transition "$dir" "$id" landed merged
       meta_set "$dir" last_merged "$id"
       log_line "$dir" "$id merged — no forge gate here (node PRs off, no forge client, or no remote)"
+      settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
       dispose_workspace "$dir" "$id"
       printf 'merged=%s\n' "$id"
       SETTLE_MERGED=$((SETTLE_MERGED + 1))
@@ -1896,6 +1920,7 @@ settle_landed() {
         transition "$dir" "$id" landed merged
         meta_set "$dir" last_merged "$id"
         log_line "$dir" "$id PR #$number merged on the forge — its dependents are free"
+        settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
         dispose_workspace "$dir" "$id"
         printf 'merged=%s\n' "$id"
         SETTLE_MERGED=$((SETTLE_MERGED + 1))
@@ -1920,6 +1945,7 @@ settle_landed() {
             transition "$dir" "$id" landed merged
             meta_set "$dir" last_merged "$id"
             log_line "$dir" "$id had nothing to land — its work reached the base through PR #${prior%%	*} of an earlier attempt (${prior#*	}) — its dependents are free"
+            settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
             dispose_workspace "$dir" "$id"
             printf 'merged=%s\n' "$id"
             SETTLE_MERGED=$((SETTLE_MERGED + 1))
@@ -1949,6 +1975,7 @@ settle_landed() {
                 transition "$dir" "$id" landed merged
                 meta_set "$dir" last_merged "$id"
                 log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN) — its dependents are free"
+                settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
                 dispose_workspace "$dir" "$id"
                 printf 'merged=%s\n' "$id"
                 SETTLE_MERGED=$((SETTLE_MERGED + 1))
@@ -2245,6 +2272,7 @@ cmd_complete() {
   # by a route the forge cannot report (merged by hand, landed in another PR).
   transition "$dir" "$id" "landed" merged
   meta_set "$dir" last_merged "$id"
+  settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
   dispose_workspace "$dir" "$id"
   render_json "$dir"
   printf 'completed=%s\n' "$id"

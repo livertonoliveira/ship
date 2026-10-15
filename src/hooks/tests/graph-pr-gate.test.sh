@@ -258,6 +258,75 @@ test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason(
   fi
 }
 
+# A node the graph settles (here: its PR merged on the forge after the node
+# stopped) leaves its Linear issue where the node left it. Measured 2026-10-15:
+# two issues sat In Progress with their PRs merged. The graph moves the issue
+# itself when the node has no record of having done so, and attaches the PR.
+test_a_graph_settled_node_moves_its_linear_issue() {
+  local name="a node merged by the graph has its Linear issue moved to completed, with the PR attached, when the node left no record of doing it"
+  local dir out log calls
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-001", "title": "Base", "deps": [], "files": ["src/good.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --mode linear >/dev/null
+  )
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh "$dir" MERGED
+  cat > "$dir/fake-linear" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${LINEAR_FAKE_LOG:?}"
+exit 0
+EOF
+  chmod +x "$dir/fake-linear"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" LINEAR_SH="$dir/fake-linear" LINEAR_FAKE_LOG="$dir/linear.log" LINEAR_API_KEY=k bash "$GRAPH" poll --stall-after 0)"
+  log="$(cat "$dir"/.context/ship-graph/*/graph-log.md 2>/dev/null || true)"
+  calls="$(cat "$dir/linear.log" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+    && printf '%s' "$calls" | grep -q '^transition TASK-001 completed' \
+    && printf '%s' "$calls" | grep -q '^attach TASK-001 https://forge.test/acme/repo/pull/7' \
+    && printf '%s' "$log" | grep -q 'TASK-001 Linear issue moved to its completed state by the graph'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' calls='$(printf '%s' "$calls" | tr '\n' '|')')"
+  fi
+}
+
+test_a_node_that_moved_its_own_issue_is_left_alone() {
+  local name="a node whose pr-land already moved the issue (linear=done) gets no second transition from the graph"
+  local dir out calls
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  (
+    cd "$dir"
+    cat > nodes.json <<'EOF'
+[
+  { "id": "TASK-001", "title": "Base", "deps": [], "files": ["src/good.ts"] }
+]
+EOF
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 2 --base-branch main --mode linear >/dev/null
+  )
+  landed_node "$dir" TASK-001 src/good.ts
+  mkdir -p "$dir/wt-TASK-001/.context/ship-run/TASK-001"
+  printf 'result=landed pr=https://forge.test/acme/repo/pull/7 number=7 branch=ship/TASK-001 automerge=armed linear=done context=preserved\n' > "$dir/wt-TASK-001/.context/ship-run/TASK-001/pr-land.txt"
+  make_gh "$dir" MERGED
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "${LINEAR_FAKE_LOG:?}"\nexit 0\n' > "$dir/fake-linear"; chmod +x "$dir/fake-linear"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" LINEAR_SH="$dir/fake-linear" LINEAR_FAKE_LOG="$dir/linear.log" LINEAR_API_KEY=k bash "$GRAPH" poll --stall-after 0)"
+  calls="$(cat "$dir/linear.log" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^merged=TASK-001$' && [ -z "$calls" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$out' calls='$(printf '%s' "$calls" | tr '\n' '|')')"
+  fi
+}
+
 test_a_missing_pr_is_surfaced_not_assumed() {
   local name="a landed node with no PR on the forge is reported, never taken as merged"
   local dir out json
@@ -912,6 +981,8 @@ test_an_open_pr_keeps_the_node_landed
 test_a_closed_pr_fails_the_node
 test_a_landed_node_with_nothing_to_land_is_settled_by_its_earlier_attempt
 test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason
+test_a_graph_settled_node_moves_its_linear_issue
+test_a_node_that_moved_its_own_issue_is_left_alone
 test_a_missing_pr_is_surfaced_not_assumed
 test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace
