@@ -43,6 +43,7 @@ usage() {
   echo "  sweep     [--feature <f>] [--force]" >&2
   echo "  conflicts [--feature <f>]" >&2
   echo "  status    [--feature <f>] [--json]" >&2
+  echo "  summary   [--feature <f>] [--quiet]    writes <graph>/summary.md: merges, attempts, wall-clock, cost" >&2
   echo "  iter      <counter-name> [--max N] [--feature <f>]" >&2
   echo "  nodes     --from-tasks <tasks.md> | --from-linear <project name>" >&2
 }
@@ -2649,6 +2650,96 @@ cmd_sweep() {
   printf 'note=only merged nodes are swept — a failed node keeps its workspace for inspection\n'
 }
 
+# The run's own report, written when the graph ends and on demand: what merged,
+# what failed, how long each node took, how many attempts it cost, and — when
+# node and the plugin's cost-profile.js are at hand — what it cost. Until now
+# that needed someone with the transcripts and a script; measured over five
+# graphs on 2026-10-15, every number the operator asked for came from one.
+cmd_summary() {
+  local feature="" quiet=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --feature) feature="$2"; shift 2 ;;
+      --quiet) quiet=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 1 ;;
+    esac
+  done
+  local dir
+  dir="$(graph_dir "$(resolve_feature "$feature")")"
+  require_graph "$dir"
+  local out="$dir/summary.md" log="$dir/graph-log.md"
+  local total merged failed first last
+  total="$(awk -F'\t' 'END { print NR + 0 }' "$dir/nodes.tsv")"
+  merged="$(count_status "$dir" merged)"
+  failed="$(count_status "$dir" failed)"
+  first="$({ sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p' "$log" 2>/dev/null || true; } | head -1)"
+  last="$({ sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p' "$log" 2>/dev/null || true; } | tail -1)"
+  {
+    printf '# Run summary — %s\n\n' "$(meta_get "$dir" feature)"
+    printf -- '- base: %s · driver: %s · max in flight: %s · merge policy: %s\n' \
+      "$(meta_get "$dir" base_branch)" "$(meta_get "$dir" driver)" "$(meta_get "$dir" max_in_flight)" "$(merge_policy_of "$dir")"
+    printf -- '- nodes: %s · merged: %s · failed: %s · other: %s\n' "$total" "$merged" "$failed" "$((total - merged - failed))"
+    printf -- '- attempts: %s (retries: %s)\n' \
+      "$(awk -F'\t' '{ a += ($9 == "" ? 0 : $9) } END { print a + 0 }' "$dir/nodes.tsv")" \
+      "$(awk -F'\t' '{ if ($9 > 1) r += $9 - 1 } END { print r + 0 }' "$dir/nodes.tsv")"
+    printf -- '- from %s to %s (%s)\n\n' "${first:-?}" "${last:-?}" "$(elapsed_between "$first" "$last")"
+    printf '| node | status | attempts | started | merged | minutes | PR |\n|---|---|---|---|---|---|---|\n'
+    awk -F'\t' '{ print $1 "\t" $6 "\t" $9 }' "$dir/nodes.tsv" | while IFS=$'\t' read -r id st att; do
+      local started mergedat mins prn
+      started="$({ grep -E "^- [0-9T:Z-]+ — $id pending → in_flight" "$log" 2>/dev/null || true; } | head -1 | sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p')"
+      mergedat="$({ grep -E "^- [0-9T:Z-]+ — $id landed → merged" "$log" 2>/dev/null || true; } | tail -1 | sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p')"
+      mins="$(elapsed_minutes "$started" "$mergedat")"
+      prn="$(pr_status_get "$dir" "$id" 2)"
+      printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$id" "$st" "${att:-0}" "${started:-}" "${mergedat:-}" "${mins:-}" "${prn:+#$prn}"
+    done
+    printf '\n'
+    summary_cost "$dir" "$first"
+  } > "$out"
+  [ "$quiet" -eq 1 ] || cat "$out"
+  printf 'summary=%s\n' "$out"
+}
+
+# Seconds between two ISO-8601 UTC stamps, rendered as "Xh Ym"; empty when a
+# stamp is missing. date -u -d (GNU) or -j -f (BSD): the first that answers.
+epoch_of() {
+  local ts="$1"
+  [ -n "$ts" ] || return 0
+  date -u -d "$ts" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null || true
+}
+elapsed_between() {
+  local a b
+  a="$(epoch_of "$1")"; b="$(epoch_of "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || { printf '?'; return 0; }
+  local d=$((b - a)); [ "$d" -lt 0 ] && d=0
+  printf '%dh %02dm' $((d / 3600)) $(((d % 3600) / 60))
+}
+elapsed_minutes() {
+  local a b
+  a="$(epoch_of "$1")"; b="$(epoch_of "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || return 0
+  printf '%d' $(((b - a) / 60))
+}
+
+# Cost by node and by category, from the transcripts, when the tools are at
+# hand: node on PATH and the plugin's scripts/cost-profile.js (next to this
+# hooks dir in the installed plugin, under plugins/ship in the repo). The node
+# dirs are named after the workspace paths, so the prefix is "<repo>-<id prefix>".
+summary_cost() {
+  local dir="$1" since="$2" script="" c repo idp
+  for c in "$HOOK_DIR/../../../scripts/cost-profile.js" "$HOOK_DIR/../../plugins/ship/scripts/cost-profile.js" "$HOOK_DIR/../scripts/cost-profile.js"; do
+    [ -f "$c" ] && { script="$c"; break; }
+  done
+  if [ -z "$script" ] || ! command -v node >/dev/null 2>&1; then
+    printf 'Cost: unavailable here (needs node and the plugin'"'"'s scripts/cost-profile.js).\n'
+    return 0
+  fi
+  repo="$(basename "$(dirname "$(cd "$dir/../../.." 2>/dev/null && pwd -P || pwd -P)")")"
+  idp="$(awk -F'\t' 'NR == 1 { print $1 }' "$dir/nodes.tsv" | sed -E 's/[0-9]+$//')"
+  printf '## Cost (cost-profile.js --prefix %s-%s%s)\n\n' "$repo" "$idp" "${since:+ --since $since}"
+  { node "$script" --prefix "$repo-$idp" ${since:+--since "$since"} --artifacts "$dir/artifacts" 2>/dev/null || true; } | sed -n '1,/^orchestration tool calls/p' | sed '$d' || true
+}
+
 cmd_status() {
   local feature="" as_json=0
   while [ $# -gt 0 ]; do
@@ -2960,7 +3051,8 @@ cmd_next() {
 
   # --- done ------------------------------------------------------------------
   if [ "$merged_n" -eq "$total" ]; then
-    next_body_add "Every node's PR is merged into $(meta_get "$dir" base_branch)."
+    cmd_summary --feature "$(meta_get "$dir" feature)" --quiet >/dev/null 2>&1 || true
+    next_body_add "Every node's PR is merged into $(meta_get "$dir" base_branch). Run summary (nodes, attempts, wall-clock, cost): $dir/summary.md — present its totals."
     next_body_add "Present the batch homolog: for each node, $dir/artifacts/<task>/homolog-report.md (written by the deferred homolog, harvested when the node merged), in the artifact language."
     if ! node_pr_on "$dir"; then
       next_body_add "Then inform: node PRs were off, so each node's branch is still unmerged — run /ship:pr per branch when ready. NEVER auto-invoke /ship:pr."
@@ -2972,6 +3064,8 @@ cmd_next() {
   # everything that could finish. This is the one decision that is genuinely
   # the operator's — retry the failed ones (reset) or accept the partial result.
   if [ "$failed" -gt 0 ]; then
+    cmd_summary --feature "$(meta_get "$dir" feature)" --quiet >/dev/null 2>&1 || true
+    next_body_add "Run summary (nodes, attempts, wall-clock, cost): $dir/summary.md — present its totals."
     next_body_add "Every node that could run has: $merged_n merged, $failed failed after $(max_attempts_of "$dir") attempt(s) or by decision, $((total - merged_n - failed)) held behind a failed dependency."
     next_body_add "Failed: $(nodes_with_status "$dir" failed | tr '\n' ' ')— each one's reason is in graph-log.md and its last workspace is kept."
     next_body_add "Present the batch homolog for the merged nodes ($dir/artifacts/<task>/homolog-report.md) and the failed list with reasons, in the artifact language. Then STOP."
@@ -3301,6 +3395,7 @@ case "$SUBCOMMAND" in
   sweep)     cmd_sweep "$@" ;;
   conflicts) cmd_conflicts "$@" ;;
   status)    cmd_status "$@" ;;
+  summary)   cmd_summary "$@" ;;
   iter)      cmd_iter "$@" ;;
   nodes)     cmd_nodes "$@" ;;
   *)         usage; exit 1 ;;

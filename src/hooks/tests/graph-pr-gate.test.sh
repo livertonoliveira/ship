@@ -327,6 +327,29 @@ EOF
   fi
 }
 
+test_summary_reports_the_run_from_its_own_records() {
+  local name="summary writes summary.md with totals, attempts, wall-clock and the PR per node, from nodes.tsv, graph-log.md and pr-status.tsv"
+  local dir out summary
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh "$dir" MERGED
+  (cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0 >/dev/null)
+  out="$(cd "$dir" && bash "$GRAPH" summary 2>&1)"
+  summary="$(cat "$dir"/.context/ship-graph/f/summary.md 2>/dev/null || true)"
+  rm -rf "$dir"
+  if printf '%s' "$out" | grep -q '^summary=' \
+    && printf '%s' "$summary" | grep -q '^- nodes: 2 · merged: 1 · failed: 0 · other: 1$' \
+    && printf '%s' "$summary" | grep -q '^- attempts: 1 (retries: 0)$' \
+    && printf '%s' "$summary" | grep -qE '^\| TASK-001 \| merged \| 1 \| [0-9T:Z-]+ \| [0-9T:Z-]+ \| [0-9]+ \| #7 \|$' \
+    && printf '%s' "$summary" | grep -qE '^\| TASK-002 \| (pending|ready) \| 0 \|  \|  \|  \|  \|$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out='$(printf '%s' "$out" | head -3 | tr '\n' '|')' summary='$(printf '%s' "$summary" | tr '\n' '|' | cut -c1-400)')"
+  fi
+}
+
 test_a_missing_pr_is_surfaced_not_assumed() {
   local name="a landed node with no PR on the forge is reported, never taken as merged"
   local dir out json
@@ -983,6 +1006,7 @@ test_a_landed_node_with_nothing_to_land_is_settled_by_its_earlier_attempt
 test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason
 test_a_graph_settled_node_moves_its_linear_issue
 test_a_node_that_moved_its_own_issue_is_left_alone
+test_summary_reports_the_run_from_its_own_records
 test_a_missing_pr_is_surfaced_not_assumed
 test_a_missing_pr_asks_instead_of_waiting_forever
 test_a_pr_in_another_repo_is_found_from_the_node_workspace
