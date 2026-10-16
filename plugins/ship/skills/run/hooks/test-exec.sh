@@ -409,7 +409,11 @@ tool_never_ran() {
   local exit_code="$1" out="$2"
   [ "$exit_code" -eq 127 ] && return 0
   [ -n "$out" ] && [ -f "$out" ] || return 1
-  grep -qE 'ERR_PNPM_[A-Z_]+|npm ERR! code E[A-Z]+|Command failed with exit code [0-9]+: (pnpm|npm|yarn|bun) install|(^|: )command not found|Cannot find module '"'"'(jest|vitest|mocha|ava|eslint|typescript|ts-node|tsx)|error TS6053|No such file or directory.*(node_modules|\.bin/)' "$out"
+  # A suite whose global setup could not start (jest globalSetup, a vitest
+  # globalSetup/setupFiles) never ran a test either: measured 2026-10-16, a
+  # container runtime that went away took three api nodes through two
+  # remediation rounds and a retry each, "fixing" tests that had not executed.
+  grep -qE 'ERR_PNPM_[A-Z_]+|npm ERR! code E[A-Z]+|Command failed with exit code [0-9]+: (pnpm|npm|yarn|bun) install|(^|: )command not found|Cannot find module '"'"'(jest|vitest|mocha|ava|eslint|typescript|ts-node|tsx)|error TS6053|No such file or directory.*(node_modules|\.bin/)|Got error running globalSetup|Error running global setup|Could not find a working container runtime|Cannot connect to the Docker daemon|connect ENOENT .*docker\.sock' "$out"
 }
 
 # Existing test files the typecheck now rejects. Measured live (2 of 2 nodes on
