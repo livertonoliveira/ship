@@ -42,3 +42,6 @@ ship/.tmp/
 # plugins/ship/skills/ — also committed, since the marketplace ships
 # whatever is in git. Run `npm run build` in plugins/ship/ after
 # editing anything under src/.
+
+# Engine-written type contracts for a loaded plugin (claude plugin validate/test)
+plugins/ship/.claude-plugin/types/
