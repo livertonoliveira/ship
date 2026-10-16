@@ -148,6 +148,28 @@ test_suite_whose_global_setup_failed_is_an_environment_stop() {
   rm -rf "$d"
 }
 
+# The task deleted a source file and its test together; the manifest row stayed
+# and jest's "No tests found" read as a red suite (MOB-8240, 2026-10-16).
+test_a_manifest_row_whose_file_is_gone_is_dropped_not_red() {
+  local name="a generated-tests row whose file no longer exists is dropped and recorded in tests-missing.txt; the remaining files run and the gate is green"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > suite-args.txt\necho "Tests: 1 passed"\nexit 0\n' > "$d/suite.sh"
+  chmod +x "$d/suite.sh"
+  mkdir -p "$d/test"
+  printf 'it("x", () => {});\n' > "$d/test/a.spec.ts"
+  printf -- '- test/a.spec.ts (unit)\n- test/gone.spec.ts (unit)\n' > "$d/scratch/generated-tests.md"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -qx 'test/a.spec.ts' "$d/suite-args.txt" && ! grep -q 'gone' "$d/suite-args.txt" \
+    && grep -qx 'test/gone.spec.ts' "$d/scratch/tests-missing.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc args=$(tr '\n' '|' < "$d/suite-args.txt" 2>/dev/null) missing=$(cat "$d/scratch/tests-missing.txt" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
 test_runner_that_never_ran_is_an_environment_stop() {
   local name="a suite whose runner never started exits 4 with the environment report instead of a contentless failure"
   local d; d="$(mktemp -d)"
@@ -202,6 +224,7 @@ test_pytest_skip_marker_is_caught
 test_static_that_never_ran_is_an_environment_stop
 test_a_real_typecheck_error_is_still_a_failure
 test_suite_whose_global_setup_failed_is_an_environment_stop
+test_a_manifest_row_whose_file_is_gone_is_dropped_not_red
 test_runner_that_never_ran_is_an_environment_stop
 test_static_check_names_existing_tests_the_change_broke
 
