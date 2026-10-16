@@ -337,6 +337,25 @@ collect_test_entries() {
       }
     }
   ' "$generated" || true)"
+  # A manifest row whose file is gone cannot run and cannot be red: the task
+  # deleted the source and its test together, the row stayed, and jest's "No
+  # tests found" took a node through three rounds and a retry (MOB-8240,
+  # 2026-10-16). Dropped here and recorded, so the contract check — not the
+  # runner — says whether a scenario lost its test.
+  local kept="" missing="" l p
+  while IFS=$'\t' read -r l p; do
+    [ -n "$p" ] || continue
+    if [ -f "$p" ]; then kept="${kept}${l}	${p}
+"; else missing="${missing}${p}
+"; fi
+  done <<< "$TEST_ENTRIES"
+  TEST_ENTRIES="${kept%
+}"
+  if [ -n "$missing" ]; then
+    printf '%s' "$missing" > "$(dirname "$generated")/tests-missing.txt"
+  else
+    rm -f "$(dirname "$generated")/tests-missing.txt"
+  fi
 }
 
 # A layer whose files only run under a dedicated package script — a separate

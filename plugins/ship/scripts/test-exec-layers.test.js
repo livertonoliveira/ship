@@ -37,6 +37,14 @@ function setupProject({ scripts, manifest }) {
   fs.writeFileSync(path.join(dir, 'ship', 'config.md'), '# Config\n');
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'p', scripts }, null, 2));
   fs.writeFileSync(path.join(dir, 'scratch', 'generated-tests.md'), manifest);
+  // A manifest row whose file is gone is dropped by test-exec (the task may
+  // have deleted the source and its test together), so every listed file
+  // exists here — these tests are about routing, not about missing files.
+  for (const m of manifest.matchAll(/^- (\S+) \(/gm)) {
+    const f = path.join(dir, m[1]);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    if (!fs.existsSync(f)) fs.writeFileSync(f, 'it("x", () => {});\n');
+  }
   return dir;
 }
 
