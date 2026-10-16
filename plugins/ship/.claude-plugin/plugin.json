@@ -1,7 +1,7 @@
 {
   "name": "ship",
   "version": "4.59.1",
-  "description": "Automated development pipeline: spec → develop → test → quality → PR",
+  "description": "Automated development pipeline: spec \u2192 develop \u2192 test \u2192 quality \u2192 PR",
   "author": {
     "name": "livertonoliveira"
   },
@@ -15,5 +15,6 @@
     "slash-commands",
     "development",
     "prompt-toolkit"
-  ]
+  ],
+  "types": "./hooks/graph-band-types.d.ts"
 }

@@ -1,4 +1,7 @@
 {
+  "modules": [
+    "./graph-band.tsx"
+  ],
   "hooks": {
     "PreToolUse": [
       {
