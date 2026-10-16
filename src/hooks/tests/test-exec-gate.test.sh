@@ -128,6 +128,26 @@ test_a_real_typecheck_error_is_still_a_failure() {
   rm -rf "$d"
 }
 
+# Measured 2026-10-16: a container runtime that went away took three api nodes
+# through two remediation rounds and a retry each, over tests that never ran.
+test_suite_whose_global_setup_failed_is_an_environment_stop() {
+  local name="a suite whose global setup could not start (jest globalSetup, no container runtime) exits 4 with the environment report, not a red gate"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  printf '#!/usr/bin/env bash\necho "Error: Jest: Got error running globalSetup - /w/test/setup/jest-global-setup.ts, reason: Could not find a working container runtime strategy"\nexit 1\n' > "$d/suite.sh"
+  chmod +x "$d/suite.sh"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 4 ] \
+    && grep -q '### Test runner did not run' "$d/scratch/test-failures.md" \
+    && grep -q 'environment: checks could not run' "$d/scratch/phase-status-test.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc report=$(tr '\n' ' ' < "$d/scratch/test-failures.md" 2>/dev/null | cut -c1-200))"
+  fi
+  rm -rf "$d"
+}
+
 test_runner_that_never_ran_is_an_environment_stop() {
   local name="a suite whose runner never started exits 4 with the environment report instead of a contentless failure"
   local d; d="$(mktemp -d)"
@@ -181,6 +201,7 @@ test_skip_outside_the_contract_is_only_reported
 test_pytest_skip_marker_is_caught
 test_static_that_never_ran_is_an_environment_stop
 test_a_real_typecheck_error_is_still_a_failure
+test_suite_whose_global_setup_failed_is_an_environment_stop
 test_runner_that_never_ran_is_an_environment_stop
 test_static_check_names_existing_tests_the_change_broke
 
