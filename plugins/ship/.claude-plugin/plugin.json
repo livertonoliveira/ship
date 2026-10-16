@@ -1,7 +1,7 @@
 {
   "name": "ship",
-  "version": "4.59.1",
-  "description": "Automated development pipeline: spec \u2192 develop \u2192 test \u2192 quality \u2192 PR",
+  "version": "4.60.0",
+  "description": "Automated development pipeline: spec → develop → test → quality → PR",
   "author": {
     "name": "livertonoliveira"
   },
