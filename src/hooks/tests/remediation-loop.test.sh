@@ -131,6 +131,13 @@ mock_fix_agent() {
       printf 'export const fixed = 1\n' >> "$dir/src/a.js"
       ;;
     noop) ;;
+    # Fixes the typecheck, then "resolves" the finding by reverting the whole
+    # change to the base — the sentinel is excluded so the tree really is the base.
+    erase)
+      printf '.tc-fixed\n' >> "$dir/.git/info/exclude"
+      touch "$dir/.tc-fixed"
+      rm -rf "$dir/src"
+      ;;
   esac
 }
 
@@ -380,7 +387,43 @@ test_graph_node_fixes_again_while_the_residue_moves() {
   rm -rf "$dir"
 }
 
+test_a_fix_that_erases_the_change_is_restored_not_confirmed() {
+  local name="a fix that reverts the whole change gets it back, its findings left open, with no confirmation agent"
+  local dir; dir="$(mktemp -d)"; setup_repo "$dir"
+  local scratch="$dir/.context/ship-run/T8"
+  SEED_FINDING=1 FIX_MODE=erase CONFIRM_VERDICT=resolved
+  drive "$dir" T8 || true
+  if [ "$CONFIRM_DISPATCHES" = "0" ] && [ -f "$dir/src/a.js" ] && [ -f "$scratch/remediation-erased.txt" ] \
+    && grep -q '^unresolved=1' "$scratch/remediation-verdict.txt" \
+    && [ "$LAST_ACTION" = "ask" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (confirm=$CONFIRM_DISPATCHES a.js=$([ -f "$dir/src/a.js" ] && echo yes || echo no) last=$LAST_STATE/$LAST_ACTION verdict=$(tr '\n' ' ' < "$scratch/remediation-verdict.txt" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+test_graph_node_keeps_the_change_a_fix_erased() {
+  local name="a graph node whose fix reverted the whole change lands the restored change with the finding deferred"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
+  local scratch="$dir/.context/ship-run/G5"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  SEED_FINDING=1 FIX_MODE=erase CONFIRM_VERDICT=resolved
+  drive "$dir" G5 || true
+  if [ "$LAST_STATE" = "done" ] && [ ! -f "$scratch/ask.md" ] && [ -f "$dir/src/a.js" ] \
+    && [ "$CONFIRM_DISPATCHES" = "0" ] \
+    && grep -q 'deferred' "$scratch/gate-resolved.txt" \
+    && grep -q 'remediation: restore' "$scratch/graph-decisions.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (last=$LAST_STATE/$LAST_ACTION fix=$FIX_DISPATCHES confirm=$CONFIRM_DISPATCHES gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(tr '\n' '|' < "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
 test_one_batch_one_fix_one_confirmation
+test_a_fix_that_erases_the_change_is_restored_not_confirmed
+test_graph_node_keeps_the_change_a_fix_erased
 test_graph_node_defers_a_residue_that_stopped_moving
 test_graph_node_never_carries_a_red_check_into_a_pr
 test_graph_node_fixes_again_while_the_residue_moves
