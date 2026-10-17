@@ -22,7 +22,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Sibling hooks pipeline.sh shells out to. Verified once at init so a broken
 # install fails with the resolved path instead of a raw "No such file" mid-run
 # (or an agent guessing "missing" from reading a call site it never confirmed).
-REQUIRED_HOOKS="pr-land.sh pr-preflight.sh pr-sync.sh pr-finalize.sh deps-bootstrap.sh test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
+REQUIRED_HOOKS="pr-land.sh pr-preflight.sh pr-sync.sh pr-finalize.sh deps-bootstrap.sh test-regression.sh capture-diff.sh diff-classify.sh snapshot-files.sh status-consolidate.sh evidence-gate.sh quality-scope.sh test-scope.sh test-layer.sh test-exec.sh plan-scope.sh plan-scaffold.sh plan-validate.sh files-expand.sh deps-gate.sh diff-slice.sh remediation.sh remediation-verify.sh remediation-guard.sh findings-gate.sh findings-identity.sh worker-status-gate.sh verified-tree.sh linear.sh spec-slice.sh pipeline.sh"
 
 require_hooks() {
   local missing="" h
@@ -1618,6 +1618,7 @@ next_fix_dispatch() {
   # is absent from dispatch-log.md, so it never reaches report-timings or the
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent ship-remediation-fix sonnet >/dev/null
+  bash "$HOOK_DIR/remediation-guard.sh" snapshot "$scratch" >/dev/null 2>&1 || true
   next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Write what you changed per item id to $scratch/remediation-fix-report.md, last.\""
 }
 
@@ -2151,6 +2152,16 @@ cmd_next() {
   fi
 
   # --- remediation fix returned → hand over to the confirmation pass -----------
+  if [ -f "$SCRATCH/remediation-fix-inflight.txt" ] \
+    && bash "$HOOK_DIR/remediation-guard.sh" check "$SCRATCH" 2>/dev/null | grep -q '^erased=yes'; then
+    # The fix undid the whole change and the guard put it back: every finding
+    # stays open, so the round ends without a confirmation agent to agree with it.
+    rm -f "$SCRATCH/remediation-fix-inflight.txt"
+    touch "$SCRATCH/remediation-verify-inflight.txt"
+    awk -F'|' '$2 == "finding" { printf "- %s: unresolved — the fix reverted the whole change to the base; the change was restored\n", $1 }' \
+      "$SCRATCH/remediation-items.txt" > "$SCRATCH/remediation-verify.md" 2>/dev/null || true
+    graph_decision "$SCRATCH" "remediation" "restore" "the fix reverted the whole change to the base — restored, findings left open"
+  fi
   if [ -f "$SCRATCH/remediation-fix-inflight.txt" ]; then
     # The fix agent has no self-check: measured live, 3 of 16 rounds left the
     # typecheck or lint red and bought a whole second round (confirmation agent,
