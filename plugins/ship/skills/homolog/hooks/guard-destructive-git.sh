@@ -4,12 +4,12 @@
 # Reads a PreToolUse JSON event on stdin, extracts the command about to run, and blocks it
 # (exit 2, message on stderr) if it matches a git command that discards uncommitted or
 # untracked work without any possibility of recovery: `git clean -f`, `git checkout -- .` /
-# `git checkout .`, `git reset --hard`, `git branch -D`, `git push --force`.
+# `git checkout .`, `git reset --hard`, `git branch -D`, `git push --force`, and a bare `git stash pop|apply|drop`.
 #
 # This exists because an uncommitted, never-recovered file was permanently lost by exactly
 # this sequence (`git clean -fd` + `git checkout -- .`) run mid-debugging without confirmation.
 # The fix is a deterministic tripwire, not a reminder to "be careful" — the model asks the
-# user to confirm (or runs a safe alternative like `git stash -u`) instead of proceeding.
+# user to confirm (or commits work-in-progress) instead of proceeding.
 #
 # Exit 0 = allowed. Exit 2 = blocked, reason printed to stderr for the model to relay.
 
@@ -36,6 +36,11 @@ is_destructive() {
   printf '%s' "$c" | grep -qE 'git[[:space:]]+reset[[:space:]]+--hard\b' && return 0
   printf '%s' "$c" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D\b|git[[:space:]]+branch\b.*--delete.*--force' && return 0
   printf '%s' "$c" | grep -qE 'git[[:space:]]+push\b.*--force\b' && return 0
+  # The stash is one stack shared by every worktree of the repo: a bare pop,
+  # apply or drop takes whatever entry is on top, often another session's.
+  # Measured live (MOB-8647, 2026-10-18): a graph node stashed nothing, then
+  # popped an entry another node had parked eleven days earlier.
+  printf '%s' "$c" | grep -qE 'git[[:space:]]+stash[[:space:]]+(pop|apply|drop)([[:space:]]+(-q|--quiet|--index))*[[:space:]]*($|[;&|)]|\\n)' && return 0
 
   return 1
 }
@@ -46,7 +51,7 @@ if is_destructive "$command"; then
     echo
     echo "  $command"
     echo
-    echo "Before running anything like this, show the user what 'git status' / 'git diff' report would be lost and get their explicit confirmation. Prefer a reversible alternative first (e.g. 'git stash -u', or committing work-in-progress) over an irreversible discard."
+    echo "Before running anything like this, show the user what 'git status' / 'git diff' report would be lost and get their explicit confirmation. Prefer a reversible alternative first (a work-in-progress commit; never a bare 'git stash' — the stash is shared by every worktree) over an irreversible discard. A stash entry is applied or dropped only by its explicit ref."
   } >&2
   exit 2
 fi
