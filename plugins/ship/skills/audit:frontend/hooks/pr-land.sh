@@ -15,7 +15,7 @@
 # Run from the repo root with every change committed. Prints `result=<r>` plus
 # the facts the caller acts on:
 #   result=uncommitted files=<n>         commit first, then call again
-#   result=red                           checks failed — <scratch>/test-failures.md
+#   result=red                           checks failed, or the pre-push hook refused — <scratch>/test-failures.md
 #   result=conflict files=<a,b>          rebase stopped — resolve, pr-sync.sh --continue, call again
 #   result=remote-branch-exists          the remote branch has other history — the caller decides
 #   result=empty base=<b> branch=<br>    no commit ahead of the base after the sync — nothing to open
@@ -55,6 +55,17 @@ field() { { printf '%s\n' "$1" | grep -m1 "^$2=" || true; } | cut -d= -f2-; }
 # reads the file, never the caller's screen (where hook noise truncated it on
 # four nodes of one graph, 2026-10-15).
 say() { [ -d "$scratch" ] && printf '%s\n' "$1" > "$scratch/pr-land.txt"; printf '%s\n' "$1"; }
+
+# A push the remote never saw: an installed pre-push hook exited non-zero. The
+# remote's own refusals ([rejected], [remote rejected]) and transport errors
+# (fatal:) are something else.
+hook_refused() {
+  local hooks
+  hooks="$(git config core.hooksPath 2>/dev/null || git rev-parse --git-path hooks)"
+  [ -x "$hooks/pre-push" ] || return 1
+  printf '%s' "$1" | grep -q 'failed to push some refs' || return 1
+  ! printf '%s' "$1" | grep -qE '\[(remote )?rejected\]|^fatal:'
+}
 
 pre="$(bash "$HOOK_DIR/pr-preflight.sh" --task "$task" --config "$config")"
 storage="$(field "$pre" storage)"
@@ -145,8 +156,22 @@ fi
 # so the branch is never renamed. A remote branch with other history is a
 # previous attempt of the same task: overwritten with a lease when no PR is
 # open for it, handed back to the caller when one is.
-if ! push_err="$(git push -u "$remote" "$branch" 2>&1 >/dev/null)"; then
-  if printf '%s' "$push_err" | grep -qiE 'non-fast-forward|fetch first|rejected'; then
+if ! push_err="$(git push -u "$remote" "$branch" 2>&1)"; then
+  if hook_refused "$push_err"; then
+    # The project's pre-push hook ran its own checks (`test:changed` reaches the
+    # existing suites the change broke, which the gate's contract run does not)
+    # and refused. Measured live (MOB-8647, 2026-10-18): reported as a bare
+    # failure, the node pushed by hand, edited suites outside the gate and
+    # called a red case "flaky under load". It is a red check at landing.
+    if [ -d "$scratch" ]; then
+      { printf '# Test Failures\n\n## The pre-push hook refused the push\n\n```\n'
+        printf '%s\n' "$push_err" | tail -120
+        printf '```\n'; } > "$scratch/test-failures.md"
+      printf '| test | #<RUN> | %s | - | fail | 0 | 0 | 0 | 0 | pre-push hook |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$scratch/phase-status-test.md"
+    fi
+    say "result=red exit=hook report=$scratch/test-failures.md"
+    exit 3
+  elif printf '%s' "$push_err" | grep -qiE 'non-fast-forward|fetch first|rejected'; then
     open_pr="$("$GH" pr view "$branch" --json state --jq .state 2>/dev/null || true)"
     # A graph node owns its task branch by construction: an OPEN PR there is
     # this node's own earlier landing (a later commit, a rebase onto a moved
