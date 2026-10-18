@@ -51,6 +51,12 @@ assert_allowed() {
   rm -f /tmp/guard-stderr.$$
 }
 
+assert_blocked "blocks a bare git stash pop" "git stash pop"
+assert_blocked "blocks a bare git stash apply chained" "git stash apply && git status"
+assert_blocked "blocks a bare git stash drop -q" "git stash drop -q"
+assert_allowed "allows git stash pop by explicit ref" "git stash apply 0cb52ede5b704ca8"
+assert_allowed "allows git stash pop stash@{n}" "git stash pop stash@{2}"
+assert_allowed "allows git stash list" "git stash list"
 assert_blocked "blocks git clean -fd" "git clean -fd"
 assert_blocked "blocks git clean -df" "git clean -df"
 assert_blocked "blocks git clean --force" "git clean --force -d"
