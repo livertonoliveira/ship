@@ -238,6 +238,42 @@ test_a_merged_pr_on_the_task_branch_is_landed_whatever_our_head_is() {
   rm -rf "$root"
 }
 
+# Measured live (MOB-8647): a refused pre-push was a bare failure, and the node
+# pushed by hand and judged the red itself.
+test_a_pre_push_hook_refusal_is_red() {
+  local name="a pre-push hook that refuses the push is result=red (exit 3) with its output in test-failures.md and a failed test row — even when that output says 'rejected'"
+  local root; root="$(mktemp -d)"; setup "$root"
+  printf '#!/bin/sh\necho "FAIL src/gate.test.tsx > the token is rejected"\nexit 1\n' > "$root/repo/.git/hooks/pre-push"
+  chmod +x "$root/repo/.git/hooks/pre-push"
+  local out rc=0; out="$(land "$root" T1)" || rc=$?
+  local s="$root/repo/.context/ship-run/T1"
+  if [ "$rc" -eq 3 ] && [ "$(field "$out" result)" = "red" ] && grep -q '^result=red' "$s/pr-land.txt" \
+    && grep -q 'FAIL src/gate.test.tsx' "$s/test-failures.md" \
+    && grep -qE '^\| test \| .* \| fail \|' "$s/phase-status-test.md" \
+    && ! git -C "$root/remote.git" rev-parse -q --verify fix/T1-x >/dev/null \
+    && ! grep -q '^pr create' "$root/gh.log" 2>/dev/null; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_failed_push_without_a_hook_is_not_red() {
+  local name="a push that fails with no pre-push hook installed stays a plain failure (exit 1), never a red"
+  local root; root="$(mktemp -d)"; setup "$root"
+  (cd "$root/repo" && git remote set-url origin "$root/missing.git")
+  local out rc=0; out="$(land "$root" T1 2>&1)" || rc=$?
+  if [ "$rc" -eq 1 ] && ! printf '%s' "$out" | grep -q '^result=red'; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_pre_push_hook_refusal_is_red
+test_a_failed_push_without_a_hook_is_not_red
 test_a_branch_with_nothing_ahead_of_the_base_says_so
 test_every_result_is_on_disk
 test_a_committed_branch_lands_in_one_call
