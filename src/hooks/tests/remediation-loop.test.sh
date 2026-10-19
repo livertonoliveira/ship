@@ -131,6 +131,11 @@ mock_fix_agent() {
       printf 'export const fixed = 1\n' >> "$dir/src/a.js"
       ;;
     noop) ;;
+    # Addresses the finding and, doing so, breaks a check that was green.
+    break)
+      rm -f "$dir/.tc-fixed"
+      printf 'export const refactored = 1\n' >> "$dir/src/a.js"
+      ;;
     # Fixes the typecheck, then "resolves" the finding by reverting the whole
     # change to the base — the sentinel is excluded so the tree really is the base.
     erase)
@@ -421,7 +426,29 @@ test_graph_node_keeps_the_change_a_fix_erased() {
   rm -rf "$dir"
 }
 
+# Measured live (MOB-8624): the last round broke a unit test that had passed,
+# and the node failed over a tree that was green one round earlier.
+test_graph_node_undoes_a_round_that_turned_a_green_check_red() {
+  local name="a graph node whose fix turns a green check red has the round undone and lands green with the finding deferred"
+  local dir; dir="$(mktemp -d)"; ON_FAIL=ask setup_repo "$dir"; unset ON_FAIL
+  touch "$dir/.tc-fixed"
+  local scratch="$dir/.context/ship-run/G6"
+  mkdir -p "$scratch"; printf '/graph\n' > "$scratch/graph-node.txt"
+  SEED_FINDING=1 FIX_MODE=break CONFIRM_VERDICT=resolved
+  drive "$dir" G6 || true
+  if [ "$LAST_STATE" = "done" ] && [ ! -f "$scratch/node-failed.txt" ] && [ -f "$dir/.tc-fixed" ] \
+    && ! grep -q refactored "$dir/src/a.js" \
+    && grep -q 'deferred' "$scratch/gate-resolved.txt" \
+    && grep -q 'remediation: restore — the fix turned typecheck red' "$scratch/graph-decisions.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (last=$LAST_STATE/$LAST_ACTION fix=$FIX_DISPATCHES failed=$(cat "$scratch/node-failed.txt" 2>/dev/null) gate=$(cat "$scratch/gate-resolved.txt" 2>/dev/null) decisions=$(tr '\n' '|' < "$scratch/graph-decisions.md" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
 test_one_batch_one_fix_one_confirmation
+test_graph_node_undoes_a_round_that_turned_a_green_check_red
 test_a_fix_that_erases_the_change_is_restored_not_confirmed
 test_graph_node_keeps_the_change_a_fix_erased
 test_graph_node_defers_a_residue_that_stopped_moving
