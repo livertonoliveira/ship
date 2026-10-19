@@ -1346,6 +1346,44 @@ execution_red() {
   printf '%s' "${red# }"
 }
 
+# The deterministic half of a remediation round's verdict: static, the suite
+# and the coverage-regression check, re-run on the tree the fix left.
+remediation_rerun_checks() {
+  local scratch="$1" config="$2" rse_rc=0 rte_rc=0 rtr_rc=0
+  rm -f "$scratch/static-exec-done.txt" "$scratch/test-exec-done.txt"
+  bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" --lint-fix >/dev/null 2>&1 || true
+  set +e
+  bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" --static-only >/dev/null 2>&1
+  rse_rc=$?
+  set -e
+  case "$rse_rc" in
+    0) next_write_row "$scratch" static pass "" ;;
+    2) next_write_row "$scratch" static skip "no static checks" ;;
+  esac
+  set +e
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 300 bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1
+  else
+    bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1
+  fi
+  rte_rc=$?
+  set -e
+  [ "$rte_rc" -eq 2 ] && next_write_row "$scratch" test skip "runner unresolved"
+  [ "$rte_rc" -eq 3 ] && next_write_row "$scratch" test fail "the configured Test Framework could not be run — fix it in ship/config.md"
+  if [ -f "$scratch/tests-pre.txt" ]; then
+    bash "$HOOK_DIR/test-regression.sh" snapshot "$scratch/tests-post.txt" 2>/dev/null || true
+    set +e
+    bash "$HOOK_DIR/test-regression.sh" check "$scratch/tests-pre.txt" "$scratch/tests-post.txt" >/dev/null 2>&1
+    rtr_rc=$?
+    set -e
+    if [ "$rtr_rc" -eq 0 ]; then
+      rm -f "$scratch/test-regression.md"
+      next_write_row "$scratch" test-generate pass ""
+    fi
+  fi
+  touch "$scratch/static-exec-done.txt" "$scratch/test-exec-done.txt"
+}
+
 # The graph-node half of the ask channel. graph.sh answer writes answer.txt and
 # wakes the worker through the driver; the worker blocks here in the meantime,
 # bounded so a tool call never hangs past what a runtime allows.
@@ -1619,6 +1657,7 @@ next_fix_dispatch() {
   # execution trace the user reads at homolog.
   cmd_dispatch "$scratch" remediation-fix Agent ship-remediation-fix sonnet >/dev/null
   bash "$HOOK_DIR/remediation-guard.sh" snapshot "$scratch" >/dev/null 2>&1 || true
+  if [ -z "$(execution_red "$scratch")" ]; then touch "$scratch/remediation-pre-fix-green.txt"; else rm -f "$scratch/remediation-pre-fix-green.txt"; fi
   next_body_add "- Agent subagent_type=ship:ship-remediation-fix (model sonnet), prompt: \"Task: $task | Artifact language: $lang | Read $scratch/remediation.md — it is the complete list of adjustments this round requires (typecheck/lint, suite failures, coverage regressions and every gate finding, already consolidated). Read each item's Source/Detail file for the actual error. The change being fixed is already described on disk — its plan in $scratch/plan.md (if present), design in $scratch/design.md, the files it touched in $scratch/develop-touched-files.txt and its diff in $scratch/diff.md — start from those instead of rediscovering the codebase. Then apply the minimal source fix for every item in one pass — no unrelated refactors, no comments, no spec IDs in code or test names. Write what you changed per item id to $scratch/remediation-fix-report.md, last.\""
 }
 
@@ -2202,41 +2241,21 @@ cmd_next() {
     RUN=$((RUN + 1))
     printf '%s\n' "$RUN" > "$SCRATCH/run-number.txt"
 
-    rm -f "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
-    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --lint-fix >/dev/null 2>&1 || true
-    local rse_rc=0
-    set +e
-    bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" --static-only >/dev/null 2>&1
-    rse_rc=$?
-    set -e
-    case "$rse_rc" in
-      0) next_write_row "$SCRATCH" static pass "" ;;
-      2) next_write_row "$SCRATCH" static skip "no static checks" ;;
-    esac
-    local rte_rc=0
-    set +e
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 300 bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
-    else
-      bash "$HOOK_DIR/test-exec.sh" "$SCRATCH" --config "$CONFIG" >/dev/null 2>&1
+    remediation_rerun_checks "$SCRATCH" "$CONFIG"
+    # A round never leaves red a check that was green before it. Measured live
+    # (app-agendx MOB-8624, 2026-10-18): the last round, fixing a medium review
+    # finding, broke a unit test; with the cap spent the node failed over a tree
+    # that had been green one round earlier. The round is undone instead: its
+    # findings stay open and the gate decides the residue as usual.
+    if [ -f "$SCRATCH/remediation-pre-fix-green.txt" ] && [ -n "$(execution_red "$SCRATCH")" ] \
+      && bash "$HOOK_DIR/remediation-guard.sh" restore "$SCRATCH" 2>/dev/null | grep -q '^restored=yes'; then
+      local rr_red
+      rr_red="$(execution_red "$SCRATCH")"
+      remediation_rerun_checks "$SCRATCH" "$CONFIG"
+      awk -F'|' -v red="$rr_red" '$2 == "finding" { printf "- %s: unresolved — the fix turned %s red; the round was undone\n", $1, red }' \
+        "$SCRATCH/remediation-items.txt" > "$SCRATCH/remediation-verify.md" 2>/dev/null || true
+      graph_decision "$SCRATCH" "remediation" "restore" "the fix turned $rr_red red — the round was undone, findings left open"
     fi
-    rte_rc=$?
-    set -e
-    [ "$rte_rc" -eq 2 ] && next_write_row "$SCRATCH" test skip "runner unresolved"
-    [ "$rte_rc" -eq 3 ] && next_write_row "$SCRATCH" test fail "the configured Test Framework could not be run — fix it in ship/config.md"
-    if [ -f "$SCRATCH/tests-pre.txt" ]; then
-      bash "$HOOK_DIR/test-regression.sh" snapshot "$SCRATCH/tests-post.txt" 2>/dev/null || true
-      local rtr_rc=0
-      set +e
-      bash "$HOOK_DIR/test-regression.sh" check "$SCRATCH/tests-pre.txt" "$SCRATCH/tests-post.txt" >/dev/null 2>&1
-      rtr_rc=$?
-      set -e
-      if [ "$rtr_rc" -eq 0 ]; then
-        rm -f "$SCRATCH/test-regression.md"
-        next_write_row "$SCRATCH" test-generate pass ""
-      fi
-    fi
-    touch "$SCRATCH/static-exec-done.txt" "$SCRATCH/test-exec-done.txt"
 
     local rv_out
     rv_out="$(bash "$HOOK_DIR/remediation-verify.sh" "$SCRATCH" --config "$CONFIG" 2>/dev/null || true)"
