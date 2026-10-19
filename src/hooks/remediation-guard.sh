@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# remediation-guard.sh snapshot <scratch-dir> | check <scratch-dir>
+# remediation-guard.sh snapshot|check|restore <scratch-dir>
 #
 # A remediation fix can "resolve" a finding by restoring the task's files to the
 # base: measured live, a review finding that the new hooks had no consumer yet
@@ -15,12 +15,15 @@
 # the snapshot back and prints erased=yes. A fix that keeps any part of the
 # change is not judged here.
 #
-# Prints: erased=yes|no
+# `restore` puts the snapshot back unconditionally — the pipeline calls it when
+# the fix turned a check red that was green before it.
+#
+# Prints: erased=yes|no (check), restored=yes|no (restore)
 
 set -euo pipefail
 
 usage() {
-  echo "usage: remediation-guard.sh snapshot <scratch-dir> | check <scratch-dir>" >&2
+  echo "usage: remediation-guard.sh snapshot|check|restore <scratch-dir>" >&2
 }
 
 tree_hash() {
@@ -69,6 +72,19 @@ main() {
       restore_tree "$pre"
       printf 'restored=%s base=%s\n' "$pre" "$base_sha" > "$scratch/remediation-erased.txt"
       printf 'erased=yes\n'
+      ;;
+    restore)
+      # Puts the snapshot back whatever the fix did: files the fix added are
+      # removed, everything else returns to its pre-fix content.
+      local pre after f
+      pre="$(head -1 "$scratch/remediation-pre-fix-tree.txt" 2>/dev/null || true)"
+      [ -n "$pre" ] && git cat-file -e "$pre^{tree}" 2>/dev/null || { printf 'restored=no\n'; exit 0; }
+      after="$(tree_hash)" || { printf 'restored=no\n'; exit 0; }
+      git diff --name-only --no-renames --diff-filter=A "$pre" "$after" | while IFS= read -r f; do
+        rm -f -- "$f"
+      done
+      restore_tree "$pre"
+      printf 'restored=yes\n'
       ;;
     -h|--help) usage ;;
     *) usage; exit 1 ;;

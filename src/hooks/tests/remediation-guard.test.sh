@@ -96,7 +96,34 @@ test_scratch_writes_do_not_count() {
   if [ "$out" = "erased=yes" ]; then log_pass "$name"; else log_fail "$name (out=$out)"; fi
 }
 
+test_restore_puts_the_pre_fix_tree_back() {
+  local name="restore returns every file to its pre-fix content and removes the files the fix added"
+  setup
+  rg snapshot
+  printf 'a3\n' > "$D/a.txt"
+  rm -f "$D/b.txt"
+  printf 'added\n' > "$D/c.txt"
+  local out
+  out="$(rg restore)"
+  if [ "$out" = "restored=yes" ] && [ "$(cat "$D/a.txt")" = "a2" ] && [ "$(cat "$D/b.txt")" = "new" ] && [ ! -e "$D/c.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (out=$out a=$(cat "$D/a.txt") b=$(cat "$D/b.txt" 2>/dev/null) c=$([ -e "$D/c.txt" ] && echo present))"
+  fi
+}
+
+test_restore_without_a_snapshot_does_nothing() {
+  local name="restore with no snapshot reports restored=no and touches nothing"
+  setup
+  printf 'a3\n' > "$D/a.txt"
+  local out
+  out="$(rg restore)"
+  if [ "$out" = "restored=no" ] && [ "$(cat "$D/a.txt")" = "a3" ]; then log_pass "$name"; else log_fail "$name (out=$out)"; fi
+}
+
 test_a_fix_that_erases_the_change_is_restored
+test_restore_puts_the_pre_fix_tree_back
+test_restore_without_a_snapshot_does_nothing
 test_a_fix_that_keeps_part_of_the_change_is_left_alone
 test_an_empty_change_before_the_fix_is_not_an_erasure
 test_no_snapshot_means_no
