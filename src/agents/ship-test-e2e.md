@@ -16,14 +16,6 @@ Generate and run e2e tests for critical user flows described in the inline conte
 
 @ship/patterns/test-worker.md#test-worker-modes
 
-## Check e2e framework
-
-> Skip if `## Source` was injected inline or `Mode: execute` is active.
-
-Detect via `ship/config.md` (an explicit framework there wins), else Glob before concluding absence: `playwright.config.{ts,js}`, `cypress.config.{ts,js}`/`.json`, `wdio.conf.{ts,js}`, `nightwatch.conf.{js,ts}`, `testcafe.js`/`.testcaferc.json`, `codecept.conf.{ts,js}`.
-
-No framework detected: generate nothing and report `NEEDS_CONTEXT` — distinct from a config-disabled skip, which the orchestrator handles upstream. Tell the user, in the Artifact language, that e2e was skipped because no framework config was found (name the files checked) and how to enable it.
-
 ## Generate e2e tests
 
 Target critical end-to-end user flows, using the project's page objects and selectors.
