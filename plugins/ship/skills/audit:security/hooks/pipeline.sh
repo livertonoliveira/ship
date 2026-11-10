@@ -1297,6 +1297,20 @@ graph_decision() {
 # unresolved plus the deterministic failures still on disk. A round that changes
 # it earned another, up to the cap; one that did not is spent, and the findings
 # go to the batch homolog as pending — registered, not hidden.
+# A failure report's identity across rounds. The same failures with other
+# durations, clock times or temp paths are the same residue: hashing the raw text
+# made every round look new, and a fix agent that changed nothing ("no source
+# change") was granted the whole cap, twice per node (MOB-8873, 2026-11-09).
+residue_sum() {
+  [ -f "$1" ] || return 0
+  sed -E \
+    -e 's/[0-9]+(\.[0-9]+)? ?(ms|s|sec|secs|seconds)([^A-Za-z0-9]|$)/<t>\3/g' \
+    -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+Z?/<ts>/g' \
+    -e 's/[0-9]{1,2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?/<clock>/g' \
+    -e 's#/(private/)?(tmp|var/folders)/[^ :)]*#<tmp>#g' \
+    "$1" | cksum | awk '{ print $1 }'
+}
+
 graph_gate_choice() {
   local scratch="$1" decision="$2" sig prev final
   [ "$decision" = "FAIL" ] && final="defer" || final="pass"
@@ -1309,7 +1323,7 @@ graph_gate_choice() {
 
   sig="$(grep '^unresolved_ids=' "$scratch/remediation-verdict.txt" 2>/dev/null | cut -d= -f2)"
   sig="$sig|$(cat "$scratch/static-exits.txt" 2>/dev/null | tr '\n' ' ')"
-  sig="$sig|$(cksum "$scratch/test-failures.md" 2>/dev/null | awk '{ print $1 }')"
+  sig="$sig|$(residue_sum "$scratch/test-failures.md")"
   prev="$(cat "$scratch/remediation-signature.txt" 2>/dev/null || true)"
   printf '%s\n' "$sig" > "$scratch/remediation-signature.txt"
 
@@ -2537,6 +2551,8 @@ case "$SUBCOMMAND" in
     run_gate "$@" ;;
   rows)
     cmd_rows "$@" ;;
+  residue-sum)
+    residue_sum "${1:?usage: pipeline.sh residue-sum <file>}" ;;
   iter)
     cmd_iter "$@" ;;
   report-timings)
