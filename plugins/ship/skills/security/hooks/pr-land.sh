@@ -273,7 +273,9 @@ fi
 
 # --- Linear: attachment, comment, completed ------------------------------------------------
 linear="skipped"
-if [ "$storage" = "linear" ]; then
+if grep -q '^result=landed' "$scratch/pr-land.txt" 2>/dev/null; then
+  linear="already"
+elif [ "$storage" = "linear" ]; then
   if [ -n "${LINEAR_API_KEY:-}" ]; then
     linear="done"
     bash "$HOOK_DIR/linear.sh" attach "$task" "$pr_url" --title "PR #$number" >/dev/null 2>&1 || linear="partial"
