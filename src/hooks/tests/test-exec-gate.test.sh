@@ -237,6 +237,27 @@ test_full_runs_the_project_not_the_manifest() {
   rm -rf "$d"
 }
 
+test_a_row_the_runner_cannot_load_is_recorded_not_run() {
+  local name="a manifest row the runner cannot load (a Maestro .yaml) never reaches the runner: recorded, and the real suites decide"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in *.yaml) echo "No tests found, exiting with code 1"; exit 1 ;; esac; done\necho "PASS $*"\nexit 0\n' > "$d/suite.sh"
+  chmod +x "$d/suite.sh"
+  mkdir -p "$d/e2e/maestro"
+  printf 'x\n' > "$d/test/a.spec.ts"
+  printf -- '- launchApp\n' > "$d/e2e/maestro/flow.yaml"
+  printf -- '- test/a.spec.ts (unit)\n- e2e/maestro/flow.yaml (e2e)\n' > "$d/scratch/generated-tests.md"
+  local rc=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -qx 'e2e/maestro/flow.yaml' "$d/scratch/tests-unrunnable.txt" 2>/dev/null \
+    && grep -q '| pass |' "$d/scratch/phase-status-test.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc unrunnable=$(cat "$d/scratch/tests-unrunnable.txt" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
 test_skip_in_contract_file_fails_the_gate
 test_skip_outside_the_contract_is_only_reported
 test_pytest_skip_marker_is_caught
@@ -247,6 +268,7 @@ test_a_manifest_row_whose_file_is_gone_is_dropped_not_red
 test_runner_that_never_ran_is_an_environment_stop
 test_static_check_names_existing_tests_the_change_broke
 test_full_runs_the_project_not_the_manifest
+test_a_row_the_runner_cannot_load_is_recorded_not_run
 
 echo ""
 echo "${pass_count} passed, ${fail_count} failed"
