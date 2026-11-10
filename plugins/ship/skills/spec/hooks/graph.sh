@@ -410,6 +410,64 @@ pr_merge_state() {
   printf '%s' "$state"
 }
 
+# Nothing merges on the forge's word alone. The node's own landing left a proof
+# that this exact tree passed the whole project on top of a named base commit; it
+# holds only while the PR head still has that tree and the base has not moved.
+# Two nodes proven against different bases can each be green and break together.
+pr_merge_proven() {
+  local dir="$1" id="$2" wt proof head tree remote base_ref base tip
+  wt="$(node_field "$dir" "$id" 7)"
+  proof="$wt/.context/ship-run/$id/full-proof.txt"
+  [ -f "$proof" ] || return 1
+  head="$(json_field "$(node_gh "$dir" "$id" pr view "$(node_field "$dir" "$id" 8)" --json headRefOid 2>>"$dir/pr-$id.log" || true)" headRefOid)"
+  [ -n "$head" ] || return 1
+  tree="$(git -C "$wt" rev-parse "$head^{tree}" 2>/dev/null || true)"
+  [ -n "$tree" ] && [ "$(sed -n 's/^tree=//p' "$proof")" = "$tree" ] || return 1
+  remote="$(sed -n 's/^remote=//p' "$proof")"
+  base_ref="$(sed -n 's/^base_ref=//p' "$proof")"
+  base="$(sed -n 's/^base=//p' "$proof")"
+  tip="$(git -C "$wt" ls-remote "$remote" "refs/heads/$base_ref" 2>/dev/null | cut -f1 | head -1)"
+  [ -n "$tip" ] && [ "$tip" = "$base" ]
+}
+
+# Syncs the landed branch onto the moved base and proves it again, by running the
+# node's own landing script in its workspace: a suite takes minutes, so it runs
+# beside the loop and is read back on a later poll. Returns 1 when the node failed.
+pr_reprove() {
+  local dir="$1" id="$2" number="$3" wt line n pid
+  local out="$dir/pr-reprove-$id.out" pidf="$dir/pr-reprove-$id.pid" countf="$dir/pr-reprove-$id.count"
+  wt="$(node_field "$dir" "$id" 7)"
+  pid="$(cat "$pidf" 2>/dev/null || true)"
+  if [ -n "$pid" ]; then
+    kill -0 "$pid" 2>/dev/null && return 0
+    rm -f "$pidf"
+    line="$( { grep -m1 '^result=' "$out" 2>/dev/null || true; } )"
+    case "$line" in
+      result=landed*) ;;
+      *)
+        node_set "$dir" "$id" 6 failed
+        node_set "$dir" "$id" 10 ""
+        log_line "$dir" "$id → failed: PR #$number could not be proven on the current base (${line:-no result}) — never merged unproven. Details: $wt/.context/ship-run/$id/test-failures.md"
+        printf 'failed=%s\n' "$id"
+        return 1
+        ;;
+    esac
+  fi
+  n="$(cat "$countf" 2>/dev/null || echo 0)"
+  if [ "$n" -ge "${SHIP_PR_REPROVE_MAX:-5}" ]; then
+    node_set "$dir" "$id" 6 failed
+    node_set "$dir" "$id" 10 ""
+    log_line "$dir" "$id → failed: the base moved through $n re-proofs of PR #$number — never merged unproven"
+    printf 'failed=%s\n' "$id"
+    return 1
+  fi
+  printf '%s\n' "$((n + 1))" > "$countf"
+  log_line "$dir" "$id PR #$number has no proof for the current base — syncing and running the whole project again ($((n + 1)) of ${SHIP_PR_REPROVE_MAX:-5})"
+  ( cd "$wt" && exec bash "$HOOK_DIR/pr-land.sh" "$id" --config ship/config.md ) >"$out" 2>&1 </dev/null &
+  printf '%s\n' "$!" > "$pidf"
+  return 0
+}
+
 # gh merges on the forge first and tidies up locally afterwards, so a local
 # failure (the branch is checked out in the node's worktree) exits non-zero on
 # a PR that is already merged. The forge is asked right away instead of the
@@ -1971,11 +2029,20 @@ settle_landed() {
           pr_status_set "$dir" "$id" "$number" "$state" "$url" "$armed" "$mstate"
           case "$mstate" in
             CLEAN)
+              if ! pr_merge_proven "$dir" "$id"; then
+                if ! pr_reprove "$dir" "$id" "$number"; then
+                  SETTLE_CLOSED=$((SETTLE_CLOSED + 1))
+                  continue
+                fi
+                printf 'awaiting_merge=%s\n' "$id"
+                SETTLE_AWAITING=$((SETTLE_AWAITING + 1))
+                continue
+              fi
               if pr_try_merge "$dir" "$id"; then
                 pr_status_set "$dir" "$id" "$number" "MERGED" "$url" "$armed" "$mstate"
                 transition "$dir" "$id" landed merged
                 meta_set "$dir" last_merged "$id"
-                log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN) — its dependents are free"
+                log_line "$dir" "$id PR #$number merged by the graph (merge-policy=graph, forge reported CLEAN, whole project proven on this base) — its dependents are free"
                 settle_linear "$dir" "$id" "$(pr_status_get "$dir" "$id" 4)"
                 dispose_workspace "$dir" "$id"
                 printf 'merged=%s\n' "$id"
