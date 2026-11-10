@@ -351,6 +351,28 @@ collect_test_entries() {
   done <<< "$TEST_ENTRIES"
   TEST_ENTRIES="${kept%
 }"
+  # A manifest row the runner cannot load is not a test this gate can run: a
+  # Maestro flow (.yaml) handed to jest answers "No tests found" and exits 1, and
+  # MOB-8867 and MOB-8873 (2026-11-09) each failed twice on that with every real
+  # suite green. Only source files reach the runner; the rest is recorded.
+  local runnable="" unrunnable=""
+  while IFS=$'\t' read -r l p; do
+    [ -n "$p" ] || continue
+    case "${p##*.}" in
+      js|jsx|ts|tsx|mjs|cjs|mts|cts|py|go|rb|java|kt|kts|scala|cs|php|rs|swift|dart|ex|exs|clj|cljs|vue|svelte|sh|bash|bats)
+        runnable="${runnable}${l}	${p}
+" ;;
+      *) unrunnable="${unrunnable}${p}
+" ;;
+    esac
+  done <<< "$TEST_ENTRIES"
+  TEST_ENTRIES="${runnable%
+}"
+  if [ -n "$unrunnable" ]; then
+    printf '%s' "$unrunnable" > "$(dirname "$generated")/tests-unrunnable.txt"
+  else
+    rm -f "$(dirname "$generated")/tests-unrunnable.txt"
+  fi
   if [ -n "$missing" ]; then
     printf '%s' "$missing" > "$(dirname "$generated")/tests-missing.txt"
   else
