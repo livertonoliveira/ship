@@ -218,6 +218,25 @@ test_static_check_names_existing_tests_the_change_broke() {
   rm -rf "$d"
 }
 
+test_full_runs_the_project_not_the_manifest() {
+  local name="--full ignores the manifest and the cached static result, and is red when the whole project is"
+  local d; d="$(mktemp -d)"
+  setup_repo "$d"
+  printf '#!/usr/bin/env bash\nif [ $# -gt 0 ]; then exit 0; fi\necho "FAIL test/other.spec.ts"\nexit 1\n' > "$d/suite.sh"
+  chmod +x "$d/suite.sh"
+  printf 'x\n' > "$d/test/a.spec.ts"
+  printf -- '- test/a.spec.ts (unit)\n' > "$d/scratch/generated-tests.md"
+  local scoped=0 full=0
+  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || scoped=$?
+  (cd "$d" && bash "$TEST_EXEC" scratch --full --config config.md >/dev/null 2>&1) || full=$?
+  if [ "$scoped" -eq 0 ] && [ "$full" -eq 1 ] && grep -q 'test/other.spec.ts' "$d/scratch/test-failures.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (scoped=$scoped full=$full)"
+  fi
+  rm -rf "$d"
+}
+
 test_skip_in_contract_file_fails_the_gate
 test_skip_outside_the_contract_is_only_reported
 test_pytest_skip_marker_is_caught
@@ -227,6 +246,7 @@ test_suite_whose_global_setup_failed_is_an_environment_stop
 test_a_manifest_row_whose_file_is_gone_is_dropped_not_red
 test_runner_that_never_ran_is_an_environment_stop
 test_static_check_names_existing_tests_the_change_broke
+test_full_runs_the_project_not_the_manifest
 
 echo ""
 echo "${pass_count} passed, ${fail_count} failed"
