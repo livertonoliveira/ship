@@ -447,6 +447,22 @@ test_graph_node_undoes_a_round_that_turned_a_green_check_red() {
   rm -rf "$dir"
 }
 
+test_residue_identity_ignores_timings() {
+  local name="the residue signature ignores durations, clock times and temp paths, and still tells different failures apart"
+  local d; d="$(mktemp -d)"
+  printf 'PASS a (6.997 s)\n  ok (338 ms)\nTime: 7.293 s\nStart at 21:18:13\nIn /tmp/tmp.Ab12\nFAIL x.yaml No tests found\n' > "$d/one"
+  printf 'PASS a (5.1 s)\n  ok (91 ms)\nTime: 9.0 s\nStart at 22:01:02\nIn /tmp/tmp.Zz99\nFAIL x.yaml No tests found\n' > "$d/two"
+  printf 'PASS a (5.1 s)\n  ok (91 ms)\nTime: 9.0 s\nStart at 22:01:02\nIn /tmp/tmp.Zz99\nFAIL y.test.ts expected 2\n' > "$d/three"
+  local s1 s2 s3
+  s1="$(bash "$PIPELINE" residue-sum "$d/one")"; s2="$(bash "$PIPELINE" residue-sum "$d/two")"; s3="$(bash "$PIPELINE" residue-sum "$d/three")"
+  rm -rf "$d"
+  if [ -n "$s1" ] && [ "$s1" = "$s2" ] && [ "$s2" != "$s3" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (s1=$s1 s2=$s2 s3=$s3)"
+  fi
+}
+
 test_one_batch_one_fix_one_confirmation
 test_graph_node_undoes_a_round_that_turned_a_green_check_red
 test_a_fix_that_erases_the_change_is_restored_not_confirmed
@@ -461,6 +477,7 @@ test_residue_asks_instead_of_looping
 test_deterministic_only_batch_skips_the_confirmation_agent
 test_a_fix_that_changes_nothing_still_terminates
 test_remediation_rounds_are_recorded_in_the_dispatch_log
+test_residue_identity_ignores_timings
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
