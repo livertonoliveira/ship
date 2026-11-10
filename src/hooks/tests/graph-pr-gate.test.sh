@@ -73,6 +73,8 @@ EOF
 # flips the PR to MERGED for every later view.
 make_gh_merge() {
   local dir="$1" mstate="$2"
+  git -C "$dir" remote add origin "$dir" 2>/dev/null || true
+  git -C "$dir" config url."$dir".insteadOf https://forge.test/acme/repo.git
   printf '%s' "$mstate" > "$dir/mstate"
   printf 'OPEN' > "$dir/prstate"
   cat > "$dir/fake-gh" <<EOF
@@ -81,6 +83,10 @@ d="$dir"
 if [ "\$1 \$2" = "pr merge" ]; then
   printf '%s\n' "\$*" >> "\$d/merged"
   printf 'MERGED' > "\$d/prstate"
+  exit 0
+fi
+if printf '%s' "\$*" | grep -q headRefOid; then
+  printf '{"headRefOid":"%s"}\n' "\$(cat "\$d/head-oid")"
   exit 0
 fi
 if printf '%s' "\$*" | grep -q mergeStateStatus; then
@@ -122,9 +128,77 @@ landed_node() {
     printf 'export const x = 1\n' > "wt-$task/$file"
     git -C "wt-$task" add -A
     git -C "wt-$task" commit -qm "feat: $task"
+    git -C "wt-$task" rev-parse HEAD > head-oid
+    mkdir -p "wt-$task/.context/ship-run/$task"
+    printf 'tree=%s\nbase=%s\nremote=origin\nbase_ref=main\n' \
+      "$(git -C "wt-$task" rev-parse 'HEAD^{tree}')" "$(git rev-parse main)" \
+      > "wt-$task/.context/ship-run/$task/full-proof.txt"
     bash "$GRAPH" claim "$task" --worktree "wt-$task" --branch "ship/$task" >/dev/null
     bash "$GRAPH" land "$task" >/dev/null
   )
+}
+
+test_a_clean_pr_without_the_proof_is_never_merged() {
+  local name="a PR the forge calls CLEAN is not merged without the whole-project proof, and a re-proof that yields no landing fails the node"
+  local dir out second log merged pidf
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  rm -f "$dir/wt-TASK-001/.context/ship-run/TASK-001/full-proof.txt"
+  out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" set --merge-policy graph >/dev/null && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  pidf="$(ls "$dir"/.context/ship-graph/*/pr-reprove-TASK-001.pid)"
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do kill -0 "$(cat "$pidf")" 2>/dev/null || break; sleep 0.5; done
+  second="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  log="$(cat "$dir"/.context/ship-graph/*/graph-log.md)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' \
+    && printf '%s' "$log" | grep -q 'no proof for the current base' \
+    && printf '%s' "$second" | grep -q '^failed=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (merged='$merged' out='$out' second='$second')"
+  fi
+}
+
+test_a_base_that_moved_after_the_proof_blocks_the_merge() {
+  local name="a proof taken on an older base commit does not let a CLEAN PR merge"
+  local dir out merged
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  (cd "$dir" && git checkout -q main && git commit -q --allow-empty -m "feat: someone else landed")
+  out="$(cd "$dir" && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" set --merge-policy graph >/dev/null && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^failed=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (merged='$merged' out='$out')"
+  fi
+}
+
+test_a_pr_whose_head_changed_after_the_proof_blocks_the_merge() {
+  local name="a proof for another tree does not let a CLEAN PR merge"
+  local dir out merged
+  dir="$(mktemp -d)"
+  new_repo "$dir"
+  init_graph "$dir"
+  landed_node "$dir" TASK-001 src/good.ts
+  make_gh_merge "$dir" CLEAN
+  (cd "$dir/wt-TASK-001" && printf 'export const y = 2\n' > src/good.ts && git add -A && git commit -qm "fix: later" && git rev-parse HEAD > "$dir/head-oid")
+  out="$(cd "$dir" && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" set --merge-policy graph >/dev/null && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
+  merged="$(cat "$dir/merged" 2>/dev/null || true)"
+  rm -rf "$dir"
+  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^failed=TASK-001$'; then
+    log_pass "$name"
+  else
+    log_fail "$name (merged='$merged' out='$out')"
+  fi
 }
 
 test_a_merged_pr_completes_the_node() {
@@ -1023,6 +1097,9 @@ test_next_settles_a_forgeless_node_itself
 test_complete_is_the_manual_override
 test_complete_refuses_a_node_that_has_not_landed
 test_the_graph_has_no_merge_verb_left
+test_a_clean_pr_without_the_proof_is_never_merged
+test_a_base_that_moved_after_the_proof_blocks_the_merge
+test_a_pr_whose_head_changed_after_the_proof_blocks_the_merge
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
