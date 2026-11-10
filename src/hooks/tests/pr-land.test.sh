@@ -272,6 +272,56 @@ test_a_failed_push_without_a_hook_is_not_red() {
   rm -rf "$root"
 }
 
+# The manifest run is green and the rest of the project is not: suite.sh passes
+# when handed files and fails when asked for everything.
+use_scoped_suite() {
+  local root="$1" full_rc="$2"
+  (
+    cd "$root/repo"
+    printf '#!/usr/bin/env bash\nif [ $# -gt 0 ]; then echo ok; exit 0; fi\necho run >> "%s/full-runs"\necho "FAIL test/other.spec.ts"\nexit %s\n' "$root" "$full_rc" > suite.sh
+    chmod +x suite.sh
+    sed -i.bak -E 's/^- Test Framework:.*/- Test Framework: .\/suite.sh/' ship/config.md; rm -f ship/config.md.bak
+    grep -q 'Test Framework' ship/config.md || printf '\n- Test Framework: ./suite.sh\n' >> ship/config.md
+    git add -A; git commit -qm "test: scoped suite"
+    printf -- '- suite.sh (unit)\n' > .context/ship-run/T1/generated-tests.md
+  ) >/dev/null 2>&1
+}
+
+test_a_red_project_never_reaches_the_forge() {
+  local name="a suite broken outside the task's manifest is result=red: nothing is pushed, no PR, no proof"
+  local root; root="$(mktemp -d)"; setup "$root"; use_scoped_suite "$root" 1
+  local out rc=0
+  out="$(land "$root" T1)" || rc=$?
+  local pushed; pushed="$(git -C "$root/remote.git" rev-parse -q --verify refs/heads/fix/T1-x || true)"
+  if [ "$rc" -eq 3 ] && [ "$(field "$out" result)" = "red" ] && [ -z "$pushed" ] \
+    && ! grep -q 'pr create' "$root/gh.log" 2>/dev/null \
+    && [ ! -f "$root/repo/.context/ship-run/T1/full-proof.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' pushed='$pushed')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_green_project_leaves_a_proof_of_tree_and_base() {
+  local name="a green whole-project run records the tree and base it proved, and the same tree on the same base is not run again"
+  local root; root="$(mktemp -d)"; setup "$root"; use_scoped_suite "$root" 0
+  local out rc=0 proof tree base runs1 runs2
+  out="$(land "$root" T1)" || rc=$?
+  proof="$root/repo/.context/ship-run/T1/full-proof.txt"
+  tree="$(git -C "$root/repo" rev-parse 'HEAD^{tree}')"
+  base="$(git -C "$root/repo" rev-parse origin/main)"
+  runs1="$(wc -l < "$root/full-runs" | tr -d ' ')"
+  land "$root" T1 >/dev/null || true
+  runs2="$(wc -l < "$root/full-runs" | tr -d ' ')"
+  if [ "$rc" -eq 0 ] && grep -qx "tree=$tree" "$proof" && grep -qx "base=$base" "$proof" && [ "$runs1" = "$runs2" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' runs=$runs1/$runs2 proof=$(tr '\n' ' ' < "$proof" 2>/dev/null))"
+  fi
+  rm -rf "$root"
+}
+
 test_a_pre_push_hook_refusal_is_red
 test_a_failed_push_without_a_hook_is_not_red
 test_a_branch_with_nothing_ahead_of_the_base_says_so
@@ -285,6 +335,8 @@ test_a_stale_retry_branch_is_overwritten_with_a_lease
 test_a_graph_node_updates_its_own_open_pr_after_a_rebase
 test_a_standalone_run_never_overwrites_a_remote_branch
 test_a_failed_automerge_is_reported_not_fatal
+test_a_red_project_never_reaches_the_forge
+test_a_green_project_leaves_a_proof_of_tree_and_base
 
 echo ""
 echo "${pass_count} passed, ${fail_count} failed"

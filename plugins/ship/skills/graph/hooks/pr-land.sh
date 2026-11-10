@@ -124,6 +124,23 @@ if base_ref="$(git rev-parse -q --verify "refs/remotes/$remote/$pr_base" 2>/dev/
   fi
 fi
 
+# --- the whole project, on exactly what would merge ---------------------------------
+# The proof the graph demands before it merges: this tree passed typecheck, lint
+# and the full unit and integration suites on top of this base commit. A forge
+# reporting CLEAN says only that nothing conflicts, and says it just as readily
+# on a repo with no checks at all.
+full_tree="$(git rev-parse 'HEAD^{tree}')"
+full_base="$(git rev-parse -q --verify "refs/remotes/$remote/$pr_base" 2>/dev/null || true)"
+full_proof="$scratch/full-proof.txt"
+full_want="$(printf 'tree=%s\nbase=%s\nremote=%s\nbase_ref=%s' "$full_tree" "$full_base" "$remote" "$pr_base")"
+if [ "$(cat "$full_proof" 2>/dev/null || true)" != "$full_want" ]; then
+  rm -f "$full_proof"
+  rc=0
+  bash "$HOOK_DIR/test-exec.sh" "$scratch" --full --config "$config" >/dev/null 2>&1 || rc=$?
+  case "$rc" in 0|2) ;; *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;; esac
+  printf '%s\n' "$full_want" > "$full_proof"
+fi
+
 # --- an earlier run already landed this exact tree -----------------------------------
 # Measured live: the first run's output was lost in the caller's hook noise, the
 # second run saw a merged PR on the branch and reported "exists" — and the
