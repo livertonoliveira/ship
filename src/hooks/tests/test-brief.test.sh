@@ -323,6 +323,41 @@ test_develop_authored_tests_reach_the_manifest() {
   rm -rf "$dir"
 }
 
+test_e2e_without_a_runner_gets_no_worker() {
+  local name="e2e enabled on a repo with no e2e runner (Maestro flows only) gets no worker, and the skip is reported"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: enabled'
+  mkdir -p "$dir/e2e/maestro"; printf -- '- launchApp\n' > "$dir/e2e/maestro/flow.yaml"
+  out="$(drive_to_verify "$dir" TASK-1 e2e e2e/b.spec.ts)"
+  scratch="$(scratch_of "$dir" TASK-1)"
+  if ! printf '%s' "$out" | grep -q 'ship-test-e2e' && grep -q 'e2e(no-e2e-runner)' "$scratch/verify-a.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name (verify-a='$(cat "$scratch/verify-a.txt" 2>/dev/null | tr '\n' ' ')')"
+  fi
+  rm -rf "$dir"
+}
+
+test_e2e_with_detox_gets_its_worker() {
+  local name="a repo with a Detox config gets its e2e worker"
+  local dir out
+  dir="$(mktemp -d)"
+  setup_repo "$dir" '- unit: disabled
+- integration: disabled
+- e2e: enabled'
+  printf 'module.exports = {};\n' > "$dir/.detoxrc.js"
+  out="$(drive_to_verify "$dir" TASK-1 e2e e2e/b.test.ts)"
+  if printf '%s' "$out" | grep -q 'ship-test-e2e'; then
+    log_pass "$name"
+  else
+    log_fail "$name (out state=$(field "$out" state))"
+  fi
+  rm -rf "$dir"
+}
+
 test_layer_without_contract_is_not_dispatched
 test_layer_already_authored_by_develop_is_not_dispatched
 test_develop_authored_tests_reach_the_manifest
@@ -331,6 +366,8 @@ test_sub_bullet_module_files_reach_the_brief
 test_existing_tests_block_is_filtered
 test_style_ref_is_layer_appropriate
 test_no_style_ref_beats_a_wrong_one
+test_e2e_without_a_runner_gets_no_worker
+test_e2e_with_detox_gets_its_worker
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

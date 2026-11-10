@@ -1139,8 +1139,28 @@ next_develop_authored_tests() {
 # contract; and a layer whose every contract file develop already authored got a
 # worker that produced nothing. Both are pure cost. No plan (or a plan with no
 # contract at all) keeps the old config-driven behavior.
+# Whether this repo has an e2e runner at all. The worker's own prompt carried the
+# check, but skipped it whenever the brief had a ## Source section — which every
+# brief has — so on a repo whose only e2e is Maestro the worker wrote a .yaml flow
+# and the gate fed it to jest (MOB-8867, MOB-8873). A test:e2e script, a known
+# runner config, Detox, or e2e test sources already in the tree count.
+next_e2e_runner_present() {
+  [ -f package.json ] && grep -qE '"(test:e2e|e2e)"[[:space:]]*:' package.json && return 0
+  [ -f package.json ] && grep -qE '"detox"[[:space:]]*:' package.json && return 0
+  local f
+  for f in playwright.config.* cypress.config.* cypress.json wdio.conf.* nightwatch.conf.* \
+    .testcaferc.json codecept.conf.* .detoxrc .detoxrc.* detox.config.*; do
+    [ -e "$f" ] && return 0
+  done
+  git ls-files 2>/dev/null | grep -qE '(^|/)e2e/.*\.(test|spec|e2e|e2e-spec)\.(js|jsx|ts|tsx|mjs|cjs|py)$|\.e2e-spec\.(js|ts)$'
+}
+
 next_layer_worth_dispatch() {
   local scratch="$1" layer="$2" plan touched
+  if [ "$layer" = "e2e" ] && ! next_e2e_runner_present; then
+    printf 'no-e2e-runner'
+    return 1
+  fi
   plan="$scratch/plan.md"
   touched="$scratch/develop-touched-files.txt"
   [ -f "$plan" ] || return 0
