@@ -218,21 +218,70 @@ test_static_check_names_existing_tests_the_change_broke() {
   rm -rf "$d"
 }
 
-test_full_runs_the_project_not_the_manifest() {
-  local name="--full ignores the manifest and the cached static result, and is red when the whole project is"
-  local d; d="$(mktemp -d)"
+changed_repo() {
+  local d="$1" script="$2"
   setup_repo "$d"
-  printf '#!/usr/bin/env bash\nif [ $# -gt 0 ]; then exit 0; fi\necho "FAIL test/other.spec.ts"\nexit 1\n' > "$d/suite.sh"
-  chmod +x "$d/suite.sh"
-  printf 'x\n' > "$d/test/a.spec.ts"
-  printf -- '- test/a.spec.ts (unit)\n' > "$d/scratch/generated-tests.md"
-  local scoped=0 full=0
-  (cd "$d" && bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || scoped=$?
-  (cd "$d" && bash "$TEST_EXEC" scratch --full --config config.md >/dev/null 2>&1) || full=$?
-  if [ "$scoped" -eq 0 ] && [ "$full" -eq 1 ] && grep -q 'test/other.spec.ts' "$d/scratch/test-failures.md"; then
+  mkdir -p "$d/bin"
+  printf '#!/usr/bin/env bash\necho "$* base=$SHIP_BASE_REF" >> "%s/npm.log"\ncase "$*" in "run test:changed") %s ;; esac\nexit 0\n' "$d" "$script" > "$d/bin/npm"
+  chmod +x "$d/bin/npm"
+  printf '# Config\n\n- Artifact language: en\n- Test Framework: jest\n- Package Manager: npm\n' > "$d/config.md"
+  printf '{\n  "scripts": {\n    "lint": "eslint \\"{src,test}/**/*.ts\\"",\n    "test": "jest",\n    "test:changed": "jest --changedSince=$SHIP_BASE_REF"\n  }\n}\n' > "$d/package.json"
+}
+
+test_changed_runs_the_projects_own_script() {
+  local name="--changed runs the project's test:changed against the base, past a brace glob in an earlier script, and nothing else"
+  local d; d="$(mktemp -d)"
+  changed_repo "$d" 'echo "FAIL test/a.spec.ts"; echo "Tests:       1 failed, 1 total"; exit 1'
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --changed abc123 --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 1 ] && [ "$(cat "$d/npm.log")" = "run test:changed base=abc123" ] \
+    && grep -q 'test/a.spec.ts' "$d/scratch/test-failures.md"; then
     log_pass "$name"
   else
-    log_fail "$name (scoped=$scoped full=$full)"
+    log_fail "$name (rc=$rc runs=$(tr '\n' '|' < "$d/npm.log" 2>/dev/null))"
+  fi
+  rm -rf "$d"
+}
+
+test_changed_green_passes() {
+  local name="--changed is green when the project's test:changed is"
+  local d; d="$(mktemp -d)"
+  changed_repo "$d" 'echo "Tests:       3 passed, 3 total"; exit 0'
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --changed abc123 --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '| pass |' "$d/scratch/phase-status-test.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+  rm -rf "$d"
+}
+
+test_a_project_without_test_changed_does_not_pass() {
+  local name="a project with no test:changed script is refused with exit 5 and says what to add"
+  local d; d="$(mktemp -d)"
+  changed_repo "$d" 'exit 0'
+  printf '{"scripts":{"test":"jest"}}\n' > "$d/package.json"
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --changed abc123 --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 5 ] && grep -q 'no `test:changed` script' "$d/scratch/test-failures.md" && [ ! -f "$d/npm.log" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+  rm -rf "$d"
+}
+
+test_a_silent_green_suite_is_not_a_pass() {
+  local name="a test:changed that exits 0 printing nothing ran nothing: environment failure, never a pass"
+  local d; d="$(mktemp -d)"
+  changed_repo "$d" 'exit 0'
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --changed abc123 --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 4 ] && grep -q 'without reporting a single test' "$d/scratch/test-failures.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
   fi
   rm -rf "$d"
 }
@@ -267,7 +316,10 @@ test_suite_whose_global_setup_failed_is_an_environment_stop
 test_a_manifest_row_whose_file_is_gone_is_dropped_not_red
 test_runner_that_never_ran_is_an_environment_stop
 test_static_check_names_existing_tests_the_change_broke
-test_full_runs_the_project_not_the_manifest
+test_changed_runs_the_projects_own_script
+test_changed_green_passes
+test_a_project_without_test_changed_does_not_pass
+test_a_silent_green_suite_is_not_a_pass
 test_a_row_the_runner_cannot_load_is_recorded_not_run
 
 echo ""

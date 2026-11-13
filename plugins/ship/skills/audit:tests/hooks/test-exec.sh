@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --static-check | --lint-fix]" >&2
+  echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --static-check | --lint-fix | --changed <base-commit>]" >&2
 }
 
 field_from() {
@@ -54,10 +54,40 @@ resolve_runner() {
   resolve_pkg
 }
 
+# The "scripts" object of package.json, braces inside its string values kept
+# whole. A line range up to the first "}" ended early on a script holding a
+# brace glob ("eslint \"{src,test}/**/*.ts\""): every script after it was
+# invisible, test:unit and test:integration fell back to the bare test command,
+# and the full-suite proof of a landing measured that instead. Measured live
+# 2026-11-12 on api-agendx: a node merged with 27 red unit tests on its base.
+pkg_scripts_block() {
+  [ -f package.json ] || return 0
+  awk '
+    { text = text $0 "\n" }
+    END {
+      start = match(text, /"scripts"[ \t\r\n]*:[ \t\r\n]*\{/)
+      if (!start) exit
+      i = start + RLENGTH - 1
+      n = length(text); depth = 0; instr = 0; esc = 0
+      for (j = i; j <= n; j++) {
+        c = substr(text, j, 1)
+        if (instr) {
+          if (esc) esc = 0
+          else if (c == "\\") esc = 1
+          else if (c == "\"") instr = 0
+        } else if (c == "\"") instr = 1
+        else if (c == "{") depth++
+        else if (c == "}") { depth--; if (depth == 0) break }
+      }
+      printf "%s\n", substr(text, i, j - i + 1)
+    }
+  ' package.json
+}
+
 pkg_script_exists() {
   local script="$1"
   [ -f package.json ] || return 1
-  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json | grep -qE "\"${script}\"[[:space:]]*:"
+  pkg_scripts_block | grep -qE "\"${script}\"[[:space:]]*:"
 }
 
 resolve_static_checks() {
@@ -96,7 +126,7 @@ resolve_static_checks() {
 pkg_script_value() {
   local script="$1"
   [ -f package.json ] || return 0
-  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json \
+  pkg_scripts_block \
     | grep -m1 -E "\"${script}\"[[:space:]]*:" \
     | sed -E "s/.*\"${script}\"[[:space:]]*:[[:space:]]*\"((\\\\.|[^\"\\\\])*)\".*/\\1/" \
     | sed 's/\\"/"/g'
@@ -427,33 +457,19 @@ run_suites_by_layer() {
   return 0
 }
 
-# The whole project, not the task's manifest. A manifest run cannot see the
-# existing suite a change breaks: MOB-8806 (2026-11-09) merged with 10 red cases
-# in a spec outside its manifest, on a repo whose PRs carry no forge checks.
-# Unit and integration run whatever Test Scope says, because that setting governs
-# what gets generated, not whether a broken suite may merge. E2e stays with the
-# manifest run: it needs the application up, which a landing does not have.
-# The heartbeat keeps a suite longer than the stall window from reading as a dead
-# worker; nothing else is written while it runs.
-run_full_suite() {
-  local scratch="$1" combined rc=0 seen="" key l
-  combined="$(mktemp)"
+# --changed <base>: the project's own "test what this change touches" check,
+# run on the exact tree that would merge. Which tests that means is the
+# project's call — its `test:changed` script (jest --changedSince, vitest
+# --changed, a Detox flow map...); Ship only refuses to merge before it ran
+# green. SHIP_BASE_REF carries the commit the change is measured against. The
+# heartbeat keeps a long run (a Detox pass) from reading as a dead worker.
+run_changed_suite() {
+  local scratch="$1" base="$2"
   ( while sleep 60; do date +%s > "$scratch/full-suite-heartbeat.txt"; done ) >/dev/null 2>&1 &
   local beat=$!
-  for l in unit integration; do
-    layer_command_words "$l"
-    key="${LAYER_CMD_WORDS[*]}"
-    case "$seen" in *"|$key|"*) continue ;; esac
-    seen="$seen|$key|"
-    run_suite "${LAYER_CMD_WORDS[@]}"
-    cat "$RUN_OUTPUT_FILE" >> "$combined"
-    rm -f "$RUN_OUTPUT_FILE"
-    [ "$RUN_EXIT_CODE" -ne 0 ] && rc=1
-  done
+  SHIP_BASE_REF="$base" run_suite "$PKG" run test:changed
   kill "$beat" 2>/dev/null || true
   wait "$beat" 2>/dev/null || true
-  RUN_OUTPUT_FILE="$combined"
-  RUN_EXIT_CODE="$rc"
   return 0
 }
 
@@ -467,6 +483,24 @@ run_suite() {
   set -e
   RUN_OUTPUT_FILE="$out"
   RUN_EXIT_CODE="$exit_code"
+  if [ "$exit_code" -eq 0 ] && suite_left_no_trace "$out"; then RUN_SILENT=1; fi
+  return 0
+}
+
+# A zero exit that reports no test at all ran nothing. Measured live 2026-11-12
+# on api-agendx: a Postgres backend in the test container died under memory
+# pressure, the client's promise never settled, Node drained its event loop and
+# jest exited 0 with an empty output — and the landing recorded that as the
+# whole project proven. Empty output, or a known runner with no summary line,
+# is an environment failure, never a pass.
+suite_left_no_trace() {
+  local out="$1"
+  grep -q '[^[:space:]]' "$out" 2>/dev/null || return 0
+  case "${RUNNER:-}" in
+    jest) grep -qE '^Tests:|^Test Suites:|No tests found' "$out" || return 0 ;;
+    vitest) grep -qE 'Test Files|No test files found' "$out" || return 0 ;;
+  esac
+  return 1
 }
 
 # A non-zero exit whose output proves the tool never started: the package
@@ -681,7 +715,9 @@ write_environment_report() {
       printf '\n### Lint did not run (`%s`)\n\n```\n' "$LINT_CMD"; tail -40 "$LINT_OUT"; printf '```\n'
     fi
     if [ "${SUITE_ENV:-0}" -eq 1 ]; then
-      printf '\n### Test runner did not run\n\n```\n'; tail -40 "$RUN_OUTPUT_FILE"; printf '```\n'
+      printf '\n### Test runner did not run\n\n'
+      [ "${RUN_SILENT:-0}" -eq 1 ] && printf 'A suite exited 0 without reporting a single test.\n\n'
+      printf '```\n'; tail -40 "$RUN_OUTPUT_FILE"; printf '```\n'
     fi
   } > "$scratch/$([ "$phase" = static ] && echo static-failures.md || echo test-failures.md)"
   local ts
@@ -716,12 +752,12 @@ write_static_report() {
 }
 
 main() {
-  local scratch="" config="ship/config.md" static_only=0 lint_fix=0 static_check=0 full=0
+  local scratch="" config="ship/config.md" static_only=0 lint_fix=0 static_check=0 changed=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --config) config="$2"; shift 2 ;;
-      --full) full=1; shift ;;
+      --changed) changed=1; CHANGED_BASE="${2:-}"; shift 2 ;;
       --static-only) static_only=1; shift ;;
       --static-check) static_only=1; static_check=1; shift ;;
       --lint-fix) lint_fix=1; shift ;;
@@ -814,6 +850,39 @@ main() {
     exit "$st_overall"
   fi
 
+  if [ "$changed" -eq 1 ]; then
+    resolve_runner "$scratch" "$config"
+    if ! is_resolved "$PKG"; then
+      if [ -f pnpm-lock.yaml ]; then PKG=pnpm
+      elif [ -f yarn.lock ]; then PKG=yarn
+      elif [ -f bun.lockb ] || [ -f bun.lock ]; then PKG=bun
+      else PKG=npm; fi
+    fi
+    if ! pkg_script_exists test:changed; then
+      {
+        printf '# Test Failures\n\n## This project defines no `test:changed` script\n\n'
+        printf 'Nothing merges before the project has tested what the change touches, and which tests that is belongs to the project: add a `test:changed` script to package.json (jest --changedSince, vitest --changed, a Detox flow map). SHIP_BASE_REF holds the commit to measure against.\n'
+      } > "$scratch/test-failures.md"
+      printf '| test | #<RUN> | %s | - | fail | 0 | 0 | 0 | 0 | no test:changed script |\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$scratch/phase-status-test.md"
+      exit 5
+    fi
+    TYPECHECK_EXIT=0; LINT_EXIT=0; SUITE_SKIPPED=0
+    run_changed_suite "$scratch" "$CHANGED_BASE"
+    parse_failed_files "$RUN_OUTPUT_FILE"
+    if { [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; } \
+      || { [ "${RUN_SILENT:-0}" -eq 1 ] && [ "$RUN_EXIT_CODE" -eq 0 ]; }; then
+      SUITE_ENV=1
+      write_environment_report "$scratch" test
+      rm -f "$RUN_OUTPUT_FILE"
+      exit 4
+    fi
+    local changed_overall=0
+    [ "$RUN_EXIT_CODE" -ne 0 ] && changed_overall=1
+    write_reports "$scratch" "$FAILED_FILES" "$changed_overall"
+    rm -f "$RUN_OUTPUT_FILE"
+    exit "$changed_overall"
+  fi
+
   resolve_runner "$scratch" "$config"
   if ! is_resolved "$RUNNER"; then
     echo "test command not found: $config" >&2
@@ -829,9 +898,7 @@ main() {
   # having run says nothing about whether they passed; assuming green here would
   # run the suite against code that does not compile and bury the real cause
   # under a cascade of unrelated test errors.
-  if [ "$full" -eq 1 ]; then
-    run_static_checks
-  elif [ -f "$scratch/static-exits.txt" ]; then
+  if [ -f "$scratch/static-exits.txt" ]; then
     TYPECHECK_EXIT="$(grep -m1 '^typecheck=' "$scratch/static-exits.txt" | cut -d= -f2)"
     LINT_EXIT="$(grep -m1 '^lint=' "$scratch/static-exits.txt" | cut -d= -f2)"
     TYPECHECK_EXIT="${TYPECHECK_EXIT:-0}"
@@ -843,16 +910,17 @@ main() {
     run_static_checks
   fi
 
-  [ "$full" -eq 1 ] || collect_test_entries "$scratch/generated-tests.md"
+  collect_test_entries "$scratch/generated-tests.md"
 
   if [ "$TYPECHECK_EXIT" -gt 0 ]; then
     SUITE_SKIPPED=1
     RUN_EXIT_CODE=1
     FAILED_FILES=""
   else
-    if [ "$full" -eq 1 ]; then run_full_suite "$scratch"; else run_suites_by_layer; fi
+    run_suites_by_layer
     parse_failed_files "$RUN_OUTPUT_FILE"
-    if [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; then
+    if { [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; } \
+      || { [ "${RUN_SILENT:-0}" -eq 1 ] && [ "$RUN_EXIT_CODE" -eq 0 ]; }; then
       SUITE_ENV=1
       write_environment_report "$scratch" test
       rm -f "$RUN_OUTPUT_FILE"

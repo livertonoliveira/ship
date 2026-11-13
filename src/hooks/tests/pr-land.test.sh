@@ -49,6 +49,8 @@ setup() {
     git config user.email t@t; git config user.name T
     mkdir ship; printf '# Config\n\n## Linear Integration\n- Configured: no\n\n## Pipeline Profile\n- profile: standard\n\n- Test Framework: none\n' > ship/config.md
     printf '.context/\n' > .gitignore
+    printf '{"scripts":{"test:changed":"sh changed.sh"}}\n' > package.json
+    printf 'echo "Tests:       1 passed, 1 total"\n' > changed.sh
     echo base > a.txt
     git add -A; git commit -qm init
     git remote add origin "$root/remote.git"
@@ -278,10 +280,11 @@ use_scoped_suite() {
   local root="$1" full_rc="$2"
   (
     cd "$root/repo"
-    printf '#!/usr/bin/env bash\nif [ $# -gt 0 ]; then echo ok; exit 0; fi\necho run >> "%s/full-runs"\necho "FAIL test/other.spec.ts"\nexit %s\n' "$root" "$full_rc" > suite.sh
-    chmod +x suite.sh
-    sed -i.bak -E 's/^- Test Framework:.*/- Test Framework: .\/suite.sh/' ship/config.md; rm -f ship/config.md.bak
-    grep -q 'Test Framework' ship/config.md || printf '\n- Test Framework: ./suite.sh\n' >> ship/config.md
+    if [ "$full_rc" -eq 0 ]; then
+      printf 'echo run >> "%s/full-runs"\necho "Tests:       4 passed, 4 total"\n' "$root" > changed.sh
+    else
+      printf 'echo run >> "%s/full-runs"\necho "FAIL test/other.spec.ts"\nexit %s\n' "$root" "$full_rc" > changed.sh
+    fi
     git add -A; git commit -qm "test: scoped suite"
     printf -- '- suite.sh (unit)\n' > .context/ship-run/T1/generated-tests.md
   ) >/dev/null 2>&1
@@ -299,6 +302,22 @@ test_a_red_project_never_reaches_the_forge() {
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out' pushed='$pushed')"
+  fi
+  rm -rf "$root"
+}
+
+test_a_project_without_test_changed_never_reaches_the_forge() {
+  local name="a project with no test:changed script is result=red reason=no-test-changed: nothing pushed, no proof"
+  local root; root="$(mktemp -d)"; setup "$root"
+  (cd "$root/repo" && printf '{"scripts":{}}\n' > package.json && git commit -qam "chore: drop scripts") >/dev/null 2>&1
+  local out rc=0
+  out="$(land "$root" T1)" || rc=$?
+  local pushed; pushed="$(git -C "$root/remote.git" rev-parse -q --verify refs/heads/fix/T1-x || true)"
+  if [ "$rc" -eq 3 ] && [ "$(field "$out" reason)" = "no-test-changed" ] && [ -z "$pushed" ] \
+    && [ ! -f "$root/repo/.context/ship-run/T1/full-proof.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out')"
   fi
   rm -rf "$root"
 }
@@ -323,6 +342,7 @@ test_a_green_project_leaves_a_proof_of_tree_and_base() {
 }
 
 test_a_pre_push_hook_refusal_is_red
+test_a_project_without_test_changed_never_reaches_the_forge
 test_a_failed_push_without_a_hook_is_not_red
 test_a_branch_with_nothing_ahead_of_the_base_says_so
 test_every_result_is_on_disk

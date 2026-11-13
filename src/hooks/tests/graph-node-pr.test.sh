@@ -250,6 +250,7 @@ landing_repo() {
     mkdir ship
     printf '# Config\n\n- Artifact language: en\n\n## Linear Integration\n- Configured: no\n\n## Pipeline Profile\n- profile: standard\n\n## Test Scope\n- unit: disabled\n- integration: disabled\n- e2e: disabled\n\n- Test Framework: none\n' > ship/config.md
     printf '.context/\n' > .gitignore
+    printf '{"scripts":{"test:changed":"echo Tests: 1 passed"}}\n' > package.json
     echo base > a.txt
     git add -A; git commit -qm init
     git remote add origin "$root/remote.git"
