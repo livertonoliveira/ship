@@ -138,7 +138,7 @@ test_a_runner_written_for_people_is_still_the_runner() {
   sed -i.bak -e '/^- Test Framework:/d' -e '/^- Package Manager:/d' "$d/config.md" "$d/scratch/stack.md" 2>/dev/null || true
   printf -- '- Test Framework: Jest 29 (preset react-native, react-test-renderer)\n- Package Manager: yarn 3.6.4 (Berry)\n' >> "$d/config.md"
   mkdir -p "$d/bin"
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/yarn-calls.txt"\nexit 0\n' "$d" > "$d/bin/yarn"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/yarn-calls.txt"\necho "Tests:       1 passed, 1 total"\nexit 0\n' "$d" > "$d/bin/yarn"
   chmod +x "$d/bin/yarn"
   local rc=0
   (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --config config.md >/dev/null 2>&1) || rc=$?
