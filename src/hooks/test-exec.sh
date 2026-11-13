@@ -54,10 +54,40 @@ resolve_runner() {
   resolve_pkg
 }
 
+# The "scripts" object of package.json, braces inside its string values kept
+# whole. A line range up to the first "}" ended early on a script holding a
+# brace glob ("eslint \"{src,test}/**/*.ts\""): every script after it was
+# invisible, test:unit and test:integration fell back to the bare test command,
+# and the full-suite proof of a landing measured that instead. Measured live
+# 2026-11-12 on api-agendx: a node merged with 27 red unit tests on its base.
+pkg_scripts_block() {
+  [ -f package.json ] || return 0
+  awk '
+    { text = text $0 "\n" }
+    END {
+      start = match(text, /"scripts"[ \t\r\n]*:[ \t\r\n]*\{/)
+      if (!start) exit
+      i = start + RLENGTH - 1
+      n = length(text); depth = 0; instr = 0; esc = 0
+      for (j = i; j <= n; j++) {
+        c = substr(text, j, 1)
+        if (instr) {
+          if (esc) esc = 0
+          else if (c == "\\") esc = 1
+          else if (c == "\"") instr = 0
+        } else if (c == "\"") instr = 1
+        else if (c == "{") depth++
+        else if (c == "}") { depth--; if (depth == 0) break }
+      }
+      printf "%s\n", substr(text, i, j - i + 1)
+    }
+  ' package.json
+}
+
 pkg_script_exists() {
   local script="$1"
   [ -f package.json ] || return 1
-  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json | grep -qE "\"${script}\"[[:space:]]*:"
+  pkg_scripts_block | grep -qE "\"${script}\"[[:space:]]*:"
 }
 
 resolve_static_checks() {
@@ -96,7 +126,7 @@ resolve_static_checks() {
 pkg_script_value() {
   local script="$1"
   [ -f package.json ] || return 0
-  sed -n '/"scripts"[[:space:]]*:/,/}/p' package.json \
+  pkg_scripts_block \
     | grep -m1 -E "\"${script}\"[[:space:]]*:" \
     | sed -E "s/.*\"${script}\"[[:space:]]*:[[:space:]]*\"((\\\\.|[^\"\\\\])*)\".*/\\1/" \
     | sed 's/\\"/"/g'
