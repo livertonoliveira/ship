@@ -497,6 +497,24 @@ run_suite() {
   set -e
   RUN_OUTPUT_FILE="$out"
   RUN_EXIT_CODE="$exit_code"
+  if [ "$exit_code" -eq 0 ] && suite_left_no_trace "$out"; then RUN_SILENT=1; fi
+  return 0
+}
+
+# A zero exit that reports no test at all ran nothing. Measured live 2026-11-12
+# on api-agendx: a Postgres backend in the test container died under memory
+# pressure, the client's promise never settled, Node drained its event loop and
+# jest exited 0 with an empty output — and the landing recorded that as the
+# whole project proven. Empty output, or a known runner with no summary line,
+# is an environment failure, never a pass.
+suite_left_no_trace() {
+  local out="$1"
+  grep -q '[^[:space:]]' "$out" 2>/dev/null || return 0
+  case "${RUNNER:-}" in
+    jest) grep -qE '^Tests:|^Test Suites:|No tests found' "$out" || return 0 ;;
+    vitest) grep -qE 'Test Files|No test files found' "$out" || return 0 ;;
+  esac
+  return 1
 }
 
 # A non-zero exit whose output proves the tool never started: the package
@@ -711,7 +729,9 @@ write_environment_report() {
       printf '\n### Lint did not run (`%s`)\n\n```\n' "$LINT_CMD"; tail -40 "$LINT_OUT"; printf '```\n'
     fi
     if [ "${SUITE_ENV:-0}" -eq 1 ]; then
-      printf '\n### Test runner did not run\n\n```\n'; tail -40 "$RUN_OUTPUT_FILE"; printf '```\n'
+      printf '\n### Test runner did not run\n\n'
+      [ "${RUN_SILENT:-0}" -eq 1 ] && printf 'A suite exited 0 without reporting a single test.\n\n'
+      printf '```\n'; tail -40 "$RUN_OUTPUT_FILE"; printf '```\n'
     fi
   } > "$scratch/$([ "$phase" = static ] && echo static-failures.md || echo test-failures.md)"
   local ts
@@ -882,7 +902,8 @@ main() {
   else
     if [ "$full" -eq 1 ]; then run_full_suite "$scratch"; else run_suites_by_layer; fi
     parse_failed_files "$RUN_OUTPUT_FILE"
-    if [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; then
+    if { [ "$RUN_EXIT_CODE" -ne 0 ] && [ -z "$FAILED_FILES" ] && tool_never_ran "$RUN_EXIT_CODE" "$RUN_OUTPUT_FILE"; } \
+      || { [ "${RUN_SILENT:-0}" -eq 1 ] && [ "$RUN_EXIT_CODE" -eq 0 ]; }; then
       SUITE_ENV=1
       write_environment_report "$scratch" test
       rm -f "$RUN_OUTPUT_FILE"

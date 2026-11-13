@@ -53,7 +53,9 @@ function invocations(dir) {
   return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean) : [];
 }
 
-const RECORD = (name) => `node -e "require('fs').appendFileSync('invocations.txt','${name} '+process.argv.slice(1).join(' ')+'\\n')"`;
+// A real runner always reports what it ran; one that prints nothing ran nothing
+// and test-exec refuses it as an environment failure.
+const RECORD = (name) => `node -e "require('fs').appendFileSync('invocations.txt','${name} '+process.argv.slice(1).join(' ')+'\\n'); console.log('Tests:       1 passed, 1 total')"`;
 
 test('an e2e file is run by test:e2e, not by the generic test script', () => {
   const dir = setupProject({
