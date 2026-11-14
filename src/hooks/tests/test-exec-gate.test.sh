@@ -286,6 +286,21 @@ test_a_silent_green_suite_is_not_a_pass() {
   rm -rf "$d"
 }
 
+test_a_playwright_run_in_a_vitest_project_is_a_report() {
+  local name="a green Playwright run in a vitest project reported its tests: a pass, not a silent run"
+  local d; d="$(mktemp -d)"
+  changed_repo "$d" 'echo "  ✓  1 [chromium] › tests/e2e/a.e2e.spec.ts:3:1 › opens (5.1s)"; echo ""; echo "  1 passed (12.4s)"; exit 0'
+  printf '# Config\n\n- Artifact language: en\n- Test Framework: vitest\n- Package Manager: npm\n' > "$d/config.md"
+  local rc=0
+  (cd "$d" && PATH="$d/bin:$PATH" bash "$TEST_EXEC" scratch --changed abc123 --config config.md >/dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '| pass |' "$d/scratch/phase-status-test.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc)"
+  fi
+  rm -rf "$d"
+}
+
 test_a_row_the_runner_cannot_load_is_recorded_not_run() {
   local name="a manifest row the runner cannot load (a Maestro .yaml) never reaches the runner: recorded, and the real suites decide"
   local d; d="$(mktemp -d)"
@@ -320,6 +335,7 @@ test_changed_runs_the_projects_own_script
 test_changed_green_passes
 test_a_project_without_test_changed_does_not_pass
 test_a_silent_green_suite_is_not_a_pass
+test_a_playwright_run_in_a_vitest_project_is_a_report
 test_a_row_the_runner_cannot_load_is_recorded_not_run
 
 echo ""

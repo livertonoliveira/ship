@@ -496,6 +496,7 @@ run_suite() {
 suite_left_no_trace() {
   local out="$1"
   grep -q '[^[:space:]]' "$out" 2>/dev/null || return 0
+  grep -qE '^[[:space:]]*[0-9]+ (passed|failed|flaky|skipped)( |$)' "$out" && return 1
   case "${RUNNER:-}" in
     jest) grep -qE '^Tests:|^Test Suites:|No tests found' "$out" || return 0 ;;
     vitest) grep -qE 'Test Files|No test files found' "$out" || return 0 ;;
