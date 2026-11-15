@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --static-check | --lint-fix | --changed <base-commit>]" >&2

@@ -14,6 +14,7 @@
 # Exit 0 = allowed. Exit 2 = blocked, reason printed to stderr for the model to relay.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 input="$(cat)"
 command="$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*[,}].*/\1/p' | head -1)"

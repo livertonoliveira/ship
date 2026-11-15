@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPEC_RE='\b(REQ|AC|SC|IMPL|TEST)-[0-9]+\b'
 

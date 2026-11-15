@@ -24,6 +24,7 @@
 # 1 on anything the caller cannot act on (message on stderr).
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH="${GH_BIN:-gh}"

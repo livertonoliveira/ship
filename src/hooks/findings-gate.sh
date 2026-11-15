@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: findings-gate.sh (<phase> | --audit <type>) (--findings <json> | --critical N --high N --medium N --low N) [options]" >&2

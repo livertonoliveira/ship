@@ -35,6 +35,7 @@
 # proposals, 1 with none, 2 on bad input.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -224,4 +225,4 @@ printf '%s\n' "$nodes_json" | tr -d '\n' | sed 's/}[[:space:]]*,[[:space:]]*{/}\
     printf "nodes=%d proposals=%d after=%d\n", N, proposals, groups
     exit (proposals > 0 ? 0 : 1)
   }
-'
+' || exit $?
