@@ -337,6 +337,7 @@ check_cycle() {
       local top="${iter_stack[$top_idx]}"
       local cur="${top%%:*}"
       local neighbor_idx="${top##*:}"
+      # shellcheck disable=SC2207 # module ids: no spaces, no globs
       local neighbors=($(neighbors_of "$f" "$cur"))
 
       if [ "$neighbor_idx" -lt "${#neighbors[@]}" ]; then
@@ -768,7 +769,8 @@ main() {
   # The scaffold lives beside the plan; the flag only has to name it when the two
   # are apart, so a caller that forgets it still gets the scaffolded checks.
   if [ -z "$scaffold" ]; then
-    local sibling="$(dirname "$plan_file")/plan-scaffold.md"
+    local sibling
+    sibling="$(dirname "$plan_file")/plan-scaffold.md"
     [ -f "$sibling" ] && scaffold="$sibling"
   fi
 

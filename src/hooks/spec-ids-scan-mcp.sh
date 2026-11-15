@@ -25,7 +25,6 @@ set -euo pipefail
 # so it cannot catch a patch that duplicates an id already living in the doc
 # — it only catches a duplicate formed within the patch call itself.
 
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "usage: spec-ids-scan-mcp.sh   (PreToolUse JSON on stdin)" >&2

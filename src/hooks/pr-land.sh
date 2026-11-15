@@ -220,7 +220,6 @@ if ! push_err="$(git push -u "$remote" "$branch" 2>&1)"; then
 fi
 
 # --- title and body, from what is already on disk ------------------------------------
-commits="$(git log --reverse --format='%s%n%b%n--' "$remote/$pr_base..HEAD" 2>/dev/null || true)"
 subjects="$(git log --reverse --format='%s' "$remote/$pr_base..HEAD" 2>/dev/null || true)"
 if [ -z "$title" ]; then
   # The PR's type is the change's, not its tests': test/docs/chore count only

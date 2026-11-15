@@ -1050,6 +1050,7 @@ next_test_pattern_ref() {
 # The `## Existing tests` block used to be an unfiltered `git ls-files` of the
 # whole test tree — 908 paths / 66KB in the run that motivated this, ~95% of the
 # brief, repeated per layer worker. Keep only what a worker in THIS layer could
+# shellcheck disable=SC2178,SC2128 # a string here; the array of that name is another function's local
 # plausibly extend: same layer, and adjacent to a SUT path by directory or by
 # basename token. Truncation is reported, never silent.
 next_relevant_tests() {
@@ -1105,7 +1106,7 @@ next_relevant_tests() {
 next_contract_paths() {
   local plan="$1" layer="$2"
   [ -f "$plan" ] || return 0
-  grep -E "^### .*->[[:space:]]*$layer[[:space:]]*->" "$plan" 2>/dev/null \
+  grep -E "^### .*->[[:space:]]*${layer}[[:space:]]*->" "$plan" 2>/dev/null \
     | sed -E 's/^### .* -> [^>]* -> //' \
     | sed -E 's/[[:space:]]*\(derived[^)]*\)[[:space:]]*$//' \
     | sed 's/`//g' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -v '^$' || true
@@ -1882,7 +1883,7 @@ cmd_next() {
       if next_dispatched "$SCRATCH" plan; then
         local iter_out iter_rc=0
         set +e
-        iter_out="$(cmd_iter "$SCRATCH" plan-redispatch --max 2)"
+        ( cmd_iter "$SCRATCH" plan-redispatch --max 2 ) >/dev/null
         iter_rc=$?
         set -e
         if [ "$iter_rc" -eq 2 ]; then

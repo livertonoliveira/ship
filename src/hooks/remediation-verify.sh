@@ -64,7 +64,7 @@ unresolved_ids=""
 
 # Per-phase severity tallies of the findings that survived the fix.
 phases=""
-while IFS='|' read -r id kind phase severity file slug; do
+while IFS='|' read -r id kind phase severity _file _slug; do
   [ -n "${id:-}" ] || continue
   [ "$kind" = "finding" ] || continue
   case " $phases " in *" $phase "*) ;; *) phases="$phases $phase" ;; esac
@@ -79,6 +79,7 @@ done < "$items"
 
 for phase in $phases; do
   key="${phase//-/_}"
+  crit=0; high=0; med=0; low=0
   eval "crit=\${c_${key}_critical:-0}; high=\${c_${key}_high:-0}; med=\${c_${key}_medium:-0}; low=\${c_${key}_low:-0}"
   bash "$HOOK_DIR/findings-gate.sh" "$phase" \
     --critical "$crit" --high "$high" --medium "$med" --low "$low" \

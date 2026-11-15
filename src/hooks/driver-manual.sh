@@ -52,8 +52,6 @@ STATE=""
 REPO=""
 BASE=""
 TASK=""
-WORKTREE=""
-TIMEOUT_MS=""
 UNTIL_FILES=""
 
 parse_flags() {
@@ -64,8 +62,8 @@ parse_flags() {
       --repo) REPO="$2"; shift 2 ;;
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
-      --worktree) WORKTREE="$2"; shift 2 ;;
-      --timeout-ms) TIMEOUT_MS="$2"; shift 2 ;;
+      --worktree) shift 2 ;;
+      --timeout-ms) shift 2 ;;
       --until-file) UNTIL_FILES="$UNTIL_FILES$2
 "; shift 2 ;;
       -h|--help) usage; exit 0 ;;

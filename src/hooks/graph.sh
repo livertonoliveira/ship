@@ -702,7 +702,8 @@ json_array() {
 # graph.json is the readable, shareable projection of nodes.tsv + meta.tsv —
 # re-rendered on every mutation so it never drifts from the state it describes.
 render_json() {
-  local dir="$1" out="$dir/.graph.json.tmp.$$"
+  local dir="$1"
+  local out="$dir/.graph.json.tmp.$$"
   {
     printf '{\n'
     printf '  "version": 1,\n'
@@ -949,7 +950,8 @@ default_branch() {
 # it per node instead would have every node commit the same files and collide at
 # merge time.
 seal_spec() {
-  local dir="$1" feature="$2" spec_dir="ship/changes/$feature" head_branch
+  local dir="$1" feature="$2"
+  local spec_dir="ship/changes/$feature" head_branch
   [ -d "$spec_dir" ] || return 0
   # Sealing means committing onto whatever is checked out here, and the nodes
   # branch from the BASE. When the two differ the commit would land somewhere no
@@ -2882,12 +2884,11 @@ cmd_next() {
   # fallen back forever.
   reelect_driver "$dir"
 
-  local driver max_in_flight log_path
+  local driver max_in_flight
   driver="$(meta_get "$dir" driver)"
   NEXT_DRIVER="$driver"
   NEXT_DRIVER_WORKSPACES="$(meta_get "$dir" driver_workspaces)"
   max_in_flight="$(meta_get "$dir" max_in_flight)"
-  log_path="$dir/graph-log.md"
 
   # An unreadable slot count must not look like a deadlock. Empty is 0 in bash
   # arithmetic, so a meta.tsv missing this key silently yields zero free slots

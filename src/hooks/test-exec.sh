@@ -195,7 +195,8 @@ fill_files_placeholder() {
 # plain eslint invocation, whose targets are swapped for the touched files. Any
 # other shape runs unchanged.
 scope_lint_cmd() {
-  local scratch="$1" touched="$scratch/develop-touched-files.txt" f
+  local scratch="$1"
+  local touched="$scratch/develop-touched-files.txt" f
   is_resolved "$LINT_CMD" || return 0
   [ -s "$touched" ] || return 0
   local -a files=()
@@ -276,7 +277,8 @@ scope_lint_cmd() {
 # stack.md/config (it must carry `{files}`), else derived from a lint command
 # scope_lint_cmd already narrowed to those files by appending --fix.
 resolve_lint_fix() {
-  local scratch="$1" config="$2" touched="$scratch/develop-touched-files.txt" f
+  local scratch="$1" config="$2"
+  local touched="$scratch/develop-touched-files.txt" f
   LINT_FIX_CMD="$(field_from "$scratch/stack.md" 'Lint fix')"
   is_resolved "$LINT_FIX_CMD" || LINT_FIX_CMD="$(field_from "$config" 'Lint fix')"
   if is_resolved "$LINT_FIX_CMD"; then
@@ -322,6 +324,7 @@ build_test_command() {
         CMD_WORDS=("$pkg" test)
         CMD_USES_PKG_SCRIPT=1
       else
+# shellcheck disable=SC2178,SC2128 # a string here; the arrays of that name are other functions' locals
         CMD_WORDS=(npx "$runner")
       fi
       ;;
