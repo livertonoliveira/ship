@@ -468,13 +468,18 @@ run_suite() {
 # jest exited 0 with an empty output — and the landing recorded that as the
 # whole project proven. Empty output, or a known runner with no summary line,
 # is an environment failure, never a pass.
+#
+# The markers are read with color codes stripped: a runner forced into color
+# (FORCE_COLOR in the node's environment) prints "\e[32m  18 passed\e[39m",
+# which no anchored marker matches.
 suite_left_no_trace() {
-  local out="$1"
+  local out="$1" plain
   grep -q '[^[:space:]]' "$out" 2>/dev/null || return 0
-  grep -qE '^[[:space:]]*[0-9]+ (passed|failed|flaky|skipped)( |$)' "$out" && return 1
+  plain="$(sed "s/$(printf '\033')\\[[0-9;]*[A-Za-z]//g" "$out")"
+  grep -qE '^[[:space:]]*[0-9]+ (passed|failed|flaky|skipped)( |$)' <<< "$plain" && return 1
   case "${RUNNER:-}" in
-    jest) grep -qE '^Tests:|^Test Suites:|No tests found' "$out" || return 0 ;;
-    vitest) grep -qE 'Test Files|No test files found' "$out" || return 0 ;;
+    jest) grep -qE '^Tests:|^Test Suites:|No tests found' <<< "$plain" || return 0 ;;
+    vitest) grep -qE 'Test Files|No test files found' <<< "$plain" || return 0 ;;
   esac
   return 1
 }
