@@ -299,10 +299,10 @@ EOF
   run_scaffold "$scratch"
   local line
   line="$(grep '^- arrange/act/assert:' "$scratch/plan-scaffold.md")"
-  if printf '%s' "$line" | grep -q 'um estado inicial' \
-    && printf '%s' "$line" | grep -q 'o gatilho dispara' \
-    && printf '%s' "$line" | grep -q 'o resultado aparece' \
-    && printf '%s' "$line" | grep -q 'o log registra'; then
+  if grep -q 'um estado inicial' <<< "$line" \
+    && grep -q 'o gatilho dispara' <<< "$line" \
+    && grep -q 'o resultado aparece' <<< "$line" \
+    && grep -q 'o log registra' <<< "$line"; then
     log_pass "$name"
   else
     log_fail "$name ($line)"

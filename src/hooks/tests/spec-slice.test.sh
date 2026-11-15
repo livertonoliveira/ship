@@ -104,7 +104,7 @@ test_an_issue_citing_no_requirement_still_gets_a_spec() {
   local out rc=0; out="$(bash "$SLICE" "$dir/issue.md" "$dir/proposal.md" "$dir/spec.md")" || rc=$?
   if [ "$rc" -eq 0 ] && grep -q '^# MOB-3 — ' "$dir/spec.md" && ! grep -q '^## Proposal — ' "$dir/spec.md" \
      && grep -q "^- ${R}-101 — " "$dir/spec.md" && grep -q "^- ${R}-103 — " "$dir/spec.md" \
-     && printf '%s' "$out" | grep -q '^cited=none$'; then
+     && grep -q '^cited=none$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$out spec=$(cat "$dir/spec.md" 2>/dev/null))"

@@ -180,7 +180,7 @@ next() {
 }
 
 field() {
-  printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-
+  grep -m1 "^$2=" <<< "$1" | cut -d= -f2-
 }
 
 stage_task() {
@@ -201,9 +201,9 @@ test_pipeline_asks_before_planning() {
   grep -q '^| plan ' "$dir/.context/ship-run/TASK-1/dispatch-log.md" 2>/dev/null && planned="yes"
   rm -rf "$dir"
   if [ "$(field "$work" state)" = "deps" ] && [ "$(field "$work" action)" = "work" ] \
-    && printf '%s' "$work" | grep -q 'deps-state.tsv' \
+    && grep -q 'deps-state.tsv' <<< "$work" \
     && [ "$(field "$ask" state)" = "deps" ] && [ "$(field "$ask" action)" = "ask" ] \
-    && printf '%s' "$ask" | grep -q 'ABC-1' \
+    && grep -q 'ABC-1' <<< "$ask" \
     && [ "$planned" = "no" ]; then
     log_pass "$name"
   else

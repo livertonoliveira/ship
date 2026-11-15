@@ -22,7 +22,7 @@ fail_count=0
 log_pass() { pass_count=$((pass_count + 1)); echo "PASS: $1"; }
 log_fail() { fail_count=$((fail_count + 1)); echo "FAIL: $1"; }
 
-field() { printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-; }
+field() { grep -m1 "^$2=" <<< "$1" | cut -d= -f2-; }
 
 SCEN_ID="@S"'C-01'
 
@@ -105,7 +105,7 @@ mock_develop() {
 mock_quality_workers() {
   local dir="$1" scratch="$2" out="$3" ph
   for ph in perf security review; do
-    printf '%s' "$out" | grep -q "subagent_type=ship:ship-$ph" || continue
+    grep -q "subagent_type=ship:ship-$ph" <<< "$out" || continue
     if [ "$ph" = "review" ] && [ "${SEED_FINDING:-1}" = "1" ]; then
       printf '| review | #<RUN> | 2026-01-01T00:00:00Z | - | fail | 0 | 1 | 0 | 0 | |\n' \
         > "$scratch/phase-status-review.md"
@@ -272,7 +272,7 @@ test_residue_asks_instead_of_looping() {
   SEED_FINDING=1 FIX_MODE=full CONFIRM_VERDICT=unresolved
   drive "$dir" T4 || true
   if [ "$FIX_DISPATCHES" = "1" ] && [ "$LAST_STATE" = "gate" ] && [ "$LAST_ACTION" = "ask" ] \
-    && printf '%s' "$LAST_OUT" | grep -q 'R2'; then
+    && grep -q 'R2' <<< "$LAST_OUT"; then
     log_pass "$name"
   else
     log_fail "$name (fix=$FIX_DISPATCHES last=$LAST_STATE/$LAST_ACTION)"

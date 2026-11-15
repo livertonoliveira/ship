@@ -47,7 +47,7 @@ next() {
 }
 
 field() {
-  printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-
+  grep -m1 "^$2=" <<< "$1" | cut -d= -f2-
 }
 
 # Scenario-id tokens are built by concatenation so this file itself carries no
@@ -189,8 +189,8 @@ test_graph_node_reads_cached_project_docs() {
   linear_graph_node "$dir" GD1 "$graph"
   mkdir -p "$docs"; echo p > "$docs/proposal.md"; echo d > "$docs/design.md"
   local out; out="$(next "$dir" GD1)"
-  if printf '%s' "$out" | grep -q "cached for this graph at $docs/proposal.md" \
-    && ! printf '%s' "$out" | grep -q 'list_documents+get_document'; then
+  if grep -q "cached for this graph at $docs/proposal.md" <<< "$out" \
+    && ! grep -q 'list_documents+get_document' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name ($out)"
@@ -206,8 +206,8 @@ test_first_graph_node_caches_project_docs() {
 - e2e: disabled' ''
   linear_graph_node "$dir" GD2 "$graph"
   local out; out="$(next "$dir" GD2)"
-  if printf '%s' "$out" | grep -q 'list_documents+get_document' \
-    && printf '%s' "$out" | grep -q "Save the full Proposal and Design documents to $docs/proposal.md"; then
+  if grep -q 'list_documents+get_document' <<< "$out" \
+    && grep -q "Save the full Proposal and Design documents to $docs/proposal.md" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name ($out)"
@@ -240,7 +240,7 @@ test_greenfield_multi_module_runs_planner() {
   next "$dir" TASK-1 >/dev/null
   multi_module_spec > "$dir/.context/ship-run/TASK-1/spec.md"
   local out; out="$(next "$dir" TASK-1)"
-  if [ "$(field "$out" state)" = "plan" ] && printf '%s' "$out" | grep -q 'Skill ship:plan'; then
+  if [ "$(field "$out" state)" = "plan" ] && grep -q 'Skill ship:plan' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -267,8 +267,8 @@ test_invalid_plan_replans_before_asking() {
   third="$(next "$dir" TASK-1)"
 
   if [ "$(field "$first" action)" = "dispatch" ] \
-    && printf '%s' "$first" | grep -q 'Skill ship:plan' \
-    && printf '%s' "$first" | grep -q "read .context/ship-run/TASK-1/plan-validate-error.txt" \
+    && grep -q 'Skill ship:plan' <<< "$first" \
+    && grep -q "read .context/ship-run/TASK-1/plan-validate-error.txt" <<< "$first" \
     && [ -s "$scratch/plan-validate-error.txt" ] \
     && [ "$(field "$second" action)" = "dispatch" ] \
     && [ "$(field "$third" action)" = "ask" ]; then
@@ -321,7 +321,7 @@ test_wait_answer_reports_the_answer_when_it_lands() {
   wait
   rm -rf "$dir"
   if [ "$(field "$out" answered)" = "1" ] && [ "$(field "$out" answer)" = "defer" ] \
-    && printf '%s' "$out" | grep -q '^next=.*pipeline.sh" next TASK-1'; then
+    && grep -q '^next=.*pipeline.sh" next TASK-1' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -334,7 +334,7 @@ test_wait_answer_returns_at_once_with_nothing_pending() {
   mkdir -p "$dir/.context/ship-run/TASK-1"
   out="$(cd "$dir" && bash "$PIPELINE" wait-answer TASK-1 --timeout 30)"
   rm -rf "$dir"
-  if [ "$(field "$out" answered)" = "0" ] && printf '%s' "$out" | grep -q 'no question is pending'; then
+  if [ "$(field "$out" answered)" = "0" ] && grep -q 'no question is pending' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -398,7 +398,7 @@ test_post_develop_no_mutation_retries_then_goes_to_the_tests() {
   first="$(next "$dir" TASK-1)"
   second="$(next "$dir" TASK-1)"
   if [ "$(field "$first" state)" = "develop" ] && [ "$(field "$first" action)" = "dispatch" ] \
-     && printf '%s' "$first" | grep -q 'changed no file' \
+     && grep -q 'changed no file' <<< "$first" \
      && [ "$(field "$second" action)" != "stop" ] && [ "$(field "$second" state)" != "post-develop" ] \
      && [ -f "$dir/.context/ship-run/TASK-1/post-develop-done.txt" ]; then
     log_pass "$name"
@@ -428,8 +428,8 @@ test_verify_a_dispatches_worker_with_brief() {
   out="$(next "$dir" TASK-1)"
   brief="$dir/.context/ship-run/TASK-1/test-brief-unit.md"
   if [ "$(field "$out" state)" = "verify-a" ] \
-    && printf '%s' "$out" | grep -q 'subagent_type=ship:ship-test-unit' \
-    && ! printf '%s' "$out" | grep -q 'First action' \
+    && grep -q 'subagent_type=ship:ship-test-unit' <<< "$out" \
+    && ! grep -q 'First action' <<< "$out" \
     && [ -f "$brief" ] \
     && grep -q 'Scenario: greets' "$brief" \
     && ! awk '/^## Scenarios/{c=1;next} /^## /{c=0} c' "$brief" | grep -q "$SCEN_ID" \
@@ -450,8 +450,8 @@ test_report_timings_prints_worker_start_lag() {
   printf '100\ttest\tAgent\tship-test-unit\n110\treview\tAgent\tship-review\n' > "$dir/timings.tsv"
   printf '160\n' > "$dir/worker-start-ship-test-unit.txt"
   local out; out="$(bash "$PIPELINE" report-timings "$dir")"
-  if printf '%s\n' "$out" | grep -qE 'ship-test-unit +60' \
-    && ! printf '%s\n' "$out" | grep -qE '^ship-review '; then
+  if grep -qE 'ship-test-unit +60' <<< "$out" \
+    && ! grep -qE '^ship-review ' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -505,7 +505,7 @@ test_happy_path_reaches_done_with_status_rows() {
     && grep -q '^| dev | #1 |' "$scratch/phase-status.md" \
     && grep -q '^| test-generate | #1 |' "$scratch/phase-status.md" \
     && grep -q -- '- src/b.test.js (unit)' "$scratch/generated-tests.md" \
-    && printf '%s' "$fin" | grep -q 'TOTAL'; then
+    && grep -q 'TOTAL' <<< "$fin"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -579,7 +579,7 @@ test_gate_fail_dispatches_one_remediation_batch() {
     && [ "$(printf '%s' "$fix" | grep -c 'subagent_type=ship:ship-remediation-')" = "1" ] \
     && grep -q '^### R1 ' "$scratch/remediation.md" \
     && [ "$(field "$verify" state)" = "remediation-verify" ] \
-    && ! printf '%s' "$verify" | grep -q 'ship:ship-review' \
+    && ! grep -q 'ship:ship-review' <<< "$verify" \
     && [ "$(field "$regate" state)" = "homolog" ]; then
     log_pass "$name"
   else
@@ -728,7 +728,7 @@ test_remediation_round_is_not_repeated_automatically() {
   if [ "$(field "$r1" state)" = "remediation-fix" ] \
     && [ "$(field "$verify" state)" = "remediation-verify" ] \
     && [ "$(field "$out" state)" = "gate" ] && [ "$(field "$out" action)" = "ask" ] \
-    && printf '%s' "$out" | grep -q 'R1'; then
+    && grep -q 'R1' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (r1=$(field "$r1" state) verify=$(field "$verify" state) out=$(field "$out" state)/$(field "$out" action))"
@@ -892,7 +892,7 @@ test_specs_broken_by_the_change_go_back_to_develop_once() {
   local scratch="$dir/.context/ship-run/TS6"
   local out; out="$(drive_to_static_or_specfix "$dir" TS6)"
   local st1 ac1; st1="$(field "$out" state)"; ac1="$(field "$out" action)"
-  local listed="no"; printf '%s' "$out" | grep -q 'test/unit/old.spec.js' && listed="yes"
+  local listed="no"; grep -q 'test/unit/old.spec.js' <<< "$out" && listed="yes"
   local marker="no"; [ -f "$scratch/develop-specfix-done.txt" ] && marker="yes"
   local done_early="no"; [ -f "$scratch/static-exec-done.txt" ] && done_early="yes"
   : > "$dir/.fixed"
@@ -1055,8 +1055,8 @@ test_denylist_excludes_test_files() {
   local brief="$scratch/test-brief-unit.md" deny
   deny="$(sed -n '/## Denylist/,/## Source/p' "$brief" 2>/dev/null || true)"
   if [ -f "$brief" ] \
-    && printf '%s' "$deny" | grep -q 'src/a.js' \
-    && ! printf '%s' "$deny" | grep -q 'test/a.test.js'; then
+    && grep -q 'src/a.js' <<< "$deny" \
+    && ! grep -q 'test/a.test.js' <<< "$deny"; then
     log_pass "$name"
   else
     log_fail "$name"

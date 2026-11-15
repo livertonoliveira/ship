@@ -84,7 +84,7 @@ assert_spec_check() {
     log_fail "$name (exit code was $rc, expected $expected_rc; stderr: $stderr_output)"
     return
   fi
-  if [ -n "$expected_substring" ] && ! printf '%s' "$stderr_output" | grep -qF "$expected_substring"; then
+  if [ -n "$expected_substring" ] && ! grep -qF "$expected_substring" <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain '$expected_substring': $stderr_output)"
     return
   fi
@@ -110,7 +110,7 @@ assert_exit_and_message() {
     return
   fi
 
-  if [ -n "$expected_substring" ] && ! printf '%s' "$stderr_output" | grep -qF "$expected_substring"; then
+  if [ -n "$expected_substring" ] && ! grep -qF "$expected_substring" <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain '$expected_substring': $stderr_output)"
     return
   fi
@@ -446,7 +446,7 @@ test_a_directory_nothing_is_planned_under_is_still_rejected() {
   dir="$(mktemp -d)"; mkdir -p "$dir/src/use-cases/agenda"
   plan="$(dir_plan "$dir" "src/a.ts, src/other/thing.ts")"
   err="$(cd "$dir" && bash "$PLAN_VALIDATE_SCRIPT" "$plan" --scaffold "$dir/plan-scaffold.md" 2>&1 >/dev/null)" || rc=$?
-  if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'arquivo do inventário sem módulo'; then log_pass "$name"; else log_fail "$name (rc=$rc: $err)"; fi
+  if [ "$rc" -eq 2 ] && grep -q 'arquivo do inventário sem módulo' <<< "$err"; then log_pass "$name"; else log_fail "$name (rc=$rc: $err)"; fi
   rm -rf "$dir"
 }
 

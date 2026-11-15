@@ -81,7 +81,7 @@ test_consistent_index_and_issues_pass() {
     return
   fi
 
-  if ! printf '%s' "$out" | grep -qF "SC cross-reference — clean."; then
+  if ! grep -qF "SC cross-reference — clean." <<< "$out"; then
     log_fail "$name (unexpected output: $out)"
     rm -rf "$dir"
     return
@@ -263,7 +263,7 @@ test_scenario_depth_none_is_clean() {
     return
   fi
 
-  if ! printf '%s' "$out" | grep -qF "SC cross-reference — clean."; then
+  if ! grep -qF "SC cross-reference — clean." <<< "$out"; then
     log_fail "$name (unexpected output: $out)"
     rm -rf "$dir"
     return
@@ -292,7 +292,7 @@ test_nested_issue_file_is_found() {
     return
   fi
 
-  if ! printf '%s' "$out" | grep -qF "SC cross-reference — clean."; then
+  if ! grep -qF "SC cross-reference — clean." <<< "$out"; then
     log_fail "$name (unexpected output: $out)"
     rm -rf "$dir"
     return
@@ -313,7 +313,7 @@ test_missing_args_usage_fails() {
     return
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "usage:"; then
+  if ! grep -qF "usage:" <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain usage: $stderr_output)"
     return
   fi
@@ -355,7 +355,7 @@ test_ac_without_scenario_is_flagged() {
   out="$(bash "$SC_CROSSREF_SCRIPT" --index "$dir/index.md" --issues "$dir/issues" --proposal "$dir/proposal.md")" || rc=$?
   rm -rf "$dir"
 
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^uncovered: AC-02'; then
+  if [ "$rc" -eq 1 ] && grep -q '^uncovered: AC-02' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"

@@ -74,7 +74,7 @@ test_a_node_opens_on_what_the_forge_has() {
 
   if [ ! -f "$root/work/dependency.txt" ]; then
     log_fail "$name (the dependency that admitted this node is still not on disk)"
-  elif ! printf '%s' "$out" | grep -q '^base_sync=origin/main$'; then
+  elif ! grep -q '^base_sync=origin/main$' <<< "$out"; then
     log_fail "$name (sync not reported: $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
   else
     log_pass "$name"
@@ -94,7 +94,7 @@ test_the_run_scratch_dir_does_not_block_the_sync() {
 
   # init writes this dir itself, so a porcelain check is never clean here and
   # skipped the sync every time.
-  if printf '%s' "$out" | grep -q '^base_sync=skipped-dirty-tree$'; then
+  if grep -q '^base_sync=skipped-dirty-tree$' <<< "$out"; then
     log_fail "$name (untracked scratch state still counts as dirty)"
   elif [ -f "$root/work/dependency.txt" ]; then
     log_pass "$name"
@@ -120,7 +120,7 @@ test_a_branch_with_work_is_left_alone() {
   # rebase nobody asked for, and this runs unattended.
   if [ "$before" != "$after" ]; then
     log_fail "$name (HEAD moved from $before to $after)"
-  elif ! printf '%s' "$out" | grep -q '^base_sync=skipped-branch-ahead$'; then
+  elif ! grep -q '^base_sync=skipped-branch-ahead$' <<< "$out"; then
     log_fail "$name (the refusal was not reported: $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
   else
     log_pass "$name"
@@ -144,7 +144,7 @@ test_a_node_cut_from_a_diverged_base_gets_the_remote_one() {
   git -C "$root/work" checkout -q -b node/TASK-1
   out="$(run_init "$root")"
   if [ -f "$root/work/dependency.txt" ] && [ -f "$root/work/local-only.txt" ] \
-     && printf '%s' "$out" | grep -q '^base_sync=origin/main (merged'; then
+     && grep -q '^base_sync=origin/main (merged' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (dependency on disk: $([ -f "$root/work/dependency.txt" ] && echo yes || echo no); $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
@@ -165,7 +165,7 @@ test_a_diverged_base_that_conflicts_is_left_as_it_was() {
   after="$(git -C "$root/work" rev-parse HEAD)"
   if [ "$before" = "$after" ] && [ ! -e "$root/work/.git/MERGE_HEAD" ] \
      && [ -z "$(git -C "$root/work" status --porcelain --untracked-files=no)" ] \
-     && printf '%s' "$out" | grep -q '^base_sync=skipped-merge-conflict$'; then
+     && grep -q '^base_sync=skipped-merge-conflict$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (moved: $([ "$before" = "$after" ] && echo no || echo yes); $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
@@ -199,7 +199,7 @@ test_uncommitted_work_is_never_discarded() {
 
   if [ "$(cat "$root/work/trunk.txt")" != "tampered" ]; then
     log_fail "$name (the edit was lost)"
-  elif ! printf '%s' "$out" | grep -q '^base_sync=skipped-dirty-tree$'; then
+  elif ! grep -q '^base_sync=skipped-dirty-tree$' <<< "$out"; then
     log_fail "$name (the refusal was not reported: $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
   else
     log_pass "$name"
@@ -221,9 +221,9 @@ test_no_remote_is_not_a_failure() {
   git -C "$root/work" commit -qm one
   out="$(run_init "$root")"
 
-  if ! printf '%s' "$out" | grep -q '^INIT fresh$'; then
+  if ! grep -q '^INIT fresh$' <<< "$out"; then
     log_fail "$name (init did not complete: $out)"
-  elif ! printf '%s' "$out" | grep -q '^base_sync=skipped-no-remote$'; then
+  elif ! grep -q '^base_sync=skipped-no-remote$' <<< "$out"; then
     log_fail "$name (the skip was not reported: $(printf '%s' "$out" | grep '^base_sync=' || echo none))"
   else
     log_pass "$name"
@@ -261,9 +261,9 @@ test_a_base_checked_out_elsewhere_is_named_not_called_diverged() {
   # ref-moving fetch is refused because main is checked out in $root/work, and
   # a refused fetch leaves FETCH_HEAD unreadable — which is what made every
   # downstream check fail and call a healthy base diverged.
-  if printf '%s' "$log" | grep -q 'has diverged'; then
+  if grep -q 'has diverged' <<< "$log"; then
     log_fail "$name (reported diverged: $(printf '%s' "$log" | grep 'base sync' | head -1))"
-  elif ! printf '%s' "$log" | grep -q 'checked out elsewhere'; then
+  elif ! grep -q 'checked out elsewhere' <<< "$log"; then
     log_fail "$name (the real reason was not named: $(printf '%s' "$log" | grep 'base sync' | head -1 || echo 'no base sync line'))"
   else
     log_pass "$name"
@@ -282,7 +282,7 @@ test_a_base_the_coordinator_owns_is_fast_forwarded() {
 
   if [ ! -f "$root/work/dependency.txt" ]; then
     log_fail "$name (the trunk commit is still missing from the coordinator's own tree)"
-  elif ! printf '%s' "$log" | grep -q 'fast-forwarded'; then
+  elif ! grep -q 'fast-forwarded' <<< "$log"; then
     log_fail "$name (not reported: $(printf '%s' "$log" | grep 'base sync' | head -1 || echo none))"
   else
     log_pass "$name"

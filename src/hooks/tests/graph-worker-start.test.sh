@@ -59,7 +59,7 @@ test_next_orders_the_driver_start_instruction() {
   out="$(cd "$repo" && bash "$GRAPH" next)"
   # One ordered line per task, between dispatch and collect. Without it a
   # compliant executor runs dispatch/collect/claim and starts nothing.
-  if printf '%s' "$out" | grep -q 'instruction=' \
+  if grep -q 'instruction=' <<< "$out" \
      && [ "$(printf '%s' "$out" | grep -c 'CARRY IT OUT NOW')" -eq 2 ]; then
     log_pass "next orders the driver's start instruction, once per dispatched task"
   else
@@ -72,8 +72,8 @@ test_dispatch_says_nothing_is_running_yet() {
   local root repo out
   root="$(new_sandbox)"; repo="$root/repo"
   out="$(cd "$repo" && bash "$DRIVER_LOCAL" dispatch N1 "/ship:run N1" --state ".context/ship-graph/f" --base main)"
-  if printf '%s' "$out" | grep -q 'instruction=REQUIRED' \
-     && printf '%s' "$out" | grep -q 'NOTHING is running in it yet'; then
+  if grep -q 'instruction=REQUIRED' <<< "$out" \
+     && grep -q 'NOTHING is running in it yet' <<< "$out"; then
     log_pass "dispatch states that the workspace is prepared but idle"
   else
     log_fail "dispatch states that the workspace is prepared but idle"
@@ -98,7 +98,7 @@ test_never_started_node_is_redispatched() {
   # A workspace with no dispatch-log.md at all never ran a phase. That is not a
   # stall to diagnose for a person: the dispatch did not take, so the node goes
   # back to the frontier and next issues a fresh one — named as such in the log.
-  if printf '%s' "$out" | grep -q 'action=dispatch' \
+  if grep -q 'action=dispatch' <<< "$out" \
      && [ "$(printf '%s' "$out" | grep -c 'CARRY IT OUT NOW')" -eq 2 ] \
      && grep -q 'worker never started across 3 polls — re-dispatching' "$log"; then
     log_pass "a node whose worker never started is re-dispatched, not reported as a stall for a person"
@@ -118,7 +118,7 @@ test_poll_flags_never_started_separately() {
     bash "$GRAPH" claim N1 --worktree "$wt" --branch ship/N1 >/dev/null
     for _ in 1 2 3; do bash "$GRAPH" poll --stall-after 0; done
   )"
-  if printf '%s' "$out" | grep -q '^retried=N1$'; then
+  if grep -q '^retried=N1$' <<< "$out"; then
     log_pass "poll returns a node no pipeline ever ran in to the frontier (retried=)"
   else
     log_fail "poll returns a node no pipeline ever ran in to the frontier (retried=)"
@@ -142,7 +142,7 @@ test_retry_reuses_an_orphaned_branch() {
   set -e
   # `git worktree add -b` on a branch that already exists exits 255, and the loop
   # halts on any non-zero driver exit. Retrying a node is normal, so it must not.
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^ok=1$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^ok=1$' <<< "$out"; then
     log_pass "re-dispatch reuses a branch whose workspace was removed"
   else
     log_fail "re-dispatch reuses a branch whose workspace was removed (exit $rc)"
@@ -160,7 +160,7 @@ test_non_worktree_directory_fails_loudly() {
   rc=$?
   set -e
   # Reporting ok=1 for a path that is not a repo hands the worker a broken cwd.
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'is not a git worktree'; then
+  if [ "$rc" -ne 0 ] && grep -q 'is not a git worktree' <<< "$out"; then
     log_pass "a directory that is not a worktree is refused instead of reported ok"
   else
     log_fail "a directory that is not a worktree is refused instead of reported ok (exit $rc)"
@@ -181,7 +181,7 @@ test_fresh_purges_driver_state() {
   )"
   # A completion signal must never survive a reset: before this, the first wait
   # of a brand-new graph reported the previous run's dispatches as finished.
-  if ! printf '%s' "$out" | grep -qE '^(done|returned)='; then
+  if ! grep -qE '^(done|returned)=' <<< "$out"; then
     log_pass "--fresh purges driver state so a new graph reports no phantom activity"
   else
     log_fail "--fresh purges driver state so a new graph reports no phantom activity"
@@ -199,7 +199,7 @@ test_wait_never_claims_completion() {
   )"
   # An Agent returning says the turn ended, not that the pipeline finished.
   # `graph.sh poll` owns that call, and `done=` here read as if the driver did.
-  if printf '%s' "$out" | grep -q '^returned=N1$' && ! printf '%s' "$out" | grep -q '^done='; then
+  if grep -q '^returned=N1$' <<< "$out" && ! grep -q '^done=' <<< "$out"; then
     log_pass "wait reports that an agent returned, never that a node is done"
   else
     log_fail "wait reports that an agent returned, never that a node is done"
@@ -215,8 +215,8 @@ test_set_changes_driver_without_touching_nodes() {
   nodes_before="$(cd "$repo" && cat .context/ship-graph/f/nodes.tsv)"
   out="$(cd "$repo" && bash "$GRAPH" set --driver manual --max-in-flight 4)"
   nodes_after="$(cd "$repo" && cat .context/ship-graph/f/nodes.tsv)"
-  if printf '%s' "$out" | grep -q '^driver=manual$' \
-     && printf '%s' "$out" | grep -q '^max_in_flight=4$' \
+  if grep -q '^driver=manual$' <<< "$out" \
+     && grep -q '^max_in_flight=4$' <<< "$out" \
      && [ "$nodes_before" = "$nodes_after" ]; then
     log_pass "set swaps the driver and the slot count without touching nodes"
   else
@@ -240,7 +240,7 @@ test_set_refuses_to_orphan_an_inflight_worker() {
   set -e
   # An in-flight node can only be collected, waited on and stopped through the
   # driver that dispatched it.
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'still held by the current one'; then
+  if [ "$rc" -ne 0 ] && grep -q 'still held by the current one' <<< "$out"; then
     log_pass "set refuses a driver swap that would orphan an in-flight worker"
   else
     log_fail "set refuses a driver swap that would orphan an in-flight worker (exit $rc)"
@@ -259,7 +259,7 @@ test_resume_points_at_set_not_fresh() {
   # a RESUME that only hinted at `set` left two live graphs at one slot.
   local mif
   mif="$(awk -F'\t' '$1 == "max_in_flight" { print $2 }' "$repo/.context/ship-graph/f/meta.tsv")"
-  if [ "$rc" -eq 3 ] && printf '%s' "$out" | grep -q '^reconfigured_max_in_flight=5$' && [ "$mif" = "5" ]; then
+  if [ "$rc" -eq 3 ] && grep -q '^reconfigured_max_in_flight=5$' <<< "$out" && [ "$mif" = "5" ]; then
     log_pass "a re-init of a live graph applies the slots it was given, without --fresh"
   else
     log_fail "a re-init of a live graph applies the slots it was given, without --fresh (exit $rc, meta=$mif, out=$out)"
@@ -279,7 +279,7 @@ test_unreadable_slot_count_is_not_a_deadlock() {
   out="$(cd "$repo" && bash "$GRAPH" next)"
   # Empty is 0 in bash arithmetic, so an unreadable count used to yield zero free
   # slots and report a deadlock over a graph whose nodes were all admissible.
-  if printf '%s' "$out" | grep -q '^state=frontier$'; then
+  if grep -q '^state=frontier$' <<< "$out"; then
     log_pass "an unreadable slot count falls back to one slot instead of faking a deadlock"
   else
     log_fail "an unreadable slot count falls back to one slot instead of faking a deadlock"
@@ -300,7 +300,7 @@ test_missing_driver_file_is_named() {
   out="$(cd "$repo" && bash "$GRAPH" next 2>&1)"
   rc=$?
   set -e
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'does not exist'; then
+  if [ "$rc" -ne 0 ] && grep -q 'does not exist' <<< "$out"; then
     log_pass "a meta pointing at a driver that does not exist fails by name"
   else
     log_fail "a meta pointing at a driver that does not exist fails by name (exit $rc)"
@@ -316,11 +316,11 @@ test_every_driver_answers_probe() {
     [ -f "$d" ] || continue
     name="$(basename "$d")"
     out="$(bash "$d" probe 2>/dev/null || true)"
-    printf '%s' "$out" | grep -qE '^ready=[01]$' || { ok=0; echo "  $name: no ready= line"; }
+    grep -qE '^ready=[01]$' <<< "$out" || { ok=0; echo "  $name: no ready= line"; }
     # A driver claiming readiness must say how keen it is, or selection has
     # nothing to order it by.
-    if printf '%s' "$out" | grep -q '^ready=1$'; then
-      printf '%s' "$out" | grep -qE '^priority=[0-9]+$' || { ok=0; echo "  $name: ready but no priority="; }
+    if grep -q '^ready=1$' <<< "$out"; then
+      grep -qE '^priority=[0-9]+$' <<< "$out" || { ok=0; echo "  $name: ready but no priority="; }
     fi
   done
   [ "$ok" -eq 1 ] && log_pass "every driver answers probe with ready= and, when ready, priority=" \
@@ -335,7 +335,7 @@ keenest_ready_driver() {
     [ -f "$d" ] || continue
     name="$(basename "$d" .sh)"; name="${name#driver-}"
     out="$(bash "$d" probe 2>/dev/null || true)"
-    printf '%s' "$out" | grep -q '^ready=1$' || continue
+    grep -q '^ready=1$' <<< "$out" || continue
     local prio
     prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
     case "$prio" in ''|*[!0-9]*) prio=99 ;; esac
@@ -362,7 +362,7 @@ test_init_without_driver_picks_the_keenest() {
   got="$(printf '%s' "$out" | sed -n 's/^driver=//p' | head -1)"
   # The old fixed default was the one driver that spawns nothing, so the common
   # case was a graph whose every workspace had to be created by hand.
-  if [ -n "$want" ] && [ "$got" = "$want" ] && printf '%s' "$out" | grep -q '^driver_chosen_by=probe$'; then
+  if [ -n "$want" ] && [ "$got" = "$want" ] && grep -q '^driver_chosen_by=probe$' <<< "$out"; then
     log_pass "init with no --driver selects the keenest ready driver ($want)"
   else
     log_fail "init with no --driver selects the keenest ready driver (wanted $want, got $got)"
@@ -380,8 +380,8 @@ test_explicit_driver_beats_the_probe() {
     printf '[ { "id": "N1", "title": "One", "deps": [], "files": ["a.ts"] } ]\n' > nodes.json
   )
   out="$(cd "$repo" && bash "$GRAPH" init --feature f --from nodes.json --mode local --driver manual)"
-  if printf '%s' "$out" | grep -q '^driver=manual$' \
-     && printf '%s' "$out" | grep -q '^driver_chosen_by=explicit$'; then
+  if grep -q '^driver=manual$' <<< "$out" \
+     && grep -q '^driver_chosen_by=explicit$' <<< "$out"; then
     log_pass "an explicit --driver is never overridden by the probe"
   else
     log_fail "an explicit --driver is never overridden by the probe"

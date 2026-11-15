@@ -68,7 +68,7 @@ test_typical_diff_classifies_as_normal() {
     return
   fi
 
-  if ! printf '%s\n' "$stdout_output" | grep -qE '^normal \(.+\)$'; then
+  if ! grep -qE '^normal \(.+\)$' <<< "$stdout_output"; then
     log_fail "$name (stdout did not match 'normal (...)': $stdout_output)"
     rm -rf "$dir"
     return
@@ -140,7 +140,7 @@ test_missing_diff_file_fails() {
     return
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "$missing"; then
+  if ! grep -qF "$missing" <<< "$stderr_output"; then
     log_fail "$name (stderr did not mention missing file: $stderr_output)"
     rm -rf "$dir"
     return

@@ -86,8 +86,8 @@ test_claim_writes_the_pr_marker_with_the_graph_base() {
   rm -rf "$dir"
 
   if [ "$(field "$out" node_pr)" = "on" ] \
-    && printf '%s' "$marker" | grep -q '^mode=graph$' \
-    && printf '%s' "$marker" | grep -q '^base=feat/base$'; then
+    && grep -q '^mode=graph$' <<< "$marker" \
+    && grep -q '^base=feat/base$' <<< "$marker"; then
     log_pass "$name"
   else
     log_fail "$name (node_pr='$(field "$out" node_pr)' marker='$marker')"
@@ -169,8 +169,8 @@ test_pipeline_emits_the_node_pr_step_before_homolog() {
   [ -f "$scratch/homolog-approved.txt" ] && homolog_written=1
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^state=node-pr$' \
-    && printf '%s' "$out" | grep -q 'pr_base=feat/base' \
+  if grep -q '^state=node-pr$' <<< "$out" \
+    && grep -q 'pr_base=feat/base' <<< "$out" \
     && [ "$homolog_written" -eq 0 ]; then
     log_pass "$name"
   else
@@ -211,7 +211,7 @@ test_a_red_at_landing_gets_a_fix_round() {
   local landfile="gone"; [ -f "$scratch/pr-land.txt" ] && landfile="kept"
   rm -rf "$dir"
   if [ "$(field "$out" state)" = "remediation-fix" ] && [ "$inflight" = "yes" ] && [ "$failed" = "no" ] && [ "$landfile" = "gone" ] \
-    && printf '%s' "$out" | grep -q 'ship-remediation-fix'; then
+    && grep -q 'ship-remediation-fix' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state) inflight=$inflight failed=$failed pr-land=$landfile)"
@@ -230,7 +230,7 @@ test_a_red_at_landing_past_the_cap_fails_with_its_reason() {
   local inflight="no"; [ -f "$scratch/remediation-fix-inflight.txt" ] && inflight="yes"
   rm -rf "$dir"
   if [ "$(field "$out" action)" = "stop" ] && [ "$inflight" = "no" ] \
-    && printf '%s' "$reason" | grep -q 'red at landing'; then
+    && grep -q 'red at landing' <<< "$reason"; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state) action=$(field "$out" action) inflight=$inflight reason='$reason')"
@@ -289,7 +289,7 @@ test_a_committed_tree_is_landed_by_next_itself() {
   local creates; creates="$(grep -c '^pr create' "$root/gh.log" 2>/dev/null || true)"
   rm -rf "$root"
   if [ "$(field "$out" state)" = "done" ] && [ "$created" = "yes" ] \
-    && printf '%s' "$landed" | grep -q '^result=landed pr=https://github.com/acme/repo/pull/42' \
+    && grep -q '^result=landed pr=https://github.com/acme/repo/pull/42' <<< "$landed" \
     && [ "${creates:-0}" -eq 1 ]; then
     log_pass "$name"
   else
@@ -313,7 +313,7 @@ test_an_uncommitted_tree_is_handed_to_the_model_first() {
   out="$(cd "$root/repo" && PATH="$root/bin:$PATH" GH_FAKE_LOG="$root/gh.log" bash "$PIPELINE" next T1)"
   local creates; creates="$(grep -c '^pr create' "$root/gh.log" 2>/dev/null || true)"
   rm -rf "$root"
-  if [ "$(field "$out" state)" = "node-pr" ] && printf '%s' "$out" | grep -q 'atomic Conventional Commits' && [ "${creates:-0}" -eq 0 ]; then
+  if [ "$(field "$out" state)" = "node-pr" ] && grep -q 'atomic Conventional Commits' <<< "$out" && [ "${creates:-0}" -eq 0 ]; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state) creates=$creates)"
@@ -362,8 +362,8 @@ test_a_graph_node_done_runs_on_done_and_ends_the_turn() {
   local woke="no"; [ -f "$dir/woke.txt" ] && woke="yes"
   rm -rf "$dir"
   if [ "$(field "$out" state)" = "done" ] && [ "$woke" = "yes" ] \
-    && printf '%s' "$out" | grep -q 'end your turn now' \
-    && ! printf '%s' "$out" | grep -q 'run /ship:pr'; then
+    && grep -q 'end your turn now' <<< "$out" \
+    && ! grep -q 'run /ship:pr' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state) woke=$woke)"
@@ -543,7 +543,7 @@ test_sync_hands_the_conflict_back_with_the_files() {
   rm -rf "$dir" "$remote"
 
   if [ "$(field "$out" result)" = "conflict" ] \
-    && printf '%s' "$out" | grep -q '^conflict:shared.css$' \
+    && grep -q '^conflict:shared.css$' <<< "$out" \
     && [ "$(field "$cont" result)" = "clean" ]; then
     log_pass "$name"
   else

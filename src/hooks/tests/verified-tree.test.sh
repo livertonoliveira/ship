@@ -45,7 +45,7 @@ test_preflight_reports_the_proof() {
   vt record >/dev/null
   local out
   out="$(cd "$D" && bash "$SCRIPT_DIR/../pr-preflight.sh" --task T1 --config /nonexistent 2>/dev/null)"
-  if printf '%s' "$out" | grep -qx 'verified_tree=yes'; then log_pass "pr-preflight prints verified_tree=yes for a recorded green tree"; else log_fail "pr-preflight did not report the proof ($out)"; fi
+  if grep -qx 'verified_tree=yes' <<< "$out"; then log_pass "pr-preflight prints verified_tree=yes for a recorded green tree"; else log_fail "pr-preflight did not report the proof ($out)"; fi
 }
 
 test_green_tree_is_verified() {

@@ -121,7 +121,7 @@ test_deleted_file_appears_in_diff() {
   local diff_output
   diff_output="$(cd "$repo" && bash "$SNAPSHOT_SCRIPT" diff "$pre" "$post")"
 
-  if ! printf '%s\n' "$diff_output" | grep -qx "src/foo.ts"; then
+  if ! grep -qx "src/foo.ts" <<< "$diff_output"; then
     log_fail "$name (deleted file not listed in diff output: $diff_output)"
     return
   fi
@@ -171,7 +171,7 @@ test_diff_mode_fails_on_missing_snapshot() {
     expected_missing="$post"
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "$expected_missing"; then
+  if ! grep -qF "$expected_missing" <<< "$stderr_output"; then
     log_fail "$name (stderr did not mention missing file: $stderr_output)"
     rm -rf "$repo" "$tmp"
     return
@@ -206,7 +206,7 @@ test_falls_back_when_origin_main_is_absent() {
     rm -rf "$dir"
     return
   fi
-  if ! printf '%s' "$stderr_output" | grep -qF "origin/main not found — using local main instead"; then
+  if ! grep -qF "origin/main not found — using local main instead" <<< "$stderr_output"; then
     log_fail "$name (stderr did not note the fallback: $stderr_output)"
     rm -rf "$dir"
     return

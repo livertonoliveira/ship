@@ -121,10 +121,10 @@ test_defer_writes_a_real_report() {
   report="$(cat "$dir/.context/ship-run/$task/homolog-report.md" 2>/dev/null || true)"
   rm -rf "$dir"
 
-  if printf '%s' "$report" | grep -q '^# Homolog' \
-    && printf '%s' "$report" | grep -q '## Gate by phase' \
-    && printf '%s' "$report" | grep -q '## Wall clock' \
-    && printf '%s' "$report" | grep -q '## Consolidated findings'; then
+  if grep -q '^# Homolog' <<< "$report" \
+    && grep -q '## Gate by phase' <<< "$report" \
+    && grep -q '## Wall clock' <<< "$report" \
+    && grep -q '## Consolidated findings' <<< "$report"; then
     log_pass "$name"
   else
     log_fail "$name (report was empty or missing sections)"

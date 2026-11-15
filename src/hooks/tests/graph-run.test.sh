@@ -157,8 +157,8 @@ test_run_returns_for_a_node_question_and_resumes_after_the_answer() {
   ( cd "$root/repo" && bash "$root/hooks/graph.sh" answer TASK-001 "keep it — the migration reads it" >/dev/null 2>&1 )
   again="$(run_graph "$root")"
   if [ "$(field "$out" action)" = "answer" ] \
-     && printf '%s' "$out" | grep -q 'TASK-001 asks: keep the old column?' \
-     && printf '%s' "$out" | grep -q 'Then run: bash ".*/graph.sh" run$' \
+     && grep -q 'TASK-001 asks: keep the old column?' <<< "$out" \
+     && grep -q 'Then run: bash ".*/graph.sh" run$' <<< "$out" \
      && [ "$(field "$again" action)" = "done" ] \
      && [ "$(calls "$root" 'dispatch TASK-001')" = "1" ]; then
     log_pass "$name"
@@ -176,7 +176,7 @@ test_run_closes_its_slice_and_asks_to_be_called_again() {
   out="$(run_graph "$root" --slice 3)"
   if [ "$(field "$out" action)" = "run" ] \
      && [ "$(field "$out" state)" = "running" ] \
-     && printf '%s' "$out" | grep -q 'graph.sh" run ' \
+     && grep -q 'graph.sh" run ' <<< "$out" \
      && [ "$(status_of "$root" TASK-001)" = "in_flight" ] \
      && [ ! -e "$(state_dir "$root")/run.lock" ] \
      && [ -s "$(state_dir "$root")/run-heartbeat.txt" ]; then
@@ -202,8 +202,8 @@ test_a_newer_run_takes_the_graph_over() {
   first="$(cat "$root/first.out")"
   if [ "$(field "$first" state)" = "superseded" ] \
      && [ "$(field "$first" action)" = "none" ] \
-     && printf '%s' "$first" | grep -q 'Do NOT start run again' \
-     && printf '%s' "$second" | grep -q 'run: taking the graph over from run pid' \
+     && grep -q 'Do NOT start run again' <<< "$first" \
+     && grep -q 'run: taking the graph over from run pid' <<< "$second" \
      && [ "$(field "$second" action)" = "done" ] \
      && [ "$(calls "$root" 'dispatch TASK-001')" = "1" ] \
      && [ ! -e "$(state_dir "$root")/run.lock" ]; then
@@ -260,8 +260,8 @@ test_a_driver_that_cannot_start_workers_gets_the_dispatch_back() {
   out="$(run_graph "$root")"
   if [ "$(field "$out" action)" = "dispatch" ] \
      && [ "$(field "$out" frontier)" = "TASK-001" ] \
-     && printf '%s' "$out" | grep -q 'driver-local.sh" dispatch TASK-001' \
-     && printf '%s' "$out" | grep -q 'run: bash ".*/graph.sh" run — do not evaluate' \
+     && grep -q 'driver-local.sh" dispatch TASK-001' <<< "$out" \
+     && grep -q 'run: bash ".*/graph.sh" run — do not evaluate' <<< "$out" \
      && [ "$(status_of "$root" TASK-001)" = "pending" ] \
      && [ ! -e "$(state_dir "$root")/run.lock" ]; then
     log_pass "$name"
@@ -278,7 +278,7 @@ test_a_refused_dispatch_claims_nothing() {
   printf 'refuse\n' > "$(state_dir "$root")/behavior-TASK-001.txt"
   out="$(run_graph "$root" --slice 2)"
   if [ "$(field "$out" action)" = "run" ] \
-     && printf '%s' "$out" | grep -q 'run: TASK-001 not dispatched — the runtime refused TASK-001' \
+     && grep -q 'run: TASK-001 not dispatched — the runtime refused TASK-001' <<< "$out" \
      && [ "$(status_of "$root" TASK-001)" = "pending" ]; then
     log_pass "$name"
   else
@@ -324,7 +324,7 @@ test_next_called_directly_still_names_next() {
   local root out
   root="$(new_sandbox)"
   out="$(cd "$root/repo" && bash "$root/hooks/graph.sh" next 2>/dev/null)"
-  if printf '%s' "$out" | grep -q 'run: bash ".*/graph.sh" next — do not evaluate'; then
+  if grep -q 'run: bash ".*/graph.sh" next — do not evaluate' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $(printf '%s' "$out" | tr '\n' '|'))"

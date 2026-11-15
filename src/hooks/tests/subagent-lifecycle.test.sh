@@ -94,8 +94,8 @@ test_stop_blocks_until_the_files_exist() {
   : > "$dir/.context/ship-run/MOB-1/generated-tests-unit.md"
   echo "Status: DONE" > "$dir/.context/ship-run/MOB-1/worker-status-unit.md"
   run_hook stop "$(event "$dir" ship:ship-test-unit agent-7 ',"stop_hook_active":false')" || rc2=$?
-  if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'generated-tests-unit.md' \
-     && printf '%s' "$err" | grep -q 'worker-status-unit.md' && [ "$rc2" -eq 0 ] \
+  if [ "$rc" -eq 2 ] && grep -q 'generated-tests-unit.md' <<< "$err" \
+     && grep -q 'worker-status-unit.md' <<< "$err" && [ "$rc2" -eq 0 ] \
      && [ -s "$dir/.context/ship-run/MOB-1/worker-done-ship-test-unit.txt" ]; then
     log_pass "$name"
   else
@@ -164,7 +164,7 @@ test_guard_denies_source_under_test() {
   run_hook start "$(event "$dir" ship:ship-test-unit agent-5)"
   out_deny="$(printf '%s' "$(event "$dir" ship:ship-test-unit agent-5 ",\"tool_input\":{\"file_path\":\"$dir/src/b.js\"}")" | bash "$HOOK" guard)"
   out_allow="$(printf '%s' "$(event "$dir" ship:ship-test-unit agent-5 ",\"tool_input\":{\"file_path\":\"$dir/tests/b.test.js\"}")" | bash "$HOOK" guard)"
-  if printf '%s' "$out_deny" | grep -q '"permissionDecision":"deny"' && [ -z "$out_allow" ]; then
+  if grep -q '"permissionDecision":"deny"' <<< "$out_deny" && [ -z "$out_allow" ]; then
     log_pass "$name"
   else
     log_fail "$name (deny=$out_deny allow=$out_allow)"

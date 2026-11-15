@@ -60,7 +60,7 @@ test_static_check_reports_and_writes_nothing() {
   chmod +x "$d/tc.sh"
   local rc=0 out
   out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-check 2>/dev/null)" || rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'TS2304' && printf '%s' "$out" | grep -qx 'typecheck=2' \
+  if [ "$rc" -eq 1 ] && grep -q 'TS2304' <<< "$out" && grep -qx 'typecheck=2' <<< "$out" \
      && [ ! -e "$d/scratch/static-exits.txt" ] && [ ! -e "$d/scratch/static-failures.md" ] \
      && [ ! -e "$d/scratch/phase-status-static.md" ]; then
     log_pass "$name"
@@ -100,8 +100,8 @@ test_unrecognized_test_framework_fails_with_actionable_message() {
   local out rc=0
   out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md 2>&1)" || rc=$?
   if [ "$rc" -eq 3 ] \
-    && printf '%s' "$out" | grep -qF "Test Framework 'node:assert (custom runner)' is not a known runner" \
-    && printf '%s' "$out" | grep -qF "fix Test Framework in stack.md or ship/config.md"; then
+    && grep -qF "Test Framework 'node:assert (custom runner)' is not a known runner" <<< "$out" \
+    && grep -qF "fix Test Framework in stack.md or ship/config.md" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$out)"
@@ -388,7 +388,7 @@ test_static_only_survives_a_typecheck_that_names_no_file() {
   local name="--static-only finishes when the typecheck output names no file"
   local d err; d="$(mktemp -d)"
   err="$(static_only_stderr "$d" "TS2304: cannot find name")"
-  if ! printf '%s' "$err" | grep -q 'stopped by a failing command' && grep -qx 'typecheck=2' "$d/scratch/static-exits.txt"; then
+  if ! grep -q 'stopped by a failing command' <<< "$err" && grep -qx 'typecheck=2' "$d/scratch/static-exits.txt"; then
     log_pass "$name"
   else
     log_fail "$name ($err)"
@@ -400,7 +400,7 @@ test_static_only_survives_an_error_in_an_uncommitted_test_file() {
   local name="--static-only finishes when the only typecheck error sits in a test file HEAD does not have"
   local d err; d="$(mktemp -d)"
   err="$(static_only_stderr "$d" "src/new.test.ts(1,1): error TS2304")"
-  if ! printf '%s' "$err" | grep -q 'stopped by a failing command' && [ ! -e "$d/scratch/static-broken-tests.txt" ]; then
+  if ! grep -q 'stopped by a failing command' <<< "$err" && [ ! -e "$d/scratch/static-broken-tests.txt" ]; then
     log_pass "$name"
   else
     log_fail "$name ($err)"

@@ -206,11 +206,11 @@ test_static_check_names_existing_tests_the_change_broke() {
   local out rc=0
   out="$(cd "$d" && bash "$TEST_EXEC" scratch --config config.md --static-check 2>/dev/null)" || rc=$?
   if [ "$rc" -eq 1 ] \
-    && printf '%s' "$out" | grep -q '## Existing test files broken by this change' \
-    && printf '%s' "$out" | grep -qx -- '- test/unit/old.spec.ts' \
-    && ! printf '%s' "$out" | grep -qx -- '- test/unit/new.spec.ts' \
-    && ! printf '%s' "$out" | grep -qx -- '- src/a.ts' \
-    && printf '%s' "$out" | grep -qx 'broken-existing-tests=1'; then
+    && grep -q '## Existing test files broken by this change' <<< "$out" \
+    && grep -qx -- '- test/unit/old.spec.ts' <<< "$out" \
+    && ! grep -qx -- '- test/unit/new.spec.ts' <<< "$out" \
+    && ! grep -qx -- '- src/a.ts' <<< "$out" \
+    && grep -qx 'broken-existing-tests=1' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$(printf '%s' "$out" | tr '\n' ' '))"

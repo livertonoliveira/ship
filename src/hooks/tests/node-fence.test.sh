@@ -36,7 +36,7 @@ test_an_edit_outside_a_node_workspace_is_denied() {
   local ws out
   ws="$(node_ws)"
   out="$(decide "$ws" "/Users/someone/dev/other-repo/src/a.ts")"
-  if printf '%s' "$out" | grep -q '"permissionDecision":"deny"'; then log_pass "$name"; else log_fail "$name ($out)"; fi
+  if grep -q '"permissionDecision":"deny"' <<< "$out"; then log_pass "$name"; else log_fail "$name ($out)"; fi
   rm -rf "$ws"
 }
 

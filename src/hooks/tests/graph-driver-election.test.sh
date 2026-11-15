@@ -40,7 +40,7 @@ new_sandbox() {
   local d out prio
   for d in "$root/hooks"/driver-*.sh; do
     out="$(bash "$d" probe 2>/dev/null || true)"
-    printf '%s' "$out" | grep -q '^ready=1' || continue
+    grep -q '^ready=1' <<< "$out" || continue
     prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
     case "$prio" in ''|*[!0-9]*) continue ;; esac
     [ "$prio" -lt 50 ] && rm -f "$d"
@@ -255,7 +255,7 @@ test_next_reports_the_driver_and_its_workspaces() {
   ( cd "$repo" && bash "$root/hooks/graph.sh" init --feature f --from nodes.json --driver local --mode local >/dev/null )
   out="$( cd "$repo" && bash "$root/hooks/graph.sh" next 2>/dev/null || true )"
 
-  if printf '%s' "$out" | grep -q '^driver=local$' && printf '%s' "$out" | grep -q '^workspaces=.*NOT visible'; then
+  if grep -q '^driver=local$' <<< "$out" && grep -q '^workspaces=.*NOT visible' <<< "$out"; then
     log_pass "next names the driver in force and what it produces"
   else
     log_fail "next names the driver in force and what it produces"
@@ -269,7 +269,7 @@ test_status_reports_the_workspaces() {
   ( cd "$repo" && bash "$root/hooks/graph.sh" init --feature f --from nodes.json --driver local --mode local >/dev/null )
   out="$( cd "$repo" && bash "$root/hooks/graph.sh" status 2>/dev/null || true )"
 
-  if printf '%s' "$out" | grep -q '^workspaces: '; then
+  if grep -q '^workspaces: ' <<< "$out"; then
     log_pass "status names what the driver produces"
   else
     log_fail "status names what the driver produces"
@@ -284,8 +284,8 @@ test_every_driver_declares_its_workspaces() {
   for f in "$HOOKS_SRC"/driver-*.sh; do
     name="$(basename "$f" .sh)"
     out="$(bash "$f" probe 2>/dev/null || true)"
-    printf '%s' "$out" | grep -q '^ready=1' || continue
-    printf '%s' "$out" | grep -q '^workspaces=' || missing="$missing $name"
+    grep -q '^ready=1' <<< "$out" || continue
+    grep -q '^workspaces=' <<< "$out" || missing="$missing $name"
   done
   if [ -z "$missing" ]; then
     log_pass "every ready driver declares what its workspaces are"
