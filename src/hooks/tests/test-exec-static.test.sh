@@ -374,6 +374,43 @@ test_lint_fix_without_footprint_does_nothing
 test_full_run_carries_forward_a_red_typecheck
 test_unrecognized_test_framework_fails_with_actionable_message
 
+static_only_stderr() {
+  local d="$1" tc_line="$2"
+  setup_pkg_repo "$d"
+  printf -- '- Typecheck: ./tc.sh\n- Lint: ./lint.sh\n' >> "$d/config.md"
+  printf '#!/usr/bin/env bash\necho "%s"\nexit 2\n' "$tc_line" > "$d/tc.sh"
+  chmod +x "$d/tc.sh"
+  (cd "$d" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init)
+  (cd "$d" && { bash "$TEST_EXEC" scratch --config config.md --static-only >/dev/null; } 2>&1) || true
+}
+
+test_static_only_survives_a_typecheck_that_names_no_file() {
+  local name="--static-only finishes when the typecheck output names no file"
+  local d err; d="$(mktemp -d)"
+  err="$(static_only_stderr "$d" "TS2304: cannot find name")"
+  if ! printf '%s' "$err" | grep -q 'stopped by a failing command' && grep -qx 'typecheck=2' "$d/scratch/static-exits.txt"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($err)"
+  fi
+  rm -rf "$d"
+}
+
+test_static_only_survives_an_error_in_an_uncommitted_test_file() {
+  local name="--static-only finishes when the only typecheck error sits in a test file HEAD does not have"
+  local d err; d="$(mktemp -d)"
+  err="$(static_only_stderr "$d" "src/new.test.ts(1,1): error TS2304")"
+  if ! printf '%s' "$err" | grep -q 'stopped by a failing command' && [ ! -e "$d/scratch/static-broken-tests.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name ($err)"
+  fi
+  rm -rf "$d"
+}
+
+test_static_only_survives_a_typecheck_that_names_no_file
+test_static_only_survives_an_error_in_an_uncommitted_test_file
+
 echo ""
 echo "$pass_count passed, $fail_count failed"
 
