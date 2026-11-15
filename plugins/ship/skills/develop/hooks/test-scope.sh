@@ -26,7 +26,7 @@ layer_state() {
   local config="$1" layer="$2"
   # trailing `|| true`: a no-match grep exits non-zero and (with pipefail)
   # would abort the script under `set -e` on an absent/empty section.
-  section_lines "$config" "Test Scope" | grep -m1 -E "^-[[:space:]]*$layer:" | sed -E "s/^-[[:space:]]*$layer:[[:space:]]*//" | awk '{print $1}' || true
+  section_lines "$config" "Test Scope" | grep -E "^-[[:space:]]*$layer:" | sed -n 1p | sed -E "s/^-[[:space:]]*$layer:[[:space:]]*//" | awk '{print $1}' || true
 }
 
 main() {

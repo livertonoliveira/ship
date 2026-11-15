@@ -235,7 +235,7 @@ if [ -z "$title" ]; then
   elif [ -s "$scratch/spec.md" ]; then
     issue_title="$({ grep -m1 -E '^#+ ' "$scratch/spec.md" || true; } | sed -E 's/^#+[[:space:]]*//; s/^[A-Z]+-?[0-9]+[[:space:]]*(—|-|:)[[:space:]]*//')"
   fi
-  [ -n "$issue_title" ] || issue_title="$(printf '%s\n' "$subjects" | head -1 | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//')"
+  [ -n "$issue_title" ] || issue_title="$(printf '%s\n' "$subjects" | sed -n 1p | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//')"
   title="$type: $issue_title ($task)"
 fi
 

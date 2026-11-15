@@ -37,7 +37,7 @@ is_excluded_secrets() {
 
 generic_secret_hit() {
   local content="$1" lit inner lower uniq
-  lit="$(printf '%s' "$content" | grep -oE '"[^"]{16,}"|'"'"'[^'"'"']{16,}'"'"'' | head -1)"
+  lit="$(printf '%s' "$content" | grep -oE '"[^"]{16,}"|'"'"'[^'"'"']{16,}'"'"'' | sed -n 1p)"
   [ -z "$lit" ] && return 1
   inner="${lit%\"}"; inner="${inner#\"}"
   inner="${inner%\'}"; inner="${inner#\'}"
@@ -76,7 +76,7 @@ full_spec_re() {
   fi
   local re="$SPEC_RE" branch key prefix
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  key="$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)"
+  key="$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | sed -n 1p || true)"
   if [ -n "$key" ]; then
     prefix="${key%%-*}"
     case "$prefix" in REQ|AC|SC|IMPL|TEST) ;; *) re="$re|\\b${prefix}-[0-9]+\\b" ;; esac

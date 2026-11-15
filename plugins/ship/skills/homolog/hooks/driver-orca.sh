@@ -187,7 +187,7 @@ resolve_repo() {
 kv_get() {
   local file="$1" key="$2"
   [ -f "$file" ] || return 0
-  sed -n "s/^$key=//p" "$file" | head -1
+  sed -n "s/^$key=//p" "$file" | sed -n 1p
 }
 
 # --- the Run ----------------------------------------------------------------
@@ -386,7 +386,7 @@ abandon_dispatch() {
     done < <(task_workspaces "$DISPATCH_TASK")
   fi
   [ "$removed" -gt 0 ] && echo "  removed $removed workspace(s) this dispatch had created" >&2
-  printf '%s%s\n' "$reason" "$(printf '%s' "$detail" | head -1 | sed 's/^ */ — /')" \
+  printf '%s%s\n' "$reason" "$(printf '%s' "$detail" | sed -n 1p | sed 's/^ */ — /')" \
     > "$STATE/dispatch-failed-$DISPATCH_TASK.txt"
   exit 1
 }
@@ -579,7 +579,7 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     [ -n "$BASE" ] && wt_args+=(--base-branch "$BASE")
     local wt
     wt="$(orca "${wt_args[@]}" 2>/dev/null || true)"
-    wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"' || true)"
+    wt_id="$(printf '%s' "$wt" | grep -oE '"[^"]+::[^"]+"' | sed -n 1p | tr -d '"' || true)"
     [ -n "$wt_id" ] || abandon_dispatch "no worktree id in the create response"
     term="$(orca terminal create --worktree "id:$wt_id" --title "$task" --command "$SHIP_WORKER_COMMAND" --json 2>/dev/null || true)"
     handle="$(printf '%s' "$term" | json_id term_ || true)"
@@ -624,7 +624,7 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
 
   # worker-start reports what it created under result.effects; the worktree id is
   # the only <repo-id>::<path> value in the response.
-  [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | head -1 | tr -d '"' || true)"
+  [ -n "$wt_id" ] || wt_id="$(printf '%s' "$started" | grep -oE '"[^"]+::[^"]+"' | sed -n 1p | tr -d '"' || true)"
   [ -n "$handle" ] || handle="$(printf '%s' "$started" | json_id term_ || true)"
   # Named explicitly, because the alternative is what actually happened: an empty
   # selector makes the next call fail, and a failing command substitution under
@@ -804,7 +804,7 @@ verb_wait() {
     fi
 
     local payload last
-    payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | head -1 || true)"
+    payload="$(printf '%s' "$out" | grep -oE 'task_[0-9a-zA-Z]+' | sed -n 1p || true)"
     # The same payload twice running is the replay, not a second worker
     # finishing. Reporting it again is what turned the wait into a busy loop.
     last="$(cat "$STATE/driver-orca-last-signal.txt" 2>/dev/null || true)"

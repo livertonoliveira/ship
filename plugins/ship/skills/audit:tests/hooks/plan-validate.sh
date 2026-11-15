@@ -42,6 +42,7 @@ module_section() {
 module_field() {
   local f="$1" id="$2" field="$3"
   module_section "$f" "$id" | awk -v field="$field" '
+    done { next }
     !found && index($0, "- " field ":") == 1 {
       found = 1
       value = substr($0, length(field) + 4)
@@ -54,7 +55,7 @@ module_field() {
       value = (value == "" ? item : value ", " item)
       next
     }
-    found { exit }
+    found { done = 1 }
     END { if (found) print value }
   '
 }
@@ -120,7 +121,7 @@ slot_header_re() {
 test_contract_layer_for() {
   local f="$1" scenario_id="$2"
   grep -E "$(slot_header_re "$scenario_id")" "$f" 2>/dev/null \
-    | head -1 \
+    | sed -n 1p \
     | sed -E 's/^### .* -> ([^>]*) -> .*$/\1/'
 }
 
@@ -481,7 +482,7 @@ check_contract_matches_scaffold() {
   # nothing traces back to.
   extra="$(unkeyed_slots "$f" | grep -v '(derived' || true)"
   if [ -n "$extra" ]; then
-    echo "plan-validate: slot fora do scaffold e não marcado '(derived: ...)' — $(printf '%s' "$extra" | head -3 | tr '\n' ' ')" >&2
+    echo "plan-validate: slot fora do scaffold e não marcado '(derived: ...)' — $(printf '%s' "$extra" | sed -n 1,3p | tr '\n' ' ')" >&2
     return 1
   fi
   return 0
@@ -536,7 +537,7 @@ check_no_unfilled_slots() {
   local f="$1" left
   left="$(grep -E '^### .*->.*->[[:space:]]*TBD([[:space:]]|$)' "$f" 2>/dev/null || true)"
   if [ -n "$left" ]; then
-    echo "plan-validate: slot com caminho de teste não preenchido (TBD) — $(printf '%s' "$left" | head -3 | tr '\n' ' ')" >&2
+    echo "plan-validate: slot com caminho de teste não preenchido (TBD) — $(printf '%s' "$left" | sed -n 1,3p | tr '\n' ' ')" >&2
     return 1
   fi
   return 0
