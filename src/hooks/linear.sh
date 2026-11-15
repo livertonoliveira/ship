@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # linear.sh — the pipeline's Linear round trips, done by a script instead of
 # the orchestrator's turns.

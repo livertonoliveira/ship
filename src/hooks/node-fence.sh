@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # node-fence.sh — PreToolUse (Edit|Write): inside a work-graph node's workspace,
 # no agent edits a file outside it.

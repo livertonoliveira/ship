@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # subagent-lifecycle.sh — what the pipeline used to ask its workers to do in
 # prose, done by the harness instead (plugin hooks, hooks/hooks.json).

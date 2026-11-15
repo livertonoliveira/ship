@@ -22,6 +22,7 @@
 # Exit 0 on installed/skipped, 1 on failed. Never runs twice for one run.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() { echo "usage: deps-bootstrap.sh <scratch-dir> [--config <path>]" >&2; }
 

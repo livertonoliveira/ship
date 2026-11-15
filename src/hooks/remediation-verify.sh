@@ -25,6 +25,7 @@
 # Prints: resolved=<n> unresolved=<n> unresolved_ids=<csv>
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

@@ -16,6 +16,7 @@
 # findings have a severity.
 
 set -eu
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 scratch="${1:-}"
 if [ -z "$scratch" ] || [ ! -d "$scratch" ]; then
