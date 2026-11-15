@@ -92,6 +92,22 @@ test_repo_prefix_and_escapes_are_dropped_from_the_inventory() {
   rm -rf "$(dirname "$scratch")"
 }
 
+test_a_colon_separates_the_note_like_a_dash() {
+  local name="a Files entry whose note follows a colon ('modify a.ts: note', 'README.md: note') inventories the bare path, never 'a.ts:'"
+  local scratch; scratch="$(make_scratch)"
+  printf '## Files\n\n* modify `src/a.ts`: adiciona X, e Y\n* modify README.md: nova seção\n* modify platform-agendx: src/b.ts: valida\n' > "$scratch/spec.md"
+  run_scaffold "$scratch"
+  if grep -q '^- src/a.ts (modify)' "$scratch/plan-scaffold.md" \
+     && grep -q '^- README.md (modify)' "$scratch/plan-scaffold.md" \
+     && grep -q '^- src/b.ts (modify)' "$scratch/plan-scaffold.md" \
+     && ! grep -q 'ts:' "$scratch/plan-scaffold.md"; then
+    log_pass "$name"
+  else
+    log_fail "$name ($(tr '\n' '|' < "$scratch/plan-scaffold.md"))"
+  fi
+  rm -rf "$(dirname "$scratch")"
+}
+
 test_a_comma_separated_entry_lists_each_file() {
   local name="a Files entry listing two paths with a comma ('modify a.tsx, b.test.tsx — note') inventories both, without the comma"
   local scratch; scratch="$(make_scratch)"
@@ -403,6 +419,7 @@ test_files_nested_under_a_deeper_heading_are_inventoried
 test_star_bullets_from_linear_are_inventoried
 test_repo_prefix_and_escapes_are_dropped_from_the_inventory
 test_a_comma_separated_entry_lists_each_file
+test_a_colon_separates_the_note_like_a_dash
 test_a_counted_set_is_not_an_inventory_row
 test_a_note_after_the_path_is_not_part_of_the_path
 test_duplicate_ids_are_reported_but_never_fatal
