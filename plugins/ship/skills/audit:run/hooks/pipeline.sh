@@ -99,12 +99,12 @@ init_sync_to_base() {
 
   # The graph states the base it will open the PR against; outside a graph the
   # remote's own HEAD is the honest answer.
-  base="$(sed -n 's/^base=//p' "$scratch/pr-mode.txt" 2>/dev/null | head -1)"
+  base="$(sed -n 's/^base=//p' "$scratch/pr-mode.txt" 2>/dev/null | sed -n 1p)"
   [ -n "$base" ] || base="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s|^$remote/||" || true)"
   # refs/remotes/<remote>/HEAD is a local convenience ref, and plenty of clones
   # simply do not have it — measured on a fresh one, where its absence silently
   # skipped the whole sync. Asking the remote costs one call and cannot be wrong.
-  [ -n "$base" ] || base="$(git ls-remote --symref "$remote" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\).*#\1#p' | head -1)"
+  [ -n "$base" ] || base="$(git ls-remote --symref "$remote" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\).*#\1#p' | sed -n 1p)"
   [ -n "$base" ] || { printf 'skipped-no-base'; return 0; }
 
   # TRACKED changes only. init has just written this run's own scratch dir, so a
@@ -872,7 +872,7 @@ config_section_field() {
     $0 ~ "^## " h "$" { insection = 1; next }
     /^## / { insection = 0 }
     insection { print }
-  ' "$config" | grep -m1 -E "^-[[:space:]]*$key:" | sed -E "s/^-[[:space:]]*$key:[[:space:]]*//" || true)"
+  ' "$config" | grep -E "^-[[:space:]]*$key:" | sed -n 1p | sed -E "s/^-[[:space:]]*$key:[[:space:]]*//" || true)"
   printf '%s' "$v"
 }
 
@@ -1092,7 +1092,7 @@ next_relevant_tests() {
   [ -n "$scored" ] || return 0
   local total
   total="$(printf '%s\n' "$scored" | grep -c . || true)"
-  printf '%s\n' "$scored" | head -"$limit"
+  printf '%s\n' "$scored" | sed -n "1,${limit}p"
   if [ "$total" -gt "$limit" ]; then
     printf '(%s more existing test files in this layer are not listed — read them only if the ones above leave a gap.)\n' \
       "$((total - limit))"
@@ -1260,7 +1260,7 @@ next_test_brief() {
       printf '\n## Existing tests\n\nThese %s-layer files already exist near the code under test and already assert behavior. Add to them; never rewrite one from scratch, and never remove a case you did not write:\n\n' "$layer"
       printf '%s\n' "$existing" | sed 's/^\([^(]\)/- \1/'
     fi
-    first="$(printf '%s\n' "$files" | head -1)"
+    first="$(printf '%s\n' "$files" | sed -n 1p)"
     ref="$(next_test_pattern_ref "$first" "$layer")"
     [ -n "$ref" ] && printf 'Style reference: mirror the structure and conventions of `%s` — skip standalone pattern discovery.\n\n' "$ref"
     printf 'Full diff: %s/diff.md. Read other project code only where the files above leave a gap.\n' "$scratch"
@@ -1573,7 +1573,7 @@ next_deps_gate() {
     local dep_id dep_type
     while IFS= read -r dep_id; do
       [ -n "$dep_id" ] || continue
-      dep_type="$(bash "$HOOK_DIR/linear.sh" state "$dep_id" 2>/dev/null | awk -F= '$1 == "type" { print $2; exit }')" || dep_type=""
+      dep_type="$(bash "$HOOK_DIR/linear.sh" state "$dep_id" 2>/dev/null | awk -F= '$1 == "type" && !seen { print $2; seen = 1 }')" || dep_type=""
       [ -n "$dep_type" ] || break
       printf '%s\t%s\n' "$dep_id" "$([ "$dep_type" = completed ] && echo merged || echo pending)" >> "$scratch/deps-state.tsv"
     done <<< "$unresolved"

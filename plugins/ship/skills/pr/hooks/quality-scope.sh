@@ -40,13 +40,13 @@ profile_name() {
   local config="$1" v
   # trailing `|| true`: a no-match grep exits non-zero and (with pipefail)
   # would abort the script under `set -e` on an absent/empty section.
-  v="$(section_lines "$config" "Pipeline Profile" | grep -m1 -E '^-[[:space:]]*profile:' | sed -E 's/^-[[:space:]]*profile:[[:space:]]*//' | awk '{print $1}' || true)"
+  v="$(section_lines "$config" "Pipeline Profile" | grep -E '^-[[:space:]]*profile:' | sed -n 1p | sed -E 's/^-[[:space:]]*profile:[[:space:]]*//' | awk '{print $1}' || true)"
   printf '%s' "${v:-standard}"
 }
 
 phase_override() {
   local config="$1" phase="$2"
-  section_lines "$config" "Pipeline Phases" | grep -m1 -E "^-[[:space:]]*$phase:" | sed -E "s/^-[[:space:]]*$phase:[[:space:]]*//" | awk '{print $1}' || true
+  section_lines "$config" "Pipeline Phases" | grep -E "^-[[:space:]]*$phase:" | sed -n 1p | sed -E "s/^-[[:space:]]*$phase:[[:space:]]*//" | awk '{print $1}' || true
 }
 
 profile_default() {
@@ -65,7 +65,7 @@ profile_default() {
 # a diff the user explicitly opted out of (or vice versa).
 security_focus_category() {
   local config="$1" v
-  v="$(section_lines "$config" "Security Focus" | grep -m1 -E '^-[[:space:]]*categories:' | sed -E 's/^-[[:space:]]*categories:[[:space:]]*//' | awk '{print $1}' || true)"
+  v="$(section_lines "$config" "Security Focus" | grep -E '^-[[:space:]]*categories:' | sed -n 1p | sed -E 's/^-[[:space:]]*categories:[[:space:]]*//' | awk '{print $1}' || true)"
   printf '%s' "${v:-all}"
 }
 

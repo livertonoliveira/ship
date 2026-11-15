@@ -70,7 +70,7 @@ gql() {
         --data @"$body" "$LINEAR_API_URL" > "$out" \
     || die "the request to Linear failed"
   if [ -n "$(flat < "$out" | awk -F '\t' '$1 == "errors" || index($1, "errors.") == 1 { hit = 1 } END { if (hit) print "y" }')" ]; then
-    msg="$(flat < "$out" | awk -F '\t' '$1 == "errors.message" { print $2; exit }')"
+    msg="$(flat < "$out" | awk -F '\t' '$1 == "errors.message" && !seen { print $2; seen = 1 }')"
     die "Linear refused the request: ${msg:-$(head -c 300 "$out")}"
   fi
 }
@@ -233,7 +233,7 @@ cmd_transition() {
   printf '{"query":%s,"variables":{"i":%s,"s":%s}}' "$(json_str "$m")" "$(json_str "$uuid")" "$(json_str "$state_id")" > "$tmp/body.json"
   gql "$tmp/body.json" "$tmp/answer.json"
   local got
-  got="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issueUpdate.issue.state.type" { print $2; exit }')"
+  got="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issueUpdate.issue.state.type" && !seen { print $2; seen = 1 }')"
   [ "$got" = "$type" ] || die "transition: Linear reports $issue as '${got:-unknown}', not $type — check the status names in ship/config.md"
   echo "ok=1"
   echo "issue=$issue"
@@ -257,8 +257,8 @@ cmd_state() {
   printf '{"query":%s,"variables":{"i":%s}}' "$(json_str "$q")" "$(json_str "$issue")" > "$tmp/body.json"
   gql "$tmp/body.json" "$tmp/answer.json"
   local t n
-  t="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.type" { print $2; exit }')"
-  n="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.name" { print $2; exit }')"
+  t="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.type" && !seen { print $2; seen = 1 }')"
+  n="$(flat < "$tmp/answer.json" | awk -F '\t' '$1 == "data.issue.state.name" && !seen { print $2; seen = 1 }')"
   [ -n "$t" ] || die "state: no issue $issue in Linear"
   echo "type=$t"
   echo "state=$n"
@@ -273,7 +273,7 @@ issue_uuid() {
   local q='query($i:String!){issue(id:$i){id}}'
   printf '{"query":%s,"variables":{"i":%s}}' "$(json_str "$q")" "$(json_str "$issue")" > "$tmp/uuid-body.json"
   gql "$tmp/uuid-body.json" "$tmp/uuid.json"
-  flat < "$tmp/uuid.json" | awk -F '\t' '$1 == "data.issue.id" { print $2; exit }'
+  flat < "$tmp/uuid.json" | awk -F '\t' '$1 == "data.issue.id" && !seen { print $2; seen = 1 }'
 }
 
 cmd_attach() {

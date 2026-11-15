@@ -76,7 +76,7 @@ workspace_root() {
 worktree_for_branch() {
   git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$1" '
     /^worktree /  { p = substr($0, 10) }
-    $0 == "branch " b { print p; exit }'
+    $0 == "branch " b && !seen { print p; seen = 1 }'
 }
 
 ensure_worktree() {
@@ -208,7 +208,7 @@ verb_resume() {
 kv_get() {
   local file="$1" key="$2"
   [ -f "$file" ] || return 0
-  sed -n "s/^$key=//p" "$file" | head -1
+  sed -n "s/^$key=//p" "$file" | sed -n 1p
 }
 
 # Agents run inside the orchestrator's own turn, so by the time anything could

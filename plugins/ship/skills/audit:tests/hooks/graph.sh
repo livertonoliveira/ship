@@ -283,7 +283,7 @@ forge_gate_on() {
   local dir="$1"
   node_pr_on "$dir" || return 1
   command -v "$GH" >/dev/null 2>&1 || return 1
-  [ -n "$(git remote 2>/dev/null | head -1)" ] || return 1
+  [ -n "$(git remote 2>/dev/null | sed -n 1p)" ] || return 1
   return 0
 }
 
@@ -427,7 +427,7 @@ pr_merge_proven() {
   remote="$(sed -n 's/^remote=//p' "$proof")"
   base_ref="$(sed -n 's/^base_ref=//p' "$proof")"
   base="$(sed -n 's/^base=//p' "$proof")"
-  tip="$(git -C "$wt" ls-remote "$remote" "refs/heads/$base_ref" 2>/dev/null | cut -f1 | head -1)"
+  tip="$(git -C "$wt" ls-remote "$remote" "refs/heads/$base_ref" 2>/dev/null | cut -f1 | sed -n 1p)"
   [ -n "$tip" ] && [ "$tip" = "$base" ]
 }
 
@@ -901,10 +901,10 @@ autoselect_driver() {
     name="$(basename "$f" .sh)"
     name="${name#driver-}"
     out="$(bash "$f" probe 2>/dev/null || true)"
-    ready="$(printf '%s' "$out" | sed -n 's/^ready=//p' | head -1)"
+    ready="$(printf '%s' "$out" | sed -n 's/^ready=//p' | sed -n 1p)"
     [ "$ready" = "1" ] || continue
-    prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | head -1)"
-    ws="$(printf '%s' "$out" | sed -n 's/^workspaces=//p' | head -1)"
+    prio="$(printf '%s' "$out" | sed -n 's/^priority=//p' | sed -n 1p)"
+    ws="$(printf '%s' "$out" | sed -n 's/^workspaces=//p' | sed -n 1p)"
     # A driver that claims readiness without a usable priority still gets to
     # run; it just sorts last. Refusing it would make a malformed probe look
     # like an absent driver.
@@ -1000,7 +1000,7 @@ cmd_init() {
   fi
   valid_id "$driver" || die "init: invalid driver name: $driver"
   [ -f "$HOOK_DIR/driver-$driver.sh" ] || die "init: no driver at $HOOK_DIR/driver-$driver.sh"
-  [ -n "$driver_workspaces" ] || driver_workspaces="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
+  [ -n "$driver_workspaces" ] || driver_workspaces="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | sed -n 1p || true)"
 
   local dir
   dir="$(graph_dir "$feature")"
@@ -1300,7 +1300,7 @@ cmd_set() {
     local prev prev_ws ws
     prev="$(meta_get "$dir" driver)"
     prev_ws="$(meta_get "$dir" driver_workspaces)"
-    ws="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | head -1 || true)"
+    ws="$(bash "$HOOK_DIR/driver-$driver.sh" probe 2>/dev/null | sed -n 's/^workspaces=//p' | sed -n 1p || true)"
     meta_set "$dir" driver "$driver"
     # Naming a driver by hand pins it: re-election must not undo the operator's
     # choice on the very next `next`.
@@ -1785,7 +1785,7 @@ dispose_workspace() {
   harvest_node "$dir" "$id"
   driver="$(meta_get "$dir" driver)"
   out="$(bash "$HOOK_DIR/driver-$driver.sh" dispose "$id" --state "$dir" --worktree "$wt" 2>/dev/null || true)"
-  disposed="$(printf '%s' "$out" | sed -n 's/^disposed=//p' | head -1)"
+  disposed="$(printf '%s' "$out" | sed -n 's/^disposed=//p' | sed -n 1p)"
   if [ "$disposed" = "1" ]; then
     # Cleared, not left pointing at a directory that is gone: every reader of
     # this column guards on the path existing, and a stale one reads as a
@@ -1794,7 +1794,7 @@ dispose_workspace() {
     log_line "$dir" "$id workspace removed ($wt) — reports harvested to $dir/artifacts/$id"
     printf 'workspace_freed=%s\n' "$id"
   else
-    reason="$(printf '%s' "$out" | sed -n 's/^reason=//p' | head -1)"
+    reason="$(printf '%s' "$out" | sed -n 's/^reason=//p' | sed -n 1p)"
     log_line "$dir" "$id workspace kept at $wt — ${reason:-the driver removed nothing}"
     printf 'workspace_kept=%s\n' "$id"
   fi
@@ -2299,7 +2299,7 @@ cmd_answer() {
     --state "$dir" 2>/dev/null || true)"
   printf 'answered=%s\n' "$id"
   printf 'answer=%s\n' "$answer"
-  printf 'resumed=%s\n' "$(printf '%s' "$resumed" | sed -n 's/^resumed=//p' | head -1)"
+  printf 'resumed=%s\n' "$(printf '%s' "$resumed" | sed -n 's/^resumed=//p' | sed -n 1p)"
   printf '%s\n' "$resumed" | grep '^instruction=' || true
   printf 'note=The node consumes it on its next pipeline.sh next and resumes.\n'
 }
@@ -2622,7 +2622,7 @@ cmd_summary() {
   total="$(awk -F'\t' 'END { print NR + 0 }' "$dir/nodes.tsv")"
   merged="$(count_status "$dir" merged)"
   failed="$(count_status "$dir" failed)"
-  first="$({ sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p' "$log" 2>/dev/null || true; } | head -1)"
+  first="$({ sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p' "$log" 2>/dev/null || true; } | sed -n 1p)"
   last="$({ sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p' "$log" 2>/dev/null || true; } | tail -1)"
   {
     printf '# Run summary — %s\n\n' "$(meta_get "$dir" feature)"
@@ -2636,7 +2636,7 @@ cmd_summary() {
     printf '| node | status | attempts | started | merged | minutes | PR |\n|---|---|---|---|---|---|---|\n'
     awk -F'\t' '{ print $1 "\t" $6 "\t" $9 }' "$dir/nodes.tsv" | while IFS=$'\t' read -r id st att; do
       local started mergedat mins prn
-      started="$({ grep -E "^- [0-9T:Z-]+ — $id pending → in_flight" "$log" 2>/dev/null || true; } | head -1 | sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p')"
+      started="$({ grep -E "^- [0-9T:Z-]+ — $id pending → in_flight" "$log" 2>/dev/null || true; } | sed -n 1p | sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p')"
       mergedat="$({ grep -E "^- [0-9T:Z-]+ — $id landed → merged" "$log" 2>/dev/null || true; } | tail -1 | sed -n 's/^- \([0-9T:Z-]*\) — .*/\1/p')"
       mins="$(elapsed_minutes "$started" "$mergedat")"
       prn="$(pr_status_get "$dir" "$id" 2)"
@@ -3143,13 +3143,13 @@ run_dispatch_node() {
     if ! grep -q '^ok=0$' <<< "$out" && [ ! -f "$dir/dispatch-failed-$t.txt" ]; then
       printf 'the driver exited without reporting a dispatch for %s\n' "$t" > "$dir/dispatch-failed-$t.txt"
     fi
-    printf 'run: %s not dispatched — %s\n' "$t" "$(printf '%s\n' "$out" | sed -n 's/^reason=//p' | head -1)"
+    printf 'run: %s not dispatched — %s\n' "$t" "$(printf '%s\n' "$out" | sed -n 's/^reason=//p' | sed -n 1p)"
     return 0
   fi
 
   out="$(bash "$driver_sh" collect "$t" --state "$dir" --base "$base" || true)"
-  wt="$(printf '%s\n' "$out" | sed -n 's/^worktree=//p' | head -1)"
-  branch="$(printf '%s\n' "$out" | sed -n 's/^branch=//p' | head -1)"
+  wt="$(printf '%s\n' "$out" | sed -n 's/^worktree=//p' | sed -n 1p)"
+  branch="$(printf '%s\n' "$out" | sed -n 's/^branch=//p' | sed -n 1p)"
   if [ -z "$wt" ] || [ -z "$branch" ]; then
     printf 'the driver started %s but could not say where (collect returned no worktree or branch)\n' "$t" > "$dir/dispatch-failed-$t.txt"
     printf 'run: %s dispatched but not collected\n' "$t"
@@ -3206,9 +3206,9 @@ cmd_run() {
     printf '%s\n' "$iter_began" > "$dir/run-heartbeat.txt"
 
     out="$(SHIP_GRAPH_VIA_RUN=1 bash "$SELF" next --feature "$feature")"
-    action="$(printf '%s\n' "$out" | sed -n 's/^action=//p' | head -1)"
-    state="$(printf '%s\n' "$out" | sed -n 's/^state=//p' | head -1)"
-    frontier="$(printf '%s\n' "$out" | sed -n 's/^frontier=//p' | head -1)"
+    action="$(printf '%s\n' "$out" | sed -n 's/^action=//p' | sed -n 1p)"
+    state="$(printf '%s\n' "$out" | sed -n 's/^state=//p' | sed -n 1p)"
+    frontier="$(printf '%s\n' "$out" | sed -n 's/^frontier=//p' | sed -n 1p)"
     local driver_sh
     driver_sh="$HOOK_DIR/driver-$(meta_get "$dir" driver).sh"
 
@@ -3216,7 +3216,7 @@ cmd_run() {
       dispatch)
         # A driver whose worker only the caller can launch gets the step back
         # as `next` wrote it; nothing here can start an Agent.
-        [ -n "$starts" ] || starts="$(bash "$driver_sh" probe 2>/dev/null | sed -n 's/^starts_worker=//p' | head -1)"
+        [ -n "$starts" ] || starts="$(bash "$driver_sh" probe 2>/dev/null | sed -n 's/^starts_worker=//p' | sed -n 1p)"
         [ -n "$starts" ] || starts=0
         if [ "$starts" != "1" ]; then
           printf '%s\n' "$out"
