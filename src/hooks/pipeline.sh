@@ -898,7 +898,7 @@ storage_mode() {
 
 next_dispatched() {
   local scratch="$1" phase="$2"
-  dispatched_phases_in_log "$scratch/dispatch-log.md" | grep -qx "$phase"
+  grep -qx "$phase" <<< "$(dispatched_phases_in_log "$scratch/dispatch-log.md")"
 }
 
 next_run_number() {
@@ -1123,8 +1123,8 @@ next_develop_authored_tests() {
   claimed="$(cat "$scratch"/generated-tests-*.md 2>/dev/null | sed -E 's/^- ([^ ]+) .*/\1/' || true)"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    printf '%s\n' "$p" | grep -qE "$test_re" || continue
-    if [ -n "$claimed" ] && printf '%s\n' "$claimed" | grep -qxF "$p"; then
+    grep -qE "$test_re" <<< "$p" || continue
+    if [ -n "$claimed" ] && grep -qxF "$p" <<< "$claimed"; then
       continue
     fi
     layer="$(bash "$HOOK_DIR/test-layer.sh" classify "$p" | cut -f1)"
@@ -1153,7 +1153,7 @@ next_e2e_runner_present() {
     .testcaferc.json codecept.conf.* .detoxrc .detoxrc.* detox.config.*; do
     [ -e "$f" ] && return 0
   done
-  git ls-files 2>/dev/null | grep -qE '(^|/)e2e/.*\.(test|spec|e2e|e2e-spec)\.(js|jsx|ts|tsx|mjs|cjs|py)$|\.e2e-spec\.(js|ts)$'
+  grep -qE '(^|/)e2e/.*\.(test|spec|e2e|e2e-spec)\.(js|jsx|ts|tsx|mjs|cjs|py)$|\.e2e-spec\.(js|ts)$' <<< "$(git ls-files 2>/dev/null)"
 }
 
 next_layer_worth_dispatch() {
@@ -2227,7 +2227,7 @@ cmd_next() {
 
   # --- remediation fix returned → hand over to the confirmation pass -----------
   if [ -f "$SCRATCH/remediation-fix-inflight.txt" ] \
-    && bash "$HOOK_DIR/remediation-guard.sh" check "$SCRATCH" 2>/dev/null | grep -q '^erased=yes'; then
+    && grep -q '^erased=yes' <<< "$(bash "$HOOK_DIR/remediation-guard.sh" check "$SCRATCH" 2>/dev/null)"; then
     # The fix undid the whole change and the guard put it back: every finding
     # stays open, so the round ends without a confirmation agent to agree with it.
     rm -f "$SCRATCH/remediation-fix-inflight.txt"
@@ -2283,7 +2283,7 @@ cmd_next() {
     # that had been green one round earlier. The round is undone instead: its
     # findings stay open and the gate decides the residue as usual.
     if [ -f "$SCRATCH/remediation-pre-fix-green.txt" ] && [ -n "$(execution_red "$SCRATCH")" ] \
-      && bash "$HOOK_DIR/remediation-guard.sh" restore "$SCRATCH" 2>/dev/null | grep -q '^restored=yes'; then
+      && grep -q '^restored=yes' <<< "$(bash "$HOOK_DIR/remediation-guard.sh" restore "$SCRATCH" 2>/dev/null)"; then
       local rr_red
       rr_red="$(execution_red "$SCRATCH")"
       remediation_rerun_checks "$SCRATCH" "$CONFIG"
@@ -2306,7 +2306,7 @@ cmd_next() {
     g_out="$(run_gate "$SCRATCH" --config "$CONFIG" 2>&1)"
     g_rc=$?
     set -e
-    if [ "$g_rc" -gt 2 ] || ! printf '%s' "$g_out" | grep -q '^decision='; then
+    if [ "$g_rc" -gt 2 ] || ! grep -q '^decision=' <<< "$g_out"; then
       printf '%s\n' "$g_out" >&2
       exit 1
     fi

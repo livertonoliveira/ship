@@ -278,7 +278,7 @@ test_two_hundred_large_issues_stay_fast() {
   elapsed=$(( $(date +%s) - start ))
 
   if [ "$(printf '%s\n' "$out" | grep -c '"id":')" = "200" ] \
-    && printf '%s' "$out" | grep -q '"id": "MOB-200", .*"deps": \["MOB-199"\], "files": \["src/m200/file.ts"\]' \
+    && grep -q '"id": "MOB-200", .*"deps": \["MOB-199"\], "files": \["src/m200/file.ts"\]' <<< "$out" \
     && [ "$elapsed" -le 20 ]; then
     log_pass "$name"
   else

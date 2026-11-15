@@ -623,7 +623,7 @@ check_modify_targets_exist() {
   planned="$(plan_files "$f")"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    printf '%s\n' "$planned" | grep -qxF "$path" || continue
+    grep -qxF "$path" <<< "$planned" || continue
     [ -e "$path" ] && continue
     missing="$missing $path"
   done < <(spec_files "$spec" modify)

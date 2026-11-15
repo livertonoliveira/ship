@@ -72,7 +72,7 @@ sensitive_paths_from_config() {
 sensitive_path_count() {
   local f="$1" cfg="$2" paths pattern joined=""
   if paths="$(sensitive_paths_from_config "$cfg")"; then
-    if printf '%s\n' "$paths" | grep -qx 'none'; then
+    if grep -qx 'none' <<< "$paths"; then
       printf '0'
       return 0
     fi
