@@ -485,8 +485,9 @@ pr_try_merge() {
   return 1
 }
 
+# A top-level field of a `gh … --json` answer.
 json_field() {
-  printf '%s' "$1" | tr -d ' \n' | sed -n "s/.*\"$2\":\"\{0,1\}\([^,\"}]*\).*/\1/p" | head -1
+  printf '%s' "$1" | json_get ".$2"
 }
 
 # Asks the forge what actually happened to this node's PR. Nothing here is
@@ -504,11 +505,8 @@ pr_probe() {
   [ -n "$branch" ] || { printf 'none\t\t\tno'; return 0; }
   out="$(node_gh "$dir" "$id" pr view "$branch" --json number,state,url,autoMergeRequest 2>"$dir/pr-$id.log" || true)"
   [ -n "$out" ] || { printf 'none\t\t\tno'; return 0; }
-  armed=no
-  case "$(printf '%s' "$out" | tr -d ' \n')" in
-    *'"autoMergeRequest":null'*) armed=no ;;
-    *'"autoMergeRequest"'*) armed=yes ;;
-  esac
+  armed="$(printf '%s' "$out" | json_stream \
+    | awk -F'\t' '$1 == ".autoMergeRequest" && $2 == "o" { hit = 1 } END { print (hit ? "yes" : "no") }')"
   printf '%s\t%s\t%s\t%s' \
     "$(json_field "$out" state)" "$(json_field "$out" number)" "$(json_field "$out" url)" "$armed"
 }
@@ -594,91 +592,6 @@ log_line() {
 }
 
 # --- JSON --------------------------------------------------------------------
-
-# Minimal reader for the nodes.json contract: a flat array of objects whose
-# values are strings, string arrays, numbers or null. Emits one TSV row per
-# object (id, repo, title, deps, files) — deps/files as comma-joined lists.
-# Deliberately not a general JSON parser: the contract is produced by /ship:graph
-# itself, and a linear scan stays testable in CI without jq/python/node.
-parse_nodes_json() {
-  awk '
-    function readstr(p,   out, ch) {
-      p++
-      out = ""
-      while (p <= n) {
-        ch = substr(buf, p, 1)
-        if (ch == "\\") {
-          p++
-          ch = substr(buf, p, 1)
-          if (ch == "n" || ch == "t" || ch == "r") { out = out " "; p++ }
-          else if (ch == "u") { out = out "?"; p += 5 }
-          else { out = out ch; p++ }
-          continue
-        }
-        if (ch == "\"") { p++; break }
-        out = out ch
-        p++
-      }
-      S = out
-      return p
-    }
-    function setfield(k, v) {
-      if (k == "id") id = v
-      else if (k == "repo") repo = v
-      else if (k == "title") title = v
-      else if (k == "deps") deps = v
-      else if (k == "files") files = v
-    }
-    { buf = buf $0 "\n" }
-    END {
-      n = length(buf)
-      i = 1
-      depth = 0
-      while (i <= n) {
-        c = substr(buf, i, 1)
-        if (c == "{") {
-          depth++
-          if (depth == 1) { id = ""; repo = ""; title = ""; deps = ""; files = "" }
-          i++
-          continue
-        }
-        if (c == "}") {
-          if (depth == 1) printf "%s\t%s\t%s\t%s\t%s\n", id, repo, title, deps, files
-          depth--
-          i++
-          continue
-        }
-        if (c == "\"" && depth == 1) {
-          i = readstr(i)
-          key = S
-          while (i <= n && substr(buf, i, 1) ~ /[ \t\r\n:]/) i++
-          c2 = substr(buf, i, 1)
-          if (c2 == "\"") {
-            i = readstr(i)
-            setfield(key, S)
-          } else if (c2 == "[") {
-            i++
-            arr = ""
-            while (i <= n) {
-              c3 = substr(buf, i, 1)
-              if (c3 == "]") { i++; break }
-              if (c3 == "\"") { i = readstr(i); arr = (arr == "" ? S : arr "," S); continue }
-              i++
-            }
-            setfield(key, arr)
-          } else {
-            v = ""
-            while (i <= n && substr(buf, i, 1) !~ /[,}\]\r\n\t ]/) { v = v substr(buf, i, 1); i++ }
-            if (v == "null") v = ""
-            setfield(key, v)
-          }
-          continue
-        }
-        i++
-      }
-    }
-  '
-}
 
 json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
@@ -1144,15 +1057,15 @@ cmd_init() {
   fi
 
   local parsed
-  parsed="$(parse_nodes_json < "$from")"
+  parsed="$(nodes_json_rows "$from")"
   [ -n "$parsed" ] || die "init: no nodes parsed from $from (expected a JSON array of objects with an \"id\")"
 
   # Staged, never written in place. An init that dies mid-validation must leave
   # the directory exactly as it found it, or the next init inherits the debris.
   local staged="$dir/.nodes.staged"
   : > "$staged"
-  local id repo title deps files seen=""
-  while IFS="$US" read -r id repo title deps files; do
+  local id repo title deps files _lines seen=""
+  while IFS="$US" read -r id repo title deps files _lines; do
     [ -n "$id" ] || { rm -f "$staged"; die "init: a node in $from has no \"id\""; }
     valid_id "$id" || { rm -f "$staged"; die "init: invalid node id (allowed: [a-zA-Z0-9_-]): $id"; }
     case " $seen " in *" $id "*) rm -f "$staged"; die "init: duplicate node id in $from: $id" ;; esac
@@ -1496,100 +1409,61 @@ tasks_to_nodes() {
 
 # One page of Linear's GraphQL answer → the same tasks.md shape tasks_to_nodes
 # reads, so both storage modes share a single `## Files` / `## Deps` parser.
-# Records are split on the double quote: every other record is a string, which
-# keeps the scan linear on a multi-megabyte page where a char-by-char walk of
-# the whole buffer is not. Closed issues go to `closed`, never to stdout.
+# Closed issues go to `closed`, never to stdout.
 linear_page_to_tasks() {
   local page="$1" meta="$2" closed="$3"
-  awk -v meta="$meta" -v closed="$closed" '
-    function unescape(s) {
-      gsub(/\\\\/, "\002", s)
-      gsub(/\\n/, "\001", s)
-      gsub(/\\t/, " ", s)
-      gsub(/\\[rbf]/, "", s)
-      gsub(/\\"/, "\"", s)
-      gsub(/\\\//, "/", s)
-      gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, "?", s)
-      gsub("\002", "\\\\", s)
-      return s
-    }
-    function oneline(s) { gsub("\001", " ", s); return s }
-    function child(   p) {
-      if (depth == 0) return ""
-      if (ctype[depth] == "A") return cpath[depth]
-      p = cpath[depth]
-      return (p == "" ? key : p "." key)
-    }
-    function open(t,   p) {
-      p = child()
-      depth++
-      ctype[depth] = t; cpath[depth] = p; wantkey[depth] = (t == "O")
-      if (t != "O") return
-      if (p == "data.issues") answered = 1
-      else if (p == I) { id = ""; title = ""; desc = ""; state = ""; repo = ""; ndeps = 0 }
-      else if (p == I ".inverseRelations.nodes") { rtype = ""; rid = "" }
-    }
-    function close_(   p, n, i, lines) {
-      p = cpath[depth]
-      if (ctype[depth] == "O") {
-        if (p == I ".inverseRelations.nodes" && rtype == "blocks" && rid != "") deps[++ndeps] = rid
-        else if (p == I && id != "") {
-          if (state == "completed" || state == "canceled") print id >> closed
-          else {
-            printf "### %s — %s\n", id, title
-            if (repo != "") printf "## Repo\n%s\n", repo
-            n = split(desc, lines, "\001")
-            for (i = 1; i <= n; i++) {
-              if (lines[i] ~ /^###+[[:space:]]/) sub(/^#+/, "##", lines[i])
-              print lines[i]
-            }
-            print "## Deps"
-            for (i = 1; i <= ndeps; i++) print deps[i]
-            print ""
-            open_issues++
-          }
-        }
+  json_stream "$page" | awk -F'\t' -v meta="$meta" -v closed="$closed" '
+    # A stream value as text: nl is what a newline becomes, a tab is a space.
+    function text(v, nl,   out, k, c) {
+      out = ""
+      while ((k = index(v, "\\")) > 0) {
+        c = substr(v, k + 1, 1)
+        out = out substr(v, 1, k - 1) (c == "\\" ? "\\" : (c == "n" ? nl : (c == "t" ? " " : "")))
+        v = substr(v, k + 2)
       }
-      depth--
+      return out v
     }
-    function scalar(v, isstr,   p) {
-      p = child()
-      if (p == I ".identifier") id = v
-      else if (p == I ".title") title = oneline(v)
-      else if (p == I ".description") { if (isstr) desc = v }
-      else if (p == I ".state.type") state = v
-      else if (p == I ".labels.nodes.name") { if (v ~ /^repo:/ && repo == "") repo = substr(v, 6) }
-      else if (p == I ".inverseRelations.nodes.type") rtype = v
-      else if (p == I ".inverseRelations.nodes.issue.identifier") rid = v
-      else if (p == "data.issues.pageInfo.hasNextPage") more = v
-      else if (p == "data.issues.pageInfo.endCursor") { if (isstr) cursor = v }
-      else if (p == "errors.message" && err == "") err = oneline(v)
-    }
-    function literal() { if (lit != "") { scalar(lit, 0); lit = "" } }
-    function outside(s,   i, n, c) {
-      n = length(s)
-      for (i = 1; i <= n; i++) {
-        c = substr(s, i, 1)
-        if (c ~ /[[:space:]]/) continue
-        if (c == "{") open("O")
-        else if (c == "[") open("A")
-        else if (c == "}" || c == "]") { literal(); close_() }
-        else if (c == ":") wantkey[depth] = 0
-        else if (c == ",") { literal(); if (ctype[depth] == "O") wantkey[depth] = 1 }
-        else lit = lit c
-      }
-    }
-    BEGIN { RS = "\""; I = "data.issues.nodes"; instr = 0; depth = 0; open_issues = 0; more = "false" }
-    !instr { outside($0); instr = 1; next }
+    BEGIN { more = "false"; n = 0; open_issues = 0 }
     {
-      str = str $0
-      if (match($0, /\\+$/) && RLENGTH % 2 == 1) { str = str "\""; next }
-      if (ctype[depth] == "O" && wantkey[depth]) key = str
-      else scalar(unescape(str), 1)
-      str = ""; instr = 0
+      p = $1
+      if (p == ".data.issues") { if ($2 == "o") answered = 1; next }
+      if (p == ".data.issues.pageInfo.hasNextPage") { more = $3; next }
+      if (p == ".data.issues.pageInfo.endCursor") { if ($2 == "s") cursor = $3; next }
+      if (p ~ /^\.errors(\[[0-9]+\])?\.message$/) { if (err == "") err = text($3, " "); next }
+      if (p !~ /^\.data\.issues\.nodes\[[0-9]+\]\./ || $2 == "o" || $2 == "a") next
+      i = p; sub(/^\.data\.issues\.nodes\[/, "", i); sub(/\].*/, "", i); i += 0
+      if (i + 1 > n) n = i + 1
+      rest = p; sub(/^\.data\.issues\.nodes\[[0-9]+\]/, "", rest)
+      if (rest == ".identifier") id[i] = $3
+      else if (rest == ".title") title[i] = text($3, " ")
+      else if (rest == ".description") { if ($2 == "s") desc[i] = $3 }
+      else if (rest == ".state.type") state[i] = $3
+      else if (rest ~ /^\.labels\.nodes\[[0-9]+\]\.name$/) { if ($3 ~ /^repo:/ && repo[i] == "") repo[i] = substr($3, 6) }
+      else if (rest ~ /^\.inverseRelations\.nodes\[[0-9]+\]\.(type|issue\.identifier)$/) {
+        j = rest; sub(/^\.inverseRelations\.nodes\[/, "", j); sub(/\].*/, "", j); j += 0
+        if (j + 1 > nrel[i]) nrel[i] = j + 1
+        if (rest ~ /\.type$/) rtype[i, j] = $3; else rid[i, j] = $3
+      }
     }
-    END { printf "%s\t%s\t%s\t%s\t%s\n", (answered ? 1 : 0), more, cursor, open_issues, err > meta }
-  ' "$page"
+    END {
+      for (i = 0; i < n; i++) {
+        if (id[i] == "") continue
+        if (state[i] == "completed" || state[i] == "canceled") { print id[i] >> closed; continue }
+        printf "### %s — %s\n", id[i], title[i]
+        if (repo[i] != "") printf "## Repo\n%s\n", repo[i]
+        m = split(text(desc[i], "\n"), lines, "\n")
+        for (k = 1; k <= m; k++) {
+          if (lines[k] ~ /^###+[[:space:]]/) sub(/^#+/, "##", lines[k])
+          print lines[k]
+        }
+        print "## Deps"
+        for (j = 0; j < nrel[i]; j++) if (rtype[i, j] == "blocks" && rid[i, j] != "") print rid[i, j]
+        print ""
+        open_issues++
+      }
+      printf "%s\t%s\t%s\t%s\t%s\n", (answered ? 1 : 0), more, cursor, open_issues, err > meta
+    }
+  '
 }
 
 LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
