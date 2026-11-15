@@ -66,9 +66,9 @@ test_a_failed_dispatch_is_logged_and_retried() {
 }
 
 test_a_node_that_never_dispatches_fails_at_the_cap() {
-  local root i dir
+  local root dir
   root="$(new_sandbox)"; dir="$root/repo/.context/ship-graph/f"
-  for i in 1 2 3 4 5; do fail_dispatch "$root"; done
+  for _ in 1 2 3 4 5; do fail_dispatch "$root"; done
   if [ "$(status_of "$root" N1)" = "failed" ] && [ -f "$dir/hold-N1.txt" ] \
      && grep -q 'N1 → failed: dispatch failed 5 of 5 time(s)' "$dir/graph-log.md"; then
     log_pass "a node whose dispatch keeps failing is failed with a hold at the cap, not dispatched every turn"
@@ -79,9 +79,9 @@ test_a_node_that_never_dispatches_fails_at_the_cap() {
 }
 
 test_a_failed_node_is_not_handed_straight_back() {
-  local root i
+  local root
   root="$(new_sandbox)"
-  for i in 1 2 3 4 5; do fail_dispatch "$root"; done
+  for _ in 1 2 3 4 5; do fail_dispatch "$root"; done
   ( cd "$root/repo" && bash "$GRAPH" next >/dev/null )
   if [ "$(status_of "$root" N1)" = "failed" ]; then
     log_pass "the automatic retry pass leaves a dispatch-failed node for reset"
@@ -92,9 +92,9 @@ test_a_failed_node_is_not_handed_straight_back() {
 }
 
 test_reset_starts_the_count_over() {
-  local root i dir
+  local root dir
   root="$(new_sandbox)"; dir="$root/repo/.context/ship-graph/f"
-  for i in 1 2 3 4 5; do fail_dispatch "$root"; done
+  for _ in 1 2 3 4 5; do fail_dispatch "$root"; done
   ( cd "$root/repo" && bash "$GRAPH" reset N1 >/dev/null )
   fail_dispatch "$root"
   if [ "$(status_of "$root" N1)" = "pending" ] && grep -q 'N1 dispatch failed (1 of 5)' <(tail -3 "$dir/graph-log.md"); then

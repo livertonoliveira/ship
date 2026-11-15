@@ -62,7 +62,7 @@ echo "  plugin:  $PLUGIN"
 echo
 
 # --- Fixture project ----------------------------------------------------------
-cd "$TMP"
+cd "$TMP" || exit 1
 git init -q
 git config user.email e2e@ship.test
 git config user.name "Ship E2E"

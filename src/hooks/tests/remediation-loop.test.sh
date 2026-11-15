@@ -163,11 +163,11 @@ mock_confirm_agent() {
 drive() {
   local dir="$1" task="$2" max="${3:-20}"
   local scratch="$dir/.context/ship-run/$task"
-  local i out state action
+  local out state action
   STATES=""
   FIX_DISPATCHES=0
   CONFIRM_DISPATCHES=0
-  for i in $(seq 1 "$max"); do
+  for _ in $(seq 1 "$max"); do
     out="$(next "$dir" "$task" 2>&1)" || { LAST_OUT="$out"; return 1; }
     state="$(field "$out" state)"
     action="$(field "$out" action)"

@@ -99,14 +99,14 @@ EOF
 }
 
 drive_to_develop() {
-  local dir="$1" task="$2" scratch out state i
+  local dir="$1" task="$2" scratch out state
   scratch="$dir/.context/ship-run/$task"
   next "$dir" "$task" >/dev/null
   multi_module_spec > "$scratch/spec.md"
   mkdir -p "$dir/src"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
-  for i in 1 2 3 4; do
+  for _ in 1 2 3 4; do
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
@@ -160,9 +160,9 @@ test_stale_confrontation_artifacts_are_ignored() {
 # planning phases to get through. Walks past them, satisfying each, and returns
 # the first output beyond them.
 advance_past_planning() {
-  local dir="$1" task="$2" scratch out state i
+  local dir="$1" task="$2" scratch out state
   scratch="$dir/.context/ship-run/$task"
-  for i in 1 2 3 4 5; do
+  for _ in 1 2 3 4 5; do
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
@@ -660,14 +660,14 @@ test_a_one_file_spec_skips_the_planner_in_a_fresh_workspace() {
 }
 
 drive_to_verify_a() {
-  local dir="$1" task="$2" scratch out state i
+  local dir="$1" task="$2" scratch out state
   scratch="$dir/.context/ship-run/$task"
   next "$dir" "$task" >/dev/null
   multi_module_spec > "$scratch/spec.md"
   mkdir -p "$dir/src"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
-  for i in 1 2 3 4 5 6; do
+  for _ in 1 2 3 4 5 6; do
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
@@ -787,7 +787,8 @@ test_warn_is_remediated_like_fail() {
 # A typecheck command that fails until a sentinel file exists — lets a test
 # simulate the fix agent making typecheck green between rounds.
 make_fake_typecheck() {
-  local dir="$1" sentinel="$2" f="$dir/fake-tsc.sh"
+  local dir="$1" sentinel="$2"
+  local f="$dir/fake-tsc.sh"
   {
     printf '#!/usr/bin/env bash\n'
     printf '[ -f "%s" ] && exit 0\n' "$sentinel"
@@ -802,14 +803,14 @@ make_fake_typecheck() {
 # the static gate (static-fix when a check fails, verify-a when it skips). Robust
 # to whether the planner runs, since post-develop passes even without mutation.
 drive_to_static_gate() {
-  local dir="$1" task="$2" scratch out state i
+  local dir="$1" task="$2" scratch out state
   scratch="$dir/.context/ship-run/$task"
   next "$dir" "$task" >/dev/null
   multi_module_spec > "$scratch/spec.md"
   mkdir -p "$dir/src"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
-  for i in 1 2 3 4 5; do
+  for _ in 1 2 3 4 5; do
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
@@ -851,14 +852,14 @@ test_static_that_never_ran_stops_the_node_with_the_cause() {
 # Like drive_to_static_gate, but also returns at the develop re-entry the
 # static gate can ask for.
 drive_to_static_or_specfix() {
-  local dir="$1" task="$2" scratch out state i
+  local dir="$1" task="$2" scratch out state
   scratch="$dir/.context/ship-run/$task"
   next "$dir" "$task" >/dev/null
   multi_module_spec > "$scratch/spec.md"
   mkdir -p "$dir/src"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/a.js"
   seq 1 60 | sed 's/^/console.log(/;s/$/)/' > "$dir/src/b.js"
-  for i in 1 2 3 4 5 6; do
+  for _ in 1 2 3 4 5 6; do
     out="$(next "$dir" "$task")"
     state="$(field "$out" state)"
     case "$state" in
