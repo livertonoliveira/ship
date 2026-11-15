@@ -103,8 +103,8 @@ drive_to_verify() {
   local scratch; scratch="$(scratch_of "$dir" "$task")"
   next "$dir" "$task" >/dev/null
   spec_with_out_of_scope_acs "$layer" > "$scratch/spec.md"
-  local i out state
-  for i in 1 2 3 4 5 6; do
+  local out state
+  for _ in 1 2 3 4 5 6; do
     out="$(next "$dir" "$task" 2>/dev/null)" || return 1
     state="$(field "$out" state)"
     case "$state" in
@@ -148,8 +148,8 @@ test_layer_already_authored_by_develop_is_not_dispatched() {
   local sc; sc="$(scratch_of "$dir" TASK-1)"
   next "$dir" TASK-1 >/dev/null
   spec_with_out_of_scope_acs > "$sc/spec.md"
-  local i state
-  for i in 1 2 3 4 5 6; do
+  local state
+  for _ in 1 2 3 4 5 6; do
     out="$(next "$dir" TASK-1 2>/dev/null)" || break
     state="$(field "$out" state)"
     case "$state" in
@@ -286,7 +286,7 @@ test_no_style_ref_beats_a_wrong_one() {
 
 test_develop_authored_tests_reach_the_manifest() {
   local name="a test file develop wrote reaches generated-tests.md, so the suite actually runs it"
-  local dir out sc state i
+  local dir out sc state
   dir="$(mktemp -d)"
   setup_repo "$dir" '- unit: disabled
 - integration: disabled
@@ -294,7 +294,7 @@ test_develop_authored_tests_reach_the_manifest() {
   sc="$(scratch_of "$dir" TASK-1)"
   next "$dir" TASK-1 >/dev/null
   spec_with_out_of_scope_acs e2e > "$sc/spec.md"
-  for i in 1 2 3 4 5 6 7 8; do
+  for _ in 1 2 3 4 5 6 7 8; do
     out="$(next "$dir" TASK-1 2>/dev/null)" || break
     state="$(field "$out" state)"
     case "$state" in

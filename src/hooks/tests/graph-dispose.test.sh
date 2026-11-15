@@ -252,7 +252,7 @@ test_keep_workspaces_disables_the_whole_thing() {
 
 test_sweep_catches_up() {
   local name="sweep frees the workspaces a run left behind, and only the merged ones"
-  local dir out present=0 failed_present=0
+  local dir out present=0
   dir="$(mktemp -d)"
   new_repo "$dir"
   init_graph "$dir" --keep-workspaces
