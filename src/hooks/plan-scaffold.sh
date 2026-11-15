@@ -82,54 +82,6 @@ scenario_records() {
   ' "$spec" 2>/dev/null || true
 }
 
-# `## Files` entries the spec owns. Same extraction plan-validate.sh used to run
-# against the spec directly; centralised here so the two can never disagree.
-# The heading level is not fixed: the spec slice is rewritten on every attempt,
-# and one that nested it as `### Files` scaffolded an empty inventory — the
-# plan was then checked against nothing and passed by accident.
-spec_files() {
-  local spec="$1"
-  [ -f "$spec" ] || return 0
-  bash "$HOOK_DIR/files-expand.sh" "$spec" | awk '
-    /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
-    /^#+[[:space:]]/ { insection = 0 }
-    insection && /^[[:space:]]*([-*][[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
-      line = $0
-      sub(/^[[:space:]]*[-*][[:space:]]*/, "", line)
-      gsub(/`/, "", line)
-      if (line ~ /^(Âncora|Ancora|Anchor)[[:space:]]*:/) next
-      if (!match(line, /^(create|modify)[[:space:]]+/)) next
-      verb = substr(line, 1, RLENGTH - 1)
-      sub(/[[:space:]]+$/, "", verb)
-      sub(/^(create|modify)[[:space:]]+/, "", line)
-      # A multi-repo spec names the repo before the path ("platform-agendx:
-      # src/a.ts"), and Linear escapes markdown in what it stores ("hooks/\*.ts").
-      sub(/^[A-Za-z0-9._-]+:[[:space:]]+/, "", line)
-      gsub(/\\/, "", line)
-      sub(/[[:space:]]*(—|–|--).*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      # The path is the first word: whatever follows it before the dash is a
-      # note ("src/a.ts (localizar)"), and carried along it names a file no
-      # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
-      # One entry may list several files ("modify a.ts, b.ts — note"): split
-      # on commas, and a trailing comma is never part of a path — MOB-8123
-      # failed plan validation twice on "services-section.tsx,", 2026-10-15.
-      n = split(line, parts, /[[:space:]]*,[[:space:]]*/)
-      for (pi = 1; pi <= n; pi++) {
-        item = parts[pi]
-        sub(/[[:space:]].*$/, "", item)
-        sub(/[,;]+$/, "", item)
-        if (item == "") continue
-        if (item !~ /\// && item !~ /\.[A-Za-z0-9]+$/) continue
-        emit[++ne] = item
-      }
-      if (ne == 0) next
-      for (pi = 1; pi <= ne; pi++) print verb "\t" emit[pi]
-      ne = 0; delete emit
-    }
-  ' 2>/dev/null | sort -u || true
-}
-
 # Scenario ids carrying more than one distinct title. Reported, never rejected:
 # the run must still produce a plan, and the place to stop this is spec time,
 # where sc-crossref.sh gates it.
@@ -177,7 +129,7 @@ main() {
 
   local records files dups skip
   records="$(scenario_records "$spec")"
-  files="$(spec_files "$spec")"
+  files="$(spec_file_rows "$spec")"
   dups="$(duplicate_ids "$records")"
   skip=" $(disabled_layers "$config") "
 

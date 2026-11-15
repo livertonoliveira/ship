@@ -393,55 +393,10 @@ plan_scenarios() {
   done < <(module_ids "$f") | grep -oE '@SC-[0-9]+' | sort -u || true
 }
 
-# `## Files` entries: "create|modify `<path>` — <intent>", with or without a
-# leading "- ". Both shapes occur in practice — the local-mode fixture writes the
-# dash, a real Linear-mode spec does not — and requiring it made this check
-# extract nothing and pass vacuously on half the specs it exists for. Linear
-# also rewrites "- " as "* ": measured 2026-10-06, 192 of 203 graph nodes got an
-# empty inventory that way, so the star is a bullet too.
-# `Âncora:` lines are pattern references, not owned files, so they never reach
-# the plan.
+# The spec's owned files (lib.sh: spec_file_rows), optionally only one verb's.
 spec_files() {
   local spec="$1" kind="${2:-}"
-  bash "$HOOK_DIR/files-expand.sh" "$spec" | awk -v kind="$kind" '
-    /^##+[[:space:]]+Files([^[:alnum:]_]|$)/ { insection = 1; next }
-    /^#+[[:space:]]/ { insection = 0 }
-    insection && /^[[:space:]]*([-*][[:space:]]*)?(create|modify|Âncora|Ancora|Anchor)/ {
-      line = $0
-      sub(/^[[:space:]]*[-*][[:space:]]*/, "", line)
-      gsub(/`/, "", line)
-      if (line ~ /^(Âncora|Ancora|Anchor)[[:space:]]*:/) next
-      if (!match(line, /^(create|modify)[[:space:]]+/)) next
-      verb = substr(line, 1, RLENGTH - 1)
-      sub(/[[:space:]]+$/, "", verb)
-      sub(/^(create|modify)[[:space:]]+/, "", line)
-      # A multi-repo spec names the repo before the path ("platform-agendx:
-      # src/a.ts"), and Linear escapes markdown in what it stores ("hooks/\*.ts").
-      sub(/^[A-Za-z0-9._-]+:[[:space:]]+/, "", line)
-      gsub(/\\/, "", line)
-      sub(/[[:space:]]*(—|–|--).*$/, "", line)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      # The path is the first word: whatever follows it before the dash is a
-      # note ("src/a.ts (localizar)"), and carried along it names a file no
-      # module can claim (MOB-7233 failed plan validation twice, 2026-10-08).
-      # One entry may list several files ("modify a.ts, b.ts — note"): split
-      # on commas, and a trailing comma is never part of a path — MOB-8123
-      # failed plan validation twice on "services-section.tsx,", 2026-10-15.
-      n = split(line, parts, /[[:space:]]*,[[:space:]]*/)
-      for (pi = 1; pi <= n; pi++) {
-        item = parts[pi]
-        sub(/[[:space:]].*$/, "", item)
-        sub(/[,;]+$/, "", item)
-        if (item == "") continue
-        if (item !~ /\// && item !~ /\.[A-Za-z0-9]+$/) continue
-        emit[++ne] = item
-      }
-      if (ne == 0) next
-      if (kind != "" && verb != kind) { ne = 0; delete emit; next }
-      for (pi = 1; pi <= ne; pi++) print emit[pi]
-      ne = 0; delete emit
-    }
-  ' 2>/dev/null | sort -u || true
+  spec_file_rows "$spec" | awk -F'\t' -v kind="$kind" 'kind == "" || $1 == kind { print $2 }' | sort -u
 }
 
 plan_files() {

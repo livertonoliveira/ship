@@ -968,9 +968,7 @@ next_module_files() {
     bash "$HOOK_DIR/plan-validate.sh" --module-files "$plan" 2>/dev/null \
       | grep -vE "$test_re" || true
   elif [ -f "$spec" ]; then
-    bash "$HOOK_DIR/files-expand.sh" "$spec" \
-      | awk '/^## Files/{f=1;next} /^#/{f=0} f && /^- /{sub(/^- */,"");print}' 2>/dev/null \
-      | sed 's/`//g' | grep -vE "$test_re" || true
+    spec_file_rows "$spec" | cut -f2 | grep -vE "$test_re" || true
   fi
 }
 
