@@ -108,8 +108,8 @@ test_a_nodes_question_reaches_the_coordinator() {
   answered="$(cd "$dir" && bash "$GRAPH" answer TASK-001 proceed 2>&1 || true)"
 
   if [ "$(field "$out" action)" = "answer" ] \
-    && printf '%s' "$out" | grep -q 'medium findings, continue?' \
-    && printf '%s' "$out" | grep -q 'graph.sh" answer <task> "<answer' \
+    && grep -q 'medium findings, continue?' <<< "$out" \
+    && grep -q 'graph.sh" answer <task> "<answer' <<< "$out" \
     && [ "$(field "$answered" answered)" = "TASK-001" ] \
     && [ "$(head -1 "$scratch/answer.txt")" = "proceed" ] \
     && [ ! -f "$scratch/ask.md" ] \
@@ -158,7 +158,7 @@ test_poll_lands_on_the_completion_artifact_not_a_handshake() {
   inflight="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "in_flight"' || true)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^landed=TASK-001$' && [ "$inflight" = "0" ]; then
+  if grep -q '^landed=TASK-001$' <<< "$out" && [ "$inflight" = "0" ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' inflight_nodes=$inflight)"
@@ -208,7 +208,7 @@ test_poll_reports_progress_without_landing() {
   out="$(cd "$dir" && bash "$GRAPH" poll --stall-after 0)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^working=TASK-001$' && ! printf '%s' "$out" | grep -q '^landed='; then
+  if grep -q '^working=TASK-001$' <<< "$out" && ! grep -q '^landed=' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -252,9 +252,9 @@ test_stalled_node_is_resumed_retried_then_reported() {
   rm -rf "$dir"
 
   if [ "$(field "$out_after_resume" action)" = "wait" ] \
-    && [ "$(field "$out_after_fail" action)" = "dispatch" ] && printf '%s' "$out_after_fail" | grep -q 'TASK-001' \
+    && [ "$(field "$out_after_fail" action)" = "dispatch" ] && grep -q 'TASK-001' <<< "$out_after_fail" \
     && [ "$(field "$out_final" state)" = "done" ] && [ "$(field "$out_final" action)" = "done" ] \
-    && printf '%s' "$out_final" | grep -q 'Failed: TASK-001' \
+    && grep -q 'Failed: TASK-001' <<< "$out_final" \
     && [ "$resumed" = "2" ] && [ "$retried" = "1" ] && [ "$attempts" = "1" ]; then
     log_pass "$name"
   else
@@ -287,12 +287,41 @@ test_never_started_node_is_redispatched_within_the_cap() {
   dispatch_again="$(field "$(cat "$dir/next1.txt")" action)"
   held="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out1" | grep -q '^retried=TASK-001$' && [ "$dispatch_again" = "dispatch" ] \
-    && printf '%s' "$out2" | grep -q '^failed=TASK-001$' \
-    && printf '%s' "$held" | grep -q 'never started'; then
+  if grep -q '^retried=TASK-001$' <<< "$out1" && [ "$dispatch_again" = "dispatch" ] \
+    && grep -q '^failed=TASK-001$' <<< "$out2" \
+    && grep -q 'never started' <<< "$held"; then
     log_pass "$name"
   else
     log_fail "$name (poll3='$out1' next=$dispatch_again poll6='$out2' hold='$held')"
+  fi
+}
+
+test_a_same_named_workspace_elsewhere_does_not_make_a_node_busy() {
+  local name="a process working in a same-named workspace of another checkout does not keep this node alive"
+  local dir other out pid
+  dir="$(mktemp -d)"
+  other="$(mktemp -d)"
+  setup_repo "$dir"
+  mkdir -p "$other/wt-TASK-001"
+  printf '#!/usr/bin/env bash\nsleep 60\n' > "$other/wt-TASK-001/long-suite.sh"
+  bash "$other/wt-TASK-001/long-suite.sh" &
+  pid=$!
+  (
+    cd "$dir"
+    bash "$GRAPH" init --feature f --from nodes.json --driver manual --max-in-flight 1 --base-branch main >/dev/null
+    make_workspace "$dir" TASK-001 src/db/schema.ts
+    bash "$GRAPH" claim TASK-001 --worktree "wt-TASK-001" --branch ship/TASK-001 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 >/dev/null; bash "$GRAPH" poll --stall-after 0 >/dev/null
+    bash "$GRAPH" poll --stall-after 0 > poll3.txt
+  )
+  out="$(cat "$dir/poll3.txt")"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -rf "$dir" "$other"
+  if grep -q '^retried=TASK-001$' <<< "$out" && ! grep -q '^busy=' <<< "$out"; then
+    log_pass "$name"
+  else
+    log_fail "$name (poll3='$out')"
   fi
 }
 
@@ -314,7 +343,7 @@ test_a_failure_by_decision_is_never_retried() {
   held_fail="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
   rm -rf "$dir"
   if [ -n "$held_abort" ] && [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
-    && printf '%s' "$held_fail" | grep -q 'wrong scope'; then
+    && grep -q 'wrong scope' <<< "$held_fail"; then
     log_pass "$name"
   else
     log_fail "$name (hold_abort='$held_abort' next=$(field "$out" state)/$(field "$out" action) hold_fail='$held_fail')"
@@ -331,8 +360,8 @@ test_init_refuses_a_dependency_cycle() {
   local left
   left="$(ls "$dir/.context/ship-graph/cyc" 2>/dev/null | wc -l | tr -d ' ')"
   rm -rf "$dir"
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'dependency cycle' \
-    && printf '%s' "$out" | grep -qE 'A-1 -> C-1 -> B-1 -> A-1|C-1 -> B-1 -> A-1 -> C-1|B-1 -> A-1 -> C-1 -> B-1' \
+  if [ "$rc" -ne 0 ] && grep -q 'dependency cycle' <<< "$out" \
+    && grep -qE 'A-1 -> C-1 -> B-1 -> A-1|C-1 -> B-1 -> A-1 -> C-1|B-1 -> A-1 -> C-1 -> B-1' <<< "$out" \
     && [ "$left" = "0" ]; then
     log_pass "$name"
   else
@@ -362,7 +391,7 @@ test_a_node_with_a_question_posted_is_never_stalled() {
   log="$dir/.context/ship-graph/f/graph-log.md"
   polls_after="$(cat "$dir/poll-after.txt")"
   if [ "$status" = "1" ] && ! grep -qE 'TASK-001 (quiet|→ failed)' "$log" \
-     && ! grep -q 'worker resumed once' "$log" && printf '%s' "$polls_after" | grep -q 'working=TASK-001'; then
+     && ! grep -q 'worker resumed once' "$log" && grep -q 'working=TASK-001' <<< "$polls_after"; then
     log_pass "$name"
   else
     log_fail "$name (status=$status polls_after=$polls_after log=$(grep TASK-001 "$log" | tail -3 | tr '\n' '|'))"
@@ -394,7 +423,7 @@ test_a_node_running_a_command_is_not_stalled() {
   busy_polls="$(grep -c '^busy=TASK-001' "$dir/busy.txt" || true)"
   after="$(cat "$dir/after.txt")"
   if [ "$busy_polls" = "8" ] && ! grep -qE 'TASK-001 → failed|worker resumed once' "$log" \
-     && printf '%s' "$after" | grep -q 'quiet=TASK-001'; then
+     && grep -q 'quiet=TASK-001' <<< "$after"; then
     log_pass "$name"
   else
     log_fail "$name (busy_polls=$busy_polls after=$after)"
@@ -522,11 +551,11 @@ EOF
 
   # "---" used to survive dep cleanup as a node id of "--", so every task
   # depended on a node that cannot exist and the graph deadlocked at once.
-  if printf '%s' "$out" | grep -q '"deps": \[\]' \
-    && printf '%s' "$out" | grep -q '"deps": \["TASK-001"\]' \
-    && ! printf '%s' "$out" | grep -q '\-\-"' \
-    && ! printf '%s' "$out" | grep -qi 'scenario\|given\|AC-01' \
-    && printf '%s' "$out" | grep -q '"files": \["src/add.js", "src/add.test.js"\]'; then
+  if grep -q '"deps": \[\]' <<< "$out" \
+    && grep -q '"deps": \["TASK-001"\]' <<< "$out" \
+    && ! grep -q '\-\-"' <<< "$out" \
+    && ! grep -qi 'scenario\|given\|AC-01' <<< "$out" \
+    && grep -q '"files": \["src/add.js", "src/add.test.js"\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -571,7 +600,7 @@ test_corrected_init_after_a_failure_is_not_refused_as_resume() {
   # The trap this closes: RESUME fired on a half-written directory, so the fix
   # could never be applied and only --fresh cleared it — the exact reflex the
   # RESUME contract exists to prevent.
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^INIT ' && [ "$nodes" = "4" ]; then
+  if [ "$rc" -eq 0 ] && grep -q '^INIT ' <<< "$out" && [ "$nodes" = "4" ]; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc nodes=$nodes out='$out')"
@@ -650,8 +679,8 @@ test_abort_stops_workers_and_keeps_workspaces() {
 
   # Workspaces must survive: a stopped node's work is what you inspect before
   # deciding to retry or drop it.
-  if printf '%s' "$out" | grep -q '^stopped=TASK-001$' \
-    && printf '%s' "$out" | grep -q '^aborted=1$' \
+  if grep -q '^stopped=TASK-001$' <<< "$out" \
+    && grep -q '^aborted=1$' <<< "$out" \
     && [ "$status" = "1" ] && [ "$kept" -eq 1 ] && [ "$logged" -ge 1 ]; then
     log_pass "$name"
   else
@@ -669,7 +698,7 @@ test_abort_is_a_noop_with_nothing_in_flight() {
   pending="$(cd "$dir" && bash "$GRAPH" status --json | grep -c '"status": "pending"')"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^aborted=0$' && [ "$pending" = "4" ]; then
+  if grep -q '^aborted=0$' <<< "$out" && [ "$pending" = "4" ]; then
     log_pass "$name"
   else
     log_fail "$name (aborted count wrong, or nodes changed: pending=$pending)"
@@ -682,7 +711,7 @@ test_every_driver_answers_stop() {
   dir="$(mktemp -d)"
   for d in manual local; do
     out="$(bash "$SCRIPT_DIR/../driver-$d.sh" stop TASK-001 --state "$dir" 2>&1)" || ok=0
-    printf '%s\n' "$out" | grep -q '^stopped=TASK-001$' || ok=0
+    grep -q '^stopped=TASK-001$' <<< "$out" || ok=0
   done
   rm -rf "$dir"
 
@@ -745,8 +774,8 @@ test_poll_writes_progress_to_the_log() {
   # next step is on disk and the worker just stopped looking — and only a node
   # that stays quiet after that is failed, with the run continuing without it.
   if [ "$working" -ge 1 ] && [ "$resumed" = "1" ] && [ "$failed_line" = "1" ] \
-    && printf '%s' "$out4" | grep -q '^resumed=TASK-001$' \
-    && printf '%s' "$out7" | grep -q '^failed=TASK-001$' \
+    && grep -q '^resumed=TASK-001$' <<< "$out4" \
+    && grep -q '^failed=TASK-001$' <<< "$out7" \
     && [ "$status" = "failed" ]; then
     log_pass "$name"
   else
@@ -784,9 +813,9 @@ test_a_question_does_not_park_the_other_nodes() {
   after="$(cat "$dir/next-after.txt")"
   rm -rf "$dir"
   if [ "$(field "$out" action)" = "answer" ] \
-    && printf '%s' "$out" | grep -q 'TASK-001 asks' \
+    && grep -q 'TASK-001 asks' <<< "$out" \
     && [ "$(field "$after" action)" = "wait" ] \
-    && printf '%s' "$after" | grep -q -- '--until-file .*TASK-005/ask.md'; then
+    && grep -q -- '--until-file .*TASK-005/ask.md' <<< "$after"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -809,10 +838,10 @@ test_a_question_is_answered_by_the_coordinator_never_put_to_the_user() {
   )
   out="$(cat "$dir/next.txt")"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "answer" ] && [ "$(field "$out" state)" = "node-question" ] && printf '%s' "$out" | grep -q 'TASK-001 asks: q' \
-     && printf '%s' "$out" | grep -q 'Answer each question above NOW, yourself' \
-     && printf '%s' "$out" | grep -q -- '--no-verify' && printf '%s' "$out" | grep -q 'graph.sh" fail <task>' \
-     && ! printf '%s' "$out" | grep -qi 'present it to the user in'; then
+  if [ "$(field "$out" action)" = "answer" ] && [ "$(field "$out" state)" = "node-question" ] && grep -q 'TASK-001 asks: q' <<< "$out" \
+     && grep -q 'Answer each question above NOW, yourself' <<< "$out" \
+     && grep -q -- '--no-verify' <<< "$out" && grep -q 'graph.sh" fail <task>' <<< "$out" \
+     && ! grep -qi 'present it to the user in' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -833,9 +862,9 @@ test_answer_wakes_the_worker_through_the_driver() {
   )
   out="$(cd "$dir" && bash "$GRAPH" answer TASK-001 defer 2>&1)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^resumed=' \
-    && printf '%s' "$out" | grep -q '^instruction=Tell the agent working on TASK-001' \
-    && printf '%s' "$out" | grep -q 'answer.txt'; then
+  if grep -q '^resumed=' <<< "$out" \
+    && grep -q '^instruction=Tell the agent working on TASK-001' <<< "$out" \
+    && grep -q 'answer.txt' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -891,7 +920,7 @@ test_a_failed_node_does_not_freeze_the_run() {
   )
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-003'; then
+  if [ "$(field "$out" action)" = "dispatch" ] && grep -q 'TASK-003' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
@@ -913,8 +942,8 @@ test_a_run_ending_with_failures_reports_them_once() {
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
   if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
-    && printf '%s' "$out" | grep -q 'Failed: TASK-001' \
-    && printf '%s' "$out" | grep -q 'reset'; then
+    && grep -q 'Failed: TASK-001' <<< "$out" \
+    && grep -q 'reset' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state=$(field "$out" state) action=$(field "$out" action))"
@@ -937,7 +966,7 @@ test_poll_fails_a_node_from_its_own_verdict() {
   status="$(cd "$dir" && bash "$GRAPH" status | awk '$1 == "TASK-001" { print $2 }')"
   reason="$(grep -c 'plan failed validation after retries' "$dir/.context/ship-graph/f/graph-log.md" || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^failed=TASK-001$' && [ "$status" = "failed" ] && [ "$reason" -ge 1 ]; then
+  if grep -q '^failed=TASK-001$' <<< "$out" && [ "$status" = "failed" ] && [ "$reason" -ge 1 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' status=$status)"
@@ -968,7 +997,7 @@ test_next_refreshes_stale_conflict_edges_itself() {
   # in the state file. A next that trusted it would find nothing to dispatch.
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
-  if [ "$(field "$out" action)" = "dispatch" ] && printf '%s' "$out" | grep -q 'TASK-004'; then
+  if [ "$(field "$out" action)" = "dispatch" ] && grep -q 'TASK-004' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (action=$(field "$out" action) frontier='$(field "$out" frontier)')"
@@ -1195,7 +1224,7 @@ test_failed_root_ends_the_run_with_its_dependents_held() {
   rm -rf "$dir"
 
   if [ "$(field "$out" state)" = "done" ] && [ "$(field "$out" action)" = "done" ] \
-    && printf '%s' "$out" | grep -q '3 held behind a failed dependency'; then
+    && grep -q '3 held behind a failed dependency' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
@@ -1216,7 +1245,7 @@ test_reset_returns_a_failed_node_to_the_frontier() {
   out="$(cd "$dir" && bash "$GRAPH" next)"
   rm -rf "$dir"
 
-  if printf '%s' "$reset_out" | grep -q '^reset=TASK-001$' \
+  if grep -q '^reset=TASK-001$' <<< "$reset_out" \
     && [ "$(field "$reset_out" remaining_failed)" = "0" ] \
     && [ "$(field "$out" action)" = "dispatch" ] \
     && printf '%s' "$(field "$out" frontier)" | grep -q 'TASK-001'; then
@@ -1268,7 +1297,7 @@ test_reset_refuses_a_node_that_is_not_failed() {
   status="$(awk -F'\t' '$1 == "TASK-001" { print $6 }' "$dir/.context/ship-graph/f/nodes.tsv")"
   rm -rf "$dir"
 
-  if [ "$rc" -ne 0 ] && [ "$status" = "in_flight" ] && printf '%s' "$out" | grep -q 'abort'; then
+  if [ "$rc" -ne 0 ] && [ "$status" = "in_flight" ] && grep -q 'abort' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc status='$status' out='$out')"
@@ -1339,9 +1368,9 @@ test_reinit_reports_resume_instead_of_inviting_fresh() {
   rm -rf "$dir"
 
   if [ "$rc" -eq 3 ] \
-    && printf '%s' "$out" | grep -q '^RESUME$' \
-    && printf '%s' "$out" | grep -q '^inflight=1$' \
-    && ! printf '%s' "$out" | grep -qi 'fresh' \
+    && grep -q '^RESUME$' <<< "$out" \
+    && grep -q '^inflight=1$' <<< "$out" \
+    && ! grep -qi 'fresh' <<< "$out" \
     && [ "$still" = "1" ]; then
     log_pass "$name"
   else
@@ -1401,13 +1430,13 @@ test_manual_driver_answers_all_four_verbs() {
   # Captured, not piped: `grep -q` exits on the first match and SIGPIPEs the
   # writer, which `set -o pipefail` would then report as a driver failure.
   out="$(bash "$DRIVER_MANUAL" dispatch TASK-001 "/ship:run TASK-001" --state "$dir")"
-  printf '%s\n' "$out" | grep -q '^ok=1$' || ok=0
+  grep -q '^ok=1$' <<< "$out" || ok=0
   out="$(bash "$DRIVER_MANUAL" collect TASK-001 --state "$dir")"
-  printf '%s\n' "$out" | grep -q '^worktree=' || ok=0
+  grep -q '^worktree=' <<< "$out" || ok=0
   out="$(bash "$DRIVER_MANUAL" wait --state "$dir")"
-  printf '%s\n' "$out" | grep -q '^timeout=1$' || ok=0
+  grep -q '^timeout=1$' <<< "$out" || ok=0
   out="$(bash "$DRIVER_MANUAL" ask "merge?" --state "$dir")"
-  printf '%s\n' "$out" | grep -q '^question=merge' || ok=0
+  grep -q '^question=merge' <<< "$out" || ok=0
   rm -rf "$dir"
 
   if [ "$ok" -eq 1 ]; then
@@ -1443,10 +1472,10 @@ EOF
   out="$(bash "$GRAPH" nodes --from-tasks "$dir/tasks.md")"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '"id": "TASK-002"' \
-    && printf '%s' "$out" | grep -q '"deps": \["TASK-001"\]' \
-    && printf '%s' "$out" | grep -q '"files": \["src/api/routes.ts"\]' \
-    && printf '%s' "$out" | grep -q '"deps": \[\]'; then
+  if grep -q '"id": "TASK-002"' <<< "$out" \
+    && grep -q '"deps": \["TASK-001"\]' <<< "$out" \
+    && grep -q '"files": \["src/api/routes.ts"\]' <<< "$out" \
+    && grep -q '"deps": \[\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -1469,7 +1498,7 @@ EOF
   out="$(bash "$GRAPH" nodes --from-tasks "$dir/tasks.md")"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '"files": \["src/hooks/use-create.ts", "src/hooks/use-update.ts"\]'; then
+  if grep -q '"files": \["src/hooks/use-create.ts", "src/hooks/use-update.ts"\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -1494,9 +1523,9 @@ test_json_parser_keeps_empty_fields_aligned() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$json" | grep -q '"title": "T"' \
-    && printf '%s' "$json" | grep -q '"files": \["a.ts"\]' \
-    && printf '%s' "$json" | grep -q '"status": "pending"'; then
+  if grep -q '"title": "T"' <<< "$json" \
+    && grep -q '"files": \["a.ts"\]' <<< "$json" \
+    && grep -q '"status": "pending"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (got: $json)"
@@ -1513,7 +1542,7 @@ test_human_project_name_is_slugified() {
   [ -d "$dir/.context/ship-graph/checkout-v2" ] && ok=1
   rm -rf "$dir"
 
-  if [ "$ok" -eq 1 ] && printf '%s' "$out" | grep -q '^feature=checkout-v2$'; then
+  if [ "$ok" -eq 1 ] && grep -q '^feature=checkout-v2$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $out)"
@@ -1557,7 +1586,7 @@ test_a_url_is_refused_not_mangled() {
   [ -d "$dir/.context/ship-graph" ] && [ -n "$(ls -A "$dir/.context/ship-graph" 2>/dev/null)" ] && leaked=1
   rm -rf "$dir"
 
-  if [ "$rc" -ne 0 ] && [ "$leaked" -eq 0 ] && printf '%s' "$err" | grep -qi 'not a URL'; then
+  if [ "$rc" -ne 0 ] && [ "$leaked" -eq 0 ] && grep -qi 'not a URL' <<< "$err"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc leaked=$leaked err='$err')"
@@ -1682,7 +1711,7 @@ test_a_fast_poll_loop_cannot_fail_a_working_node() {
   rm -rf "$dir"
 
   if [ "$status" = "in_flight" ] && [ "$resumed" = "0" ] \
-    && printf '%s' "$out" | grep -q '^quiet=TASK-001$'; then
+    && grep -q '^quiet=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (status=$status resumed=$resumed out='$out')"
@@ -1706,7 +1735,7 @@ test_the_quiet_log_line_names_the_seconds() {
   rm -rf "$dir"
   # Whoever is watching graph-log.md has to be able to tell "45 seconds in" from
   # "fifteen minutes in" — the old line said "2/3 polls" for both.
-  if printf '%s' "$line" | grep -qE 's of [0-9]+s with nothing written'; then
+  if grep -qE 's of [0-9]+s with nothing written' <<< "$line"; then
     log_pass "$name"
   else
     log_fail "$name (line='$line')"
@@ -1733,7 +1762,7 @@ test_work_in_the_tree_counts_as_progress() {
   )
   out="$(cat "$dir/poll.txt")"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^working=TASK-001$'; then
+  if grep -q '^working=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -1781,7 +1810,7 @@ test_stall_after_is_a_live_knob() {
   (cd "$dir" && bash "$GRAPH" set --stall-after 30 >/dev/null 2>&1) || rc=$?
   rm -rf "$dir"
   # Below a minute is not a window, it is the bug with a different number.
-  if printf '%s' "$out" | grep -q '^stall_after=1800$' && [ "$meta" = "1800" ] && [ "$rc" -ne 0 ]; then
+  if grep -q '^stall_after=1800$' <<< "$out" && [ "$meta" = "1800" ] && [ "$rc" -ne 0 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' meta=$meta rc=$rc)"
@@ -1806,9 +1835,9 @@ test_wait_names_the_artifacts_it_is_waiting_for() {
   # knows how to block. Without these the window is spent listening to a
   # channel the worker writes to when it gets round to it — measured 3m37s
   # after the artifact was already on disk.
-  if printf '%s' "$out" | grep -q -- '--until-file .*/homolog-approved.txt' \
-    && printf '%s' "$out" | grep -q -- '--until-file .*/node-failed.txt' \
-    && printf '%s' "$out" | grep -q -- '--until-file .*/ask.md'; then
+  if grep -q -- '--until-file .*/homolog-approved.txt' <<< "$out" \
+    && grep -q -- '--until-file .*/node-failed.txt' <<< "$out" \
+    && grep -q -- '--until-file .*/ask.md' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -1828,6 +1857,7 @@ test_work_in_the_tree_counts_as_progress
 test_a_resume_buys_a_whole_new_window
 test_stall_after_is_a_live_knob
 test_wait_names_the_artifacts_it_is_waiting_for
+test_a_same_named_workspace_elsewhere_does_not_make_a_node_busy
 test_a_failure_by_decision_is_never_retried
 test_init_refuses_a_dependency_cycle
 test_a_node_with_a_question_posted_is_never_stalled
