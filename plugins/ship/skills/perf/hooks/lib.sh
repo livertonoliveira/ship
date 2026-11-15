@@ -280,9 +280,21 @@ spec_file_rows() {
       sub(/^(create|modify)[[:space:]]+/, "", line)
       # A multi-repo spec names the repo before the path ("platform-agendx:
       # src/a.ts"), and Linear escapes markdown in what it stores ("hooks/\*.ts").
-      sub(/^[A-Za-z0-9._-]+:[[:space:]]+/, "", line)
+      # The prefix is a repo only when a path follows it: "README.md: note"
+      # names the file, and the colon opens its note.
+      if (match(line, /^[A-Za-z0-9._-]+:[[:space:]]+/)) {
+        rest = substr(line, RLENGTH + 1)
+        first = rest
+        sub(/[[:space:]].*$/, "", first)
+        sub(/[,;:]+$/, "", first)
+        if (first ~ /\// || first ~ /\.[A-Za-z0-9]+$/) line = rest
+      }
       gsub(/\\/, "", line)
       sub(/[[:space:]]*(—|–|--).*$/, "", line)
+      # A colon separates the note as the dash does ("src/a.ts: adds X").
+      # Measured live on platform-agendx (2026-11-15): carried into the path,
+      # "src/a.ts:" named a file no module could claim and failed the node.
+      sub(/:[[:space:]].*$/, "", line)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
       # The path is the first word: whatever follows it before the dash is a
       # note ("src/a.ts (localizar)"), and carried along it names a file no
@@ -294,7 +306,7 @@ spec_file_rows() {
       for (pi = 1; pi <= n; pi++) {
         item = parts[pi]
         sub(/[[:space:]].*$/, "", item)
-        sub(/[,;]+$/, "", item)
+        sub(/[,;:]+$/, "", item)
         if (item == "") continue
         if (item !~ /\// && item !~ /\.[A-Za-z0-9]+$/) continue
         emit[++ne] = item
