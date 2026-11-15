@@ -133,7 +133,7 @@ scan_file() {
           case "$line" in 1:'#!'*) continue ;; esac
           if [ "$added" != "ALL" ]; then
             lineno="${line%%:*}"
-            printf '%s\n' "$added" | grep -qx "$lineno" || continue
+            grep -qx "$lineno" <<< "$added" || continue
           fi
           HITS+=("$p:$line"); found=0
         done < <(grep -nE "$cre" "$p" 2>/dev/null || true)

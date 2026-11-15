@@ -305,7 +305,7 @@ confirm_working() {
 
   # Sending before the TUI is up drops the brief into a booting terminal.
   while [ "$tries" -lt 45 ]; do
-    read_tail "$handle" | grep -qE 'bypass permissions|Claude Code|❯' && break
+    grep -qE 'bypass permissions|Claude Code|❯' <<< "$(read_tail "$handle")" && break
     tries=$((tries + 1))
     sleep 2
   done
@@ -365,7 +365,7 @@ abandon_dispatch() {
   if [ -n "${WS_BEFORE+x}" ]; then
     while IFS= read -r p; do
       [ -n "$p" ] || continue
-      printf '%s\n' "$WS_BEFORE" | grep -qxF -- "$p" && continue
+      grep -qxF -- "$p" <<< "$WS_BEFORE" && continue
       orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 || true
       if [ -d "$p" ]; then
         echo "  could not remove the workspace it created: $p" >&2

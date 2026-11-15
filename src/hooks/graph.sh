@@ -1860,7 +1860,7 @@ dispose_previous() {
       continue
     fi
     out="$(bash "$HOOK_DIR/driver-$(meta_get "$dir" driver).sh" dispose "$id" --state "$dir" --worktree "$wt" 2>/dev/null || true)"
-    if printf '%s' "$out" | grep -q '^disposed=1'; then
+    if grep -q '^disposed=1' <<< "$out"; then
       log_line "$dir" "$id previous workspace removed ($wt)"
       printf 'previous_freed=%s\n' "$id"
     else
@@ -2220,7 +2220,7 @@ cmd_poll() {
     # names the workspace in its arguments and is not the node working.
     busy_since="$( { cat "$dir/progress-at-$id.txt" 2>/dev/null || true; } | tr -cd '0-9')"
     if [ -n "$busy_since" ] && [ $(( now - busy_since )) -lt "${SHIP_BUSY_NODE_MAX_S:-3600}" ] \
-       && pgrep -fl "$wt/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' | grep -q .; then
+       && [ -n "$(pgrep -fl "$wt/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' || true)" ]; then
       rm -f "$dir/stall-$id.txt"
       printf 'busy=%s\n' "$id"
       working=$((working + 1))
@@ -2705,7 +2705,7 @@ cmd_sweep() {
     [ -n "$(node_field "$dir" "$id" 7)" ] || continue
     out="$(dispose_workspace "$dir" "$id" "$force")"
     [ -n "$out" ] && printf '%s\n' "$out"
-    if printf '%s' "$out" | grep -q '^workspace_freed='; then
+    if grep -q '^workspace_freed=' <<< "$out"; then
       freed=$((freed + 1))
     else
       kept=$((kept + 1))
@@ -3188,7 +3188,7 @@ run_lock() {
       sleep 1
       continue
     fi
-    if ! ps -p "$holder" -o command= 2>/dev/null | grep -q 'graph\.sh'; then
+    if ! grep -q 'graph\.sh' <<< "$(ps -p "$holder" -o command= 2>/dev/null)"; then
       rm -rf "$lock"
       continue
     fi
@@ -3256,11 +3256,11 @@ run_dispatch_node() {
   local args=(dispatch "$t" "/ship:run $t" --state "$dir" --base "$base")
   [ -n "$repo" ] && args+=(--repo "$repo")
   out="$(bash "$driver_sh" "${args[@]}" || true)"
-  if ! printf '%s\n' "$out" | grep -q '^ok=1$'; then
+  if ! grep -q '^ok=1$' <<< "$out"; then
     # ok=0 is the driver's own answer, and it records the ones that count. A
     # dispatch that died without one recorded nothing, and would be repeated
     # every turn for as long as the graph ran.
-    if ! printf '%s\n' "$out" | grep -q '^ok=0$' && [ ! -f "$dir/dispatch-failed-$t.txt" ]; then
+    if ! grep -q '^ok=0$' <<< "$out" && [ ! -f "$dir/dispatch-failed-$t.txt" ]; then
       printf 'the driver exited without reporting a dispatch for %s\n' "$t" > "$dir/dispatch-failed-$t.txt"
     fi
     printf 'run: %s not dispatched — %s\n' "$t" "$(printf '%s\n' "$out" | sed -n 's/^reason=//p' | head -1)"

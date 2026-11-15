@@ -195,7 +195,7 @@ main() {
     covered="$(printf '%s\n' "$index_data" | awk -F'|' '{ print $2 }' | sort -u)"
     while IFS= read -r ac_id; do
       [ -n "$ac_id" ] || continue
-      printf '%s\n' "$covered" | grep -qx "$ac_id" || violations+=("uncovered: $ac_id [no scenario]")
+      grep -qx "$ac_id" <<< "$covered" || violations+=("uncovered: $ac_id [no scenario]")
     done <<< "$(proposal_acs "$proposal_file")"
   fi
 
