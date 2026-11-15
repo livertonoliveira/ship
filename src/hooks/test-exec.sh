@@ -533,7 +533,7 @@ tool_never_ran() {
 typecheck_error_files() {
   local out="$1"
   [ -n "$out" ] && [ -f "$out" ] || return 0
-  grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null | sed -E 's/[(:]$//' | sort -u
+  { grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null || true; } | sed -E 's/[(:]$//' | sort -u
 }
 
 # Those of them that are committed test files (in HEAD): the author's to update.
@@ -541,7 +541,7 @@ broken_existing_tests_list() {
   local out="$1" f
   typecheck_error_files "$out" | while IFS= read -r f; do
     case "$f" in *.test.*|*.spec.*|*/__tests__/*|*/tests/*|test/*|tests/*) ;; *) continue ;; esac
-    git cat-file -e "HEAD:$f" 2>/dev/null && printf '%s\n' "$f"
+    if git cat-file -e "HEAD:$f" 2>/dev/null; then printf '%s\n' "$f"; fi
   done
 }
 
