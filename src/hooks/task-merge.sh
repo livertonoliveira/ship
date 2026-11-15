@@ -69,34 +69,13 @@ else
   usage; exit 2
 fi
 
-# nodes.json is one object per node; the fields are read by name so the order
-# of keys and the pretty-printing do not matter. A `lines` number is optional.
-printf '%s\n' "$nodes_json" | tr -d '\n' | sed 's/}[[:space:]]*,[[:space:]]*{/}\
-{/g' | awk -v MAXF="$MAX_FILES" -v MAXL="$MAX_LINES" -v MINO="$MIN_OVERLAP" '
-  function field(s, k,   r) {
-    r = ""
-    if (match(s, "\"" k "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"")) {
-      r = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[[:space:]]*"/, "", r); sub(/"$/, "", r)
-    }
-    return r
-  }
-  function list(s, k,   r, n, i, parts, out) {
+# One row per node (lib.sh: nodes_json_rows). A `lines` number is optional.
+printf '%s\n' "$nodes_json" | nodes_json_rows | awk -F'\t' -v MAXF="$MAX_FILES" -v MAXL="$MAX_LINES" -v MINO="$MIN_OVERLAP" '
+  function list(csv,   n, i, parts, out) {
     out = ""
-    if (match(s, "\"" k "\"[[:space:]]*:[[:space:]]*\\[[^]]*\\]")) {
-      r = substr(s, RSTART, RLENGTH); sub(/^[^[]*\[/, "", r); sub(/\]$/, "", r)
-      n = split(r, parts, ",")
-      for (i = 1; i <= n; i++) {
-        gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", parts[i])
-        if (parts[i] != "") out = out (out == "" ? "" : "\001") parts[i]
-      }
-    }
+    n = split(csv, parts, ",")
+    for (i = 1; i <= n; i++) if (parts[i] != "") out = out (out == "" ? "" : "\001") parts[i]
     return out
-  }
-  function num(s, k,   r) {
-    if (match(s, "\"" k "\"[[:space:]]*:[[:space:]]*[0-9]+")) {
-      r = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[[:space:]]*/, "", r); return r + 0
-    }
-    return 0
   }
   function has(set, x) { return index("\001" set "\001", "\001" x "\001") > 0 }
   function union(a, b,   n, i, p, out) {
@@ -188,11 +167,11 @@ printf '%s\n' "$nodes_json" | tr -d '\n' | sed 's/}[[:space:]]*,[[:space:]]*{/}\
     gmembers[ra] = gmembers[ra] "\001" gmembers[rb]
     greason[ra] = (greason[ra] == "" ? why : (greason[ra] == why ? why : greason[ra] "+" why))
   }
-  /"id"/ {
-    i = field($0, "id"); if (i == "") next
+  {
+    i = $1; if (i == "") next
     N++; order[N] = i; id[i] = 1
-    repo[i] = field($0, "repo"); deps[i] = list($0, "deps"); files[i] = list($0, "files")
-    lines[i] = num($0, "lines")
+    repo[i] = $2; deps[i] = list($4); files[i] = list($5)
+    lines[i] = $6 + 0
     parent[i] = i; gfiles[i] = files[i]; glines[i] = lines[i]; gmembers[i] = i; greason[i] = ""
   }
   END {
