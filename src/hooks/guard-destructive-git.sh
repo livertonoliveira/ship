@@ -17,7 +17,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 input="$(cat)"
-command="$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*[,}].*/\1/p' | head -1)"
+command="$(printf '%s' "$input" | json_find command)"
 
 [ -n "$command" ] || exit 0
 

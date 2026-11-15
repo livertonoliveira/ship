@@ -18,7 +18,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 input="$(cat)"
-path="$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+path="$(printf '%s' "$input" | json_find file_path)"
 root="${CLAUDE_PROJECT_DIR:-}"
 [ -n "$path" ] && [ -n "$root" ] || exit 0
 ls "$root"/.context/ship-run/*/graph-node.txt >/dev/null 2>&1 || exit 0
