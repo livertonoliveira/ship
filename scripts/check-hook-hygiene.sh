@@ -7,7 +7,8 @@
 #   2. No hook pipes into `grep -q`. Under pipefail the writer is killed by
 #      SIGPIPE the moment grep finds its match and the whole pipeline reads as
 #      "no match": on a 30,000-file repo `git ls-files | grep -q` answered "no
-#      e2e runner" ten times out of ten. Use `grep -q … <<< "$(cmd)"`.
+#      e2e runner" ten times out of ten. Use `grep -q … <<< "$(cmd)"`. The
+#      same holds for `| head -1` and `| grep -m1`: `sed -n 1p` reads to the end.
 #   3. No hook reads JSON with sed/grep: lib.sh's json_* functions do.
 #   4. shellcheck at warning level, over hooks, their tests and scripts/.
 #      Skipped with a notice when shellcheck is not installed, unless
@@ -34,6 +35,12 @@ done
 hits="$(grep -nE '\|[[:space:]]*grep[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-[A-Za-z]*q' src/hooks/*.sh || true)"
 if [ -n "$hits" ]; then
   bad "a hook pipes into 'grep -q' (use: grep -q … <<< \"\$(cmd)\"):"
+  printf '%s\n' "$hits" | sed 's/^/    /'
+fi
+
+hits="$(grep -nE '\|[[:space:]]*(head[[:space:]]+-[0-9n"]|grep[[:space:]]+-m)' src/hooks/*.sh || true)"
+if [ -n "$hits" ]; then
+  bad "a hook pipes into a reader that quits early (use: sed -n 1p, sed -n 1,3p — they read to the end):"
   printf '%s\n' "$hits" | sed 's/^/    /'
 fi
 

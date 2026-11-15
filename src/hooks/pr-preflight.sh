@@ -21,7 +21,7 @@ section_field() {
     $0 ~ "^## " h "$" { insection = 1; next }
     /^## / { insection = 0 }
     insection { print }
-  ' "$config" | grep -m1 -E "^-[[:space:]]*$key:" | sed -E "s/^-[[:space:]]*$key:[[:space:]]*//" | awk '{print $1}' || true
+  ' "$config" | grep -E "^-[[:space:]]*$key:" | sed -n 1p | sed -E "s/^-[[:space:]]*$key:[[:space:]]*//" | awk '{print $1}' || true
 }
 
 main() {

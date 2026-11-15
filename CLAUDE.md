@@ -93,7 +93,7 @@ ship/
 
 - Every `src/hooks/*.sh` sources `src/hooks/lib.sh` on the line after its `set -e…`. Its ERR trap names the script, line and command when errexit ends a script — a hook never dies silently.
 - JSON is read only through `lib.sh` (`json_find`, `json_get`, `json_find_all`, `json_count`, `json_first_like`, `json_stream`) — never with a sed/grep regex over `"key": "value"`. A spec's `## Files` map is read only through `spec_file_rows`.
-- Never pipe into `grep -q`: under `pipefail` the writer dies of SIGPIPE and the match reads as a miss. Write `grep -q … <<< "$(cmd)"`.
+- Never pipe into a reader that quits early (`grep -q`, `grep -m1`, `head -1`, an awk that `exit`s): under `pipefail` the writer dies of SIGPIPE and the match reads as a miss or ends the script. Write `grep -q … <<< "$(cmd)"`, `sed -n 1p`, or an awk that reads to the end.
 - `scripts/check-hook-hygiene.sh` enforces all three plus shellcheck at warning level (CI installs shellcheck 0.10.0). `scripts/run-hook-tests.sh [name…]` runs the hook tests in parallel (`HOOK_TEST_JOBS`).
 - Hooks stay bash 3.2-compatible and POSIX-awk-compatible (macOS awk, mawk, gawk): no `declare -A`, no `mapfile`, no gawk-only functions.
 
