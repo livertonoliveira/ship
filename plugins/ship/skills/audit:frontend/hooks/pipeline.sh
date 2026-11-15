@@ -2398,6 +2398,19 @@ cmd_next() {
     sed -n 1p "$SCRATCH/pr-land.txt" > "$SCRATCH/pr-created.txt"
   fi
 
+  # --- a check that could not run at landing stops the node -----------------------
+  # Same contract as the gate's exit 4: an environment failure is not a finding.
+  # Measured live (MOB-8924, MOB-8926): routed as a red, it took nodes through
+  # every remediation round with nothing to fix, then to a question.
+  if [ -f "$SCRATCH/pr-mode.txt" ] && [ ! -f "$SCRATCH/pr-created.txt" ] \
+    && grep -q '^result=environment' "$SCRATCH/pr-land.txt" 2>/dev/null; then
+    rm -f "$SCRATCH/pr-land.txt"
+    printf 'environment: a check could not run at landing — see %s/test-failures.md (fix the workspace, then resume)\n' "$SCRATCH" > "$SCRATCH/node-failed.txt"
+    if [ -f "$SCRATCH/graph-node.txt" ]; then graph_decision "$SCRATCH" "landing" "fail-node" "environment: a check could not run at landing"; fi
+    next_body_add "A check could not run at landing (see $SCRATCH/test-failures.md). This is an environment failure, not a finding: nothing is remediated, no PR is opened. Report it and stop."
+    next_emit "landing" "stop" "$RUN" "environment: a check could not run at landing"
+  fi
+
   # --- checks red at landing → one bounded fix round, then the verdict ---------
   # pr-land.sh proves the tree again before it pushes (the base moved, or the
   # gate's proof was not for this exact tree). A red there used to fall straight
