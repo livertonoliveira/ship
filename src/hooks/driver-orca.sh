@@ -763,7 +763,7 @@ verb_wait() {
     # and the wait window collapsed to zero.
     local ack args=()
     ack="$(cat "$STATE/driver-orca-delivery.txt" 2>/dev/null || true)"
-    args=(orchestration check --wait --types worker_done,escalation --timeout-ms "$slice_ms" --json)
+    args=(orchestration check --wait --types "worker_done,escalation" --timeout-ms "$slice_ms" --json)
     [ -n "$run" ] && args+=(--run "$run")
     [ -n "$coordinator" ] && args+=(--terminal "$coordinator")
     [ -n "$ack" ] && args+=(--ack "$ack")

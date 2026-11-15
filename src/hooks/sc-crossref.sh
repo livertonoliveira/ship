@@ -59,7 +59,7 @@ issue_tags() {
 }
 
 ac_for_sc() {
-  local sc="$1" pairs="$2" line
+  local sc="$1" pairs="$2" line_sc line_ac
   while IFS='|' read -r line_sc line_ac; do
     [ "$line_sc" = "$sc" ] || continue
     printf '%s' "$line_ac"
