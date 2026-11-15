@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: capture-diff.sh <output-file> [--base <ref>] [--prefer <existing>] | --assert-only <file>" >&2

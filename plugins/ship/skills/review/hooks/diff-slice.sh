@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: diff-slice.sh <diff-file> --out-dir <dir>" >&2

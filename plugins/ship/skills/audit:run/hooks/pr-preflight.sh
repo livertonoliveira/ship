@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: pr-preflight.sh [--task <task-id>] [--feature <name>] [--config <path>]" >&2

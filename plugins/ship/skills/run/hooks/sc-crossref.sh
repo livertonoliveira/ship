@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: sc-crossref.sh --index <file> --issues <dir|files...> [--proposal <file>]" >&2
@@ -58,7 +59,7 @@ issue_tags() {
 }
 
 ac_for_sc() {
-  local sc="$1" pairs="$2" line
+  local sc="$1" pairs="$2" line_sc line_ac
   while IFS='|' read -r line_sc line_ac; do
     [ "$line_sc" = "$sc" ] || continue
     printf '%s' "$line_ac"
@@ -194,7 +195,7 @@ main() {
     covered="$(printf '%s\n' "$index_data" | awk -F'|' '{ print $2 }' | sort -u)"
     while IFS= read -r ac_id; do
       [ -n "$ac_id" ] || continue
-      printf '%s\n' "$covered" | grep -qx "$ac_id" || violations+=("uncovered: $ac_id [no scenario]")
+      grep -qx "$ac_id" <<< "$covered" || violations+=("uncovered: $ac_id [no scenario]")
     done <<< "$(proposal_acs "$proposal_file")"
   fi
 

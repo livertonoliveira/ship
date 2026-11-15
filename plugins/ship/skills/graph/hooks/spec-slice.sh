@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # spec-slice.sh — writes the run's spec.md from the issue and the Proposal, the
 # slice run-scratch.md describes: the full issue, the full text of each REQ the

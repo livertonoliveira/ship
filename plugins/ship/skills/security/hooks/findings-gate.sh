@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: findings-gate.sh (<phase> | --audit <type>) (--findings <json> | --critical N --high N --medium N --low N) [options]" >&2
@@ -54,8 +55,8 @@ normalize_severity() {
 }
 
 count_from_json() {
-  local file="$1" level="$2" n
-  n="$( { grep -oE "\"severity\"[[:space:]]*:[[:space:]]*\"$level\"" "$file" 2>/dev/null || true; } | wc -l | tr -d ' ')"
+  local file="$1" level="$2" n=0
+  [ -f "$file" ] && n="$(json_count severity "$level" "$file")"
   printf '%s' "${n:-0}"
 }
 

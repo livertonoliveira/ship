@@ -19,6 +19,7 @@
 # Findings: 0.0 → high · uncertain → medium · anything else → none.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ITEMS=""
 LAYERS="unit,integration,e2e"

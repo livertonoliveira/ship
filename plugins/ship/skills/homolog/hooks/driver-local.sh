@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # ---------------------------------------------------------------------------
 # driver-local.sh — plain `git worktree` + in-context Agents. No external
@@ -24,7 +25,6 @@ usage() {
 }
 
 STATE=""
-REPO=""
 BASE=""
 TASK=""
 WORKTREE=""
@@ -34,7 +34,7 @@ parse_flags() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --state) STATE="$2"; shift 2 ;;
-      --repo) REPO="$2"; shift 2 ;;
+      --repo) shift 2 ;;
       --base) BASE="$2"; shift 2 ;;
       --task) TASK="$2"; shift 2 ;;
       --worktree) WORKTREE="$2"; shift 2 ;;

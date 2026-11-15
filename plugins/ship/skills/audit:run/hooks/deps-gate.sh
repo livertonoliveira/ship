@@ -23,6 +23,7 @@
 # Verbs: ids | unresolved | pending | ack | extract
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: deps-gate.sh <ids|unresolved|pending|ack> <scratch-dir> [--plan <plan.md>]" >&2

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPEC_RE='\b(REQ|AC|SC|IMPL|TEST)-[0-9]+\b'
 
@@ -132,7 +133,7 @@ scan_file() {
           case "$line" in 1:'#!'*) continue ;; esac
           if [ "$added" != "ALL" ]; then
             lineno="${line%%:*}"
-            printf '%s\n' "$added" | grep -qx "$lineno" || continue
+            grep -qx "$lineno" <<< "$added" || continue
           fi
           HITS+=("$p:$line"); found=0
         done < <(grep -nE "$cre" "$p" 2>/dev/null || true)
@@ -196,7 +197,7 @@ if [ "${1:-}" = "--all" ]; then
 fi
 
 input="$(cat)"
-file_path="$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+file_path="$(printf '%s' "$input" | json_find file_path)"
 
 [ -z "$file_path" ] && exit 0
 [ -f "$file_path" ] || exit 0

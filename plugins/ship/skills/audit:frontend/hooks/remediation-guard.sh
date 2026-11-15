@@ -21,6 +21,7 @@
 # Prints: erased=yes|no (check), restored=yes|no (restore)
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: remediation-guard.sh snapshot|check|restore <scratch-dir>" >&2

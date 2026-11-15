@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: test-exec.sh <scratch-dir> [--config <path>] [--static-only | --static-check | --lint-fix | --changed <base-commit>]" >&2
@@ -54,40 +55,20 @@ resolve_runner() {
   resolve_pkg
 }
 
-# The "scripts" object of package.json, braces inside its string values kept
-# whole. A line range up to the first "}" ended early on a script holding a
-# brace glob ("eslint \"{src,test}/**/*.ts\""): every script after it was
-# invisible, test:unit and test:integration fell back to the bare test command,
-# and the full-suite proof of a landing measured that instead. Measured live
-# 2026-11-12 on api-agendx: a node merged with 27 red unit tests on its base.
-pkg_scripts_block() {
+# A script of package.json, read by its path. A line range up to the first "}"
+# ended early on a script holding a brace glob ("eslint \"{src,test}/**/*.ts\""):
+# every script after it was invisible, test:unit and test:integration fell back
+# to the bare test command, and the full-suite proof of a landing measured that
+# instead. Measured live 2026-11-12 on api-agendx: a node merged with 27 red
+# unit tests on its base.
+pkg_script_value() {
   [ -f package.json ] || return 0
-  awk '
-    { text = text $0 "\n" }
-    END {
-      start = match(text, /"scripts"[ \t\r\n]*:[ \t\r\n]*\{/)
-      if (!start) exit
-      i = start + RLENGTH - 1
-      n = length(text); depth = 0; instr = 0; esc = 0
-      for (j = i; j <= n; j++) {
-        c = substr(text, j, 1)
-        if (instr) {
-          if (esc) esc = 0
-          else if (c == "\\") esc = 1
-          else if (c == "\"") instr = 0
-        } else if (c == "\"") instr = 1
-        else if (c == "{") depth++
-        else if (c == "}") { depth--; if (depth == 0) break }
-      }
-      printf "%s\n", substr(text, i, j - i + 1)
-    }
-  ' package.json
+  json_get ".scripts.$1" package.json
 }
 
 pkg_script_exists() {
   local script="$1"
-  [ -f package.json ] || return 1
-  pkg_scripts_block | grep -qE "\"${script}\"[[:space:]]*:"
+  [ -n "$(pkg_script_value "$script")" ]
 }
 
 resolve_static_checks() {
@@ -121,15 +102,6 @@ resolve_static_checks() {
       pkg_script_exists lint && LINT_FROM_PKG=1 ;;
   esac
   scope_lint_cmd "$scratch"
-}
-
-pkg_script_value() {
-  local script="$1"
-  [ -f package.json ] || return 0
-  pkg_scripts_block \
-    | grep -m1 -E "\"${script}\"[[:space:]]*:" \
-    | sed -E "s/.*\"${script}\"[[:space:]]*:[[:space:]]*\"((\\\\.|[^\"\\\\])*)\".*/\\1/" \
-    | sed 's/\\"/"/g'
 }
 
 # eslint flags that consume the next token — kept together so the target
@@ -194,7 +166,8 @@ fill_files_placeholder() {
 # plain eslint invocation, whose targets are swapped for the touched files. Any
 # other shape runs unchanged.
 scope_lint_cmd() {
-  local scratch="$1" touched="$scratch/develop-touched-files.txt" f
+  local scratch="$1"
+  local touched="$scratch/develop-touched-files.txt" f
   is_resolved "$LINT_CMD" || return 0
   [ -s "$touched" ] || return 0
   local -a files=()
@@ -275,7 +248,8 @@ scope_lint_cmd() {
 # stack.md/config (it must carry `{files}`), else derived from a lint command
 # scope_lint_cmd already narrowed to those files by appending --fix.
 resolve_lint_fix() {
-  local scratch="$1" config="$2" touched="$scratch/develop-touched-files.txt" f
+  local scratch="$1" config="$2"
+  local touched="$scratch/develop-touched-files.txt" f
   LINT_FIX_CMD="$(field_from "$scratch/stack.md" 'Lint fix')"
   is_resolved "$LINT_FIX_CMD" || LINT_FIX_CMD="$(field_from "$config" 'Lint fix')"
   if is_resolved "$LINT_FIX_CMD"; then
@@ -350,6 +324,7 @@ build_test_command() {
 # `- <path> (<layer>)` manifest rows, kept as "<layer><TAB><path>" lines. The
 # layer used to be parsed off and thrown away, which is what let an e2e file
 # reach a runner whose config cannot even see it.
+# shellcheck disable=SC2178,SC2128 # a string here; the arrays of that name are other functions' locals
 collect_test_entries() {
   local generated="$1"
   TEST_ENTRIES=""
@@ -532,7 +507,7 @@ tool_never_ran() {
 typecheck_error_files() {
   local out="$1"
   [ -n "$out" ] && [ -f "$out" ] || return 0
-  grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null | sed -E 's/[(:]$//' | sort -u
+  { grep -oE '^[^[:space:](:]+\.[A-Za-z]+[(:]' "$out" 2>/dev/null || true; } | sed -E 's/[(:]$//' | sort -u
 }
 
 # Those of them that are committed test files (in HEAD): the author's to update.
@@ -540,7 +515,7 @@ broken_existing_tests_list() {
   local out="$1" f
   typecheck_error_files "$out" | while IFS= read -r f; do
     case "$f" in *.test.*|*.spec.*|*/__tests__/*|*/tests/*|test/*|tests/*) ;; *) continue ;; esac
-    git cat-file -e "HEAD:$f" 2>/dev/null && printf '%s\n' "$f"
+    if git cat-file -e "HEAD:$f" 2>/dev/null; then printf '%s\n' "$f"; fi
   done
 }
 
