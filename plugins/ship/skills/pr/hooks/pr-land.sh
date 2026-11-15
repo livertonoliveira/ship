@@ -16,12 +16,13 @@
 # the facts the caller acts on:
 #   result=uncommitted files=<n>         commit first, then call again
 #   result=red                           checks failed, or the pre-push hook refused — <scratch>/test-failures.md
+#   result=environment                   a check could not run (test-exec exit 4) — nothing to fix in the code
 #   result=conflict files=<a,b>          rebase stopped — resolve, pr-sync.sh --continue, call again
 #   result=remote-branch-exists          the remote branch has other history — the caller decides
 #   result=empty base=<b> branch=<br>    no commit ahead of the base after the sync — nothing to open
 #   result=landed pr=<url> number=<n> branch=<b> automerge=armed|failed|skipped linear=done|mcp-needed|skipped context=<finalize>
 # Exit 0 on landed, 2 on uncommitted, 3 on red, 4 on conflict, 5 on push refused,
-# 1 on anything the caller cannot act on (message on stderr).
+# 6 on empty, 7 on environment, 1 on anything the caller cannot act on (message on stderr).
 
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -56,6 +57,20 @@ field() { { grep -m1 "^$2=" <<< "$1" || true; } | cut -d= -f2-; }
 # reads the file, never the caller's screen (where hook noise truncated it on
 # four nodes of one graph, 2026-10-15).
 say() { [ -d "$scratch" ] && printf '%s\n' "$1" > "$scratch/pr-land.txt"; printf '%s\n' "$1"; }
+
+# test-exec exit 4: the tool never started, or a suite exited 0 without
+# reporting a test. Measured live (MOB-8924, MOB-8926): reported as a plain red,
+# it sent fix agents through every remediation round with nothing in the code to
+# fix. It is its own result, and the caller stops on it.
+checks_failed() {
+  local rc="$1"
+  if [ "$rc" -eq 4 ]; then
+    say "result=environment report=$scratch/test-failures.md"
+    exit 7
+  fi
+  say "result=red exit=$rc report=$scratch/test-failures.md"
+  exit 3
+}
 
 # A push the remote never saw: an installed pre-push hook exited non-zero. The
 # remote's own refusals ([rejected], [remote rejected]) and transport errors
@@ -93,7 +108,7 @@ if [ "$verified" != "yes" ]; then
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     0|2) ;;
-    *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;;
+    *) checks_failed "$rc" ;;
   esac
 fi
 
@@ -108,7 +123,7 @@ fi
 if [ "$sync_result" = "clean" ] && [ "$verified" = "yes" ]; then
   rc=0
   bash "$HOOK_DIR/test-exec.sh" "$scratch" --config "$config" >/dev/null 2>&1 || rc=$?
-  case "$rc" in 0|2) ;; *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;; esac
+  case "$rc" in 0|2) ;; *) checks_failed "$rc" ;; esac
 fi
 
 # --- nothing to land ----------------------------------------------------------------
@@ -143,7 +158,7 @@ if [ "$(cat "$full_proof" 2>/dev/null || true)" != "$full_want" ]; then
   case "$rc" in
     0) ;;
     5) say "result=red reason=no-test-changed report=$scratch/test-failures.md"; exit 3 ;;
-    *) say "result=red exit=$rc report=$scratch/test-failures.md"; exit 3 ;;
+    *) checks_failed "$rc" ;;
   esac
   printf '%s\n' "$full_want" > "$full_proof"
 fi
