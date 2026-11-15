@@ -237,6 +237,28 @@ test_a_red_at_landing_past_the_cap_fails_with_its_reason() {
   fi
 }
 
+# MOB-8924/MOB-8926: a check that could not run at landing was routed as a red
+# and sent fix agents through every round with nothing to fix.
+test_an_environment_failure_at_landing_stops_without_a_fix_round() {
+  local name="a check that could not run at landing fails the node as environment on the spot: no fix agent, no remediation round"
+  local dir out scratch
+  dir="$(mktemp -d)"
+  landing_red_node "$dir"
+  scratch="$dir/.context/ship-run/T1"
+  printf 'result=environment report=%s/test-failures.md\n' "$scratch" > "$scratch/pr-land.txt"
+  out="$(cd "$dir" && bash "$PIPELINE" next T1)"
+  local reason; reason="$(cat "$scratch/node-failed.txt" 2>/dev/null)"
+  local inflight="no"; [ -f "$scratch/remediation-fix-inflight.txt" ] && inflight="yes"
+  local rounds; rounds="$(cat "$scratch/iteration-graph-remediation-rounds.txt" 2>/dev/null || echo 0)"
+  rm -rf "$dir"
+  if [ "$(field "$out" action)" = "stop" ] && [ "$(field "$out" state)" = "landing" ] && [ "$inflight" = "no" ] \
+    && [ "$rounds" = "0" ] && grep -q '^environment:' <<< "$reason"; then
+    log_pass "$name"
+  else
+    log_fail "$name (state=$(field "$out" state) action=$(field "$out" action) inflight=$inflight rounds=$rounds reason='$reason')"
+  fi
+}
+
 # Measured on 36 nodes: the commits-and-PR window took 8.7 of 15.6 turns. Once
 # the tree is committed, next runs pr-land.sh itself and reads its result.
 landing_repo() {
@@ -572,6 +594,7 @@ test_set_flips_node_pr_on_a_live_graph
 test_pipeline_emits_the_node_pr_step_before_homolog
 test_a_red_at_landing_gets_a_fix_round
 test_a_red_at_landing_past_the_cap_fails_with_its_reason
+test_an_environment_failure_at_landing_stops_without_a_fix_round
 test_a_committed_tree_is_landed_by_next_itself
 test_an_uncommitted_tree_is_handed_to_the_model_first
 test_an_empty_landing_completes_the_pr_step
