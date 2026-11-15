@@ -16,6 +16,7 @@
 # `WORD-<n>` tokens are left alone (UTF-8, ISO-8601) unless --team names them.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TEAM=""
 KEY=""

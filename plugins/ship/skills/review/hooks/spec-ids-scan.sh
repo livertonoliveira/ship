@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Blocks a spec artifact that gives one scenario id to two different behaviors.
 #
@@ -82,7 +83,7 @@ if [ $# -gt 0 ]; then
 fi
 
 input="$(cat)"
-file_path="$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+file_path="$(printf '%s' "$input" | json_find file_path)"
 [ -n "$file_path" ] || exit 0
 
 if out="$(scan "$file_path")"; then

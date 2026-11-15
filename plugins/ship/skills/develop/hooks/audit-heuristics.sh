@@ -13,6 +13,7 @@
 # misses every risk the rules cannot see.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SET=""
 OUT=""

@@ -24,6 +24,7 @@
 # 1 on anything the caller cannot act on (message on stderr).
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH="${GH_BIN:-gh}"
@@ -63,8 +64,8 @@ hook_refused() {
   local hooks
   hooks="$(git config core.hooksPath 2>/dev/null || git rev-parse --git-path hooks)"
   [ -x "$hooks/pre-push" ] || return 1
-  printf '%s' "$1" | grep -q 'failed to push some refs' || return 1
-  ! printf '%s' "$1" | grep -qE '\[(remote )?rejected\]|^fatal:'
+  grep -q 'failed to push some refs' <<< "$1" || return 1
+  ! grep -qE '\[(remote )?rejected\]|^fatal:' <<< "$1"
 }
 
 pre="$(bash "$HOOK_DIR/pr-preflight.sh" --task "$task" --config "$config")"
@@ -194,7 +195,7 @@ if ! push_err="$(git push -u "$remote" "$branch" 2>&1)"; then
     fi
     say "result=red exit=hook report=$scratch/test-failures.md"
     exit 3
-  elif printf '%s' "$push_err" | grep -qiE 'non-fast-forward|fetch first|rejected'; then
+  elif grep -qiE 'non-fast-forward|fetch first|rejected' <<< "$push_err"; then
     open_pr="$("$GH" pr view "$branch" --json state --jq .state 2>/dev/null || true)"
     # A graph node owns its task branch by construction: an OPEN PR there is
     # this node's own earlier landing (a later commit, a rebase onto a moved
@@ -219,7 +220,6 @@ if ! push_err="$(git push -u "$remote" "$branch" 2>&1)"; then
 fi
 
 # --- title and body, from what is already on disk ------------------------------------
-commits="$(git log --reverse --format='%s%n%b%n--' "$remote/$pr_base..HEAD" 2>/dev/null || true)"
 subjects="$(git log --reverse --format='%s' "$remote/$pr_base..HEAD" 2>/dev/null || true)"
 if [ -z "$title" ]; then
   # The PR's type is the change's, not its tests': test/docs/chore count only

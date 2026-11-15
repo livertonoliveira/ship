@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # linear.sh — the pipeline's Linear round trips, done by a script instead of
 # the orchestrator's turns.
@@ -68,63 +69,31 @@ gql() {
     | curl -sS --max-time 60 -K - -H 'Content-Type: application/json' \
         --data @"$body" "$LINEAR_API_URL" > "$out" \
     || die "the request to Linear failed"
-  if grep -q '"errors"[[:space:]]*:' "$out"; then
+  if [ -n "$(flat < "$out" | awk -F '\t' '$1 == "errors" || index($1, "errors.") == 1 { hit = 1 } END { if (hit) print "y" }')" ]; then
     msg="$(flat < "$out" | awk -F '\t' '$1 == "errors.message" { print $2; exit }')"
     die "Linear refused the request: ${msg:-$(head -c 300 "$out")}"
   fi
 }
 
-# JSON → one `path<TAB>value` line per scalar. Array elements share their
-# array's path; newlines inside a value come out as \001, tabs as \003. Records split on the
-# double quote, the same linear scan graph.sh uses on multi-megabyte pages.
+# JSON → one `path<TAB>value` line per scalar, from lib.sh's reader. Array
+# elements share their array's path and an object announces itself as
+# `path<TAB>{`; a newline inside a value comes out as \001, a tab as \003.
 flat() {
-  awk '
-    function unescape(s) {
-      gsub(/\\\\/, "\002", s)
-      gsub(/\\n/, "\001", s)
-      gsub(/\\t/, "\003", s)
-      gsub(/\\[rbf]/, "", s)
-      gsub(/\\"/, "\"", s)
-      gsub(/\\\//, "/", s)
-      gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, "?", s)
-      gsub("\002", "\\", s)
-      return s
-    }
-    function child(   p) {
-      if (depth == 0) return ""
-      if (ctype[depth] == "A") return cpath[depth]
-      p = cpath[depth]
-      return (p == "" ? key : p "." key)
-    }
-    function open(t,   p) {
-      p = child(); depth++
-      ctype[depth] = t; cpath[depth] = p; wantkey[depth] = (t == "O")
-      if (t == "O") printf "%s\t{\n", p
-    }
-    function close_() { depth-- }
-    function scalar(v) { printf "%s\t%s\n", child(), v }
-    function literal() { if (lit != "") { scalar(lit); lit = "" } }
-    function outside(s,   i, n, c) {
-      n = length(s)
-      for (i = 1; i <= n; i++) {
-        c = substr(s, i, 1)
-        if (c ~ /[[:space:]]/) continue
-        if (c == "{") open("O")
-        else if (c == "[") open("A")
-        else if (c == "}" || c == "]") { literal(); close_() }
-        else if (c == ":") wantkey[depth] = 0
-        else if (c == ",") { literal(); if (ctype[depth] == "O") wantkey[depth] = 1 }
-        else lit = lit c
+  json_stream | awk -F'\t' '
+    function value(v,   out, k, c) {
+      out = ""
+      while ((k = index(v, "\\")) > 0) {
+        c = substr(v, k + 1, 1)
+        out = out substr(v, 1, k - 1) (c == "\\" ? "\\" : (c == "n" ? "\001" : (c == "t" ? "\003" : "")))
+        v = substr(v, k + 2)
       }
+      return out v
     }
-    BEGIN { RS = "\""; instr = 0; depth = 0 }
-    !instr { outside($0); instr = 1; next }
     {
-      str = str $0
-      if (match($0, /\\+$/) && RLENGTH % 2 == 1) { str = str "\""; next }
-      if (ctype[depth] == "O" && wantkey[depth]) key = str
-      else scalar(unescape(str))
-      str = ""; instr = 0
+      p = $1; gsub(/\[[0-9]+\]/, "", p); sub(/^\./, "", p)
+      if ($2 == "a") next
+      if ($2 == "o") { printf "%s\t{\n", p; next }
+      printf "%s\t%s\n", p, value($3)
     }
   '
 }
@@ -326,7 +295,7 @@ cmd_attach() {
   local q='mutation($i:String!,$u:String!,$t:String){attachmentLinkURL(issueId:$i,url:$u,title:$t){success}}'
   printf '{"query":%s,"variables":{"i":%s,"u":%s,"t":%s}}' "$(json_str "$q")" "$(json_str "$uuid")" "$(json_str "$url")" "$(json_str "${title:-$url}")" > "$tmp/body.json"
   gql "$tmp/body.json" "$tmp/answer.json"
-  grep -q '"success"[[:space:]]*:[[:space:]]*true' "$tmp/answer.json" || die "attach: Linear did not confirm the attachment"
+  [ "$(json_find success "$tmp/answer.json")" = "true" ] || die "attach: Linear did not confirm the attachment"
   echo "attached=1"
 }
 
@@ -351,7 +320,7 @@ cmd_comment() {
   local q='mutation($i:String!,$b:String!){commentCreate(input:{issueId:$i,body:$b}){success}}'
   printf '{"query":%s,"variables":{"i":%s,"b":%s}}' "$(json_str "$q")" "$(json_str "$uuid")" "$(json_str "$body")" > "$tmp/body.json"
   gql "$tmp/body.json" "$tmp/answer.json"
-  grep -q '"success"[[:space:]]*:[[:space:]]*true' "$tmp/answer.json" || die "comment: Linear did not confirm the comment"
+  [ "$(json_find success "$tmp/answer.json")" = "true" ] || die "comment: Linear did not confirm the comment"
   echo "commented=1"
 }
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Prints a spec or tasks file with every brace group inside its `## Files`
 # sections expanded, one line per path: `- modify src/use-{a,b}.ts — x` becomes

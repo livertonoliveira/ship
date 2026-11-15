@@ -14,33 +14,34 @@
 # Exit 0 = allowed. Exit 2 = blocked, reason printed to stderr for the model to relay.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 input="$(cat)"
-command="$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*[,}].*/\1/p' | head -1)"
+command="$(printf '%s' "$input" | json_find command)"
 
 [ -n "$command" ] || exit 0
 
 is_destructive() {
   local c="$1"
 
-  if printf '%s' "$c" | grep -qE 'git[[:space:]]+clean\b'; then
-    if ! printf '%s' "$c" | grep -qE -- '(^|[[:space:]])-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)|--dry-run\b'; then
-      if printf '%s' "$c" | grep -qE -- '-[a-zA-Z]*f[a-zA-Z]*\b|--force\b'; then
+  if grep -qE 'git[[:space:]]+clean\b' <<< "$c"; then
+    if ! grep -qE -- '(^|[[:space:]])-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)|--dry-run\b' <<< "$c"; then
+      if grep -qE -- '-[a-zA-Z]*f[a-zA-Z]*\b|--force\b' <<< "$c"; then
         return 0
       fi
     fi
   fi
 
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\S' && return 0
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+checkout[[:space:]]+\.([[:space:]]|$)' && return 0
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+reset[[:space:]]+--hard\b' && return 0
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D\b|git[[:space:]]+branch\b.*--delete.*--force' && return 0
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+push\b.*--force\b' && return 0
+  grep -qE 'git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\S' <<< "$c" && return 0
+  grep -qE 'git[[:space:]]+checkout[[:space:]]+\.([[:space:]]|$)' <<< "$c" && return 0
+  grep -qE 'git[[:space:]]+reset[[:space:]]+--hard\b' <<< "$c" && return 0
+  grep -qE 'git[[:space:]]+branch[[:space:]]+-D\b|git[[:space:]]+branch\b.*--delete.*--force' <<< "$c" && return 0
+  grep -qE 'git[[:space:]]+push\b.*--force\b' <<< "$c" && return 0
   # The stash is one stack shared by every worktree of the repo: a bare pop,
   # apply or drop takes whatever entry is on top, often another session's.
   # Measured live (MOB-8647, 2026-10-18): a graph node stashed nothing, then
   # popped an entry another node had parked eleven days earlier.
-  printf '%s' "$c" | grep -qE 'git[[:space:]]+stash[[:space:]]+(pop|apply|drop)([[:space:]]+(-q|--quiet|--index))*[[:space:]]*($|[;&|)]|\\n)' && return 0
+  grep -qE 'git[[:space:]]+stash[[:space:]]+(pop|apply|drop)([[:space:]]+(-q|--quiet|--index))*[[:space:]]*($|[;&|)]|\\n)' <<< "$c" && return 0
 
   return 1
 }

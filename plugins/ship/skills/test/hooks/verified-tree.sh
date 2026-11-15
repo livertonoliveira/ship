@@ -15,6 +15,7 @@
 # ran, typecheck and lint both exited 0.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage() {
   echo "usage: verified-tree.sh record <scratch-dir> | check <scratch-dir>" >&2

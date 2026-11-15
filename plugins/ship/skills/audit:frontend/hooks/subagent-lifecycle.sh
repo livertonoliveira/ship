@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ---------------------------------------------------------------------------
 # subagent-lifecycle.sh — what the pipeline used to ask its workers to do in
 # prose, done by the harness instead (plugin hooks, hooks/hooks.json).
@@ -29,10 +30,7 @@ set -euo pipefail
 input="$(cat)"
 
 json_field() {
-  printf '%s' "$input" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1
-}
-json_bool() {
-  printf '%s' "$input" | sed -nE "s/.*\"$1\"[[:space:]]*:[[:space:]]*(true|false).*/\\1/p" | head -1
+  printf '%s' "$input" | json_find "$1"
 }
 
 agent_type="$(json_field agent_type)"
@@ -107,7 +105,7 @@ cmd_stop() {
   scratch="$(scratch_of_agent)"
   [ -n "$scratch" ] || exit 0
   start="$scratch/worker-start-$name.txt"
-  if [ "$(json_bool stop_hook_active)" = "true" ]; then
+  if [ "$(json_field stop_hook_active)" = "true" ]; then
     date -u +%s > "$scratch/worker-done-$name.txt"
     exit 0
   fi

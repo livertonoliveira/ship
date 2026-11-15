@@ -16,6 +16,7 @@
 # findings have a severity.
 
 set -eu
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 scratch="${1:-}"
 if [ -z "$scratch" ] || [ ! -d "$scratch" ]; then
@@ -57,18 +58,29 @@ emit_md() {
 # JSON findings files (flat array). Only objects carrying a "severity" are
 # findings.
 emit_json() {
-  local phase="$1" f="$2" content obj sev file slugsrc
+  local phase="$1" f="$2" sev file slugsrc
   [ -f "$f" ] || return 0
-  content="$(tr -d '\n' < "$f")"
-  # One JSON object per line, then keep the severity-bearing ones.
-  { printf '%s' "$content" | sed 's/}[[:space:]]*,[[:space:]]*{/}\
-{/g' | grep '"severity"' || true; } | while IFS= read -r obj; do
-    sev="$(printf '%s' "$obj" | sed -E 's/.*"severity"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' | tr '[:upper:]' '[:lower:]')"
-    file="$(printf '%s' "$obj" | grep -oE '"(filePath|file)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+  # A finding is the scalars sharing one parent path: severity, the first of
+  # filePath/file, and every title/category in document order.
+  json_stream_flat "$f" | awk -F'\t' '
+    $2 == "o" || $2 == "a" { next }
+    {
+      key = $1; sub(/.*\./, "", key)
+      parent = substr($1, 1, length($1) - length(key))
+      if (!(parent in seen)) { seen[parent] = 1; order[++n] = parent }
+      if (key == "severity") sev[parent] = $3
+      else if ((key == "filePath" || key == "file") && !(parent in file)) file[parent] = $3
+      else if (key == "title" || key == "category") slug[parent] = slug[parent] $3 "-"
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        p = order[i]
+        if (p in sev) printf "%s\t%s\t%s\n", sev[p], file[p], slug[p]
+      }
+    }
+  ' | tr '\t' '\037' | while IFS="$(printf '\037')" read -r sev file slugsrc; do
+    sev="$(printf '%s' "$sev" | tr '[:upper:]' '[:lower:]')"
     file="$(printf '%s' "$file" | sed -E 's/:[0-9]+(-[0-9]+)?$//')"
-    # Slug source: prefer title, else category.
-    slugsrc="$(printf '%s' "$obj" | grep -oE '"(title|category)"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' | tr '\n' '-')"
     slugsrc="$(printf '%s' "$slugsrc" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60)"
     printf '%s|%s|%s|%s\n' "$phase" "$sev" "$file" "$slugsrc"
   done

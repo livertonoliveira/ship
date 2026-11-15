@@ -16,6 +16,7 @@
 # negative. Anything a category missed is still in `## Unclassified`.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 OUT=""
 MAX=200

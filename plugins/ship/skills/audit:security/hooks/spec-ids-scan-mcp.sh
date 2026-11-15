@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Ship spec gate — Linear MCP counterpart of spec-ids-scan.sh.
 #
@@ -24,7 +25,6 @@ set -euo pipefail
 # so it cannot catch a patch that duplicates an id already living in the doc
 # — it only catches a duplicate formed within the patch call itself.
 
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "usage: spec-ids-scan-mcp.sh   (PreToolUse JSON on stdin)" >&2
@@ -53,75 +53,6 @@ duplicate_ids() {
   ' 2>/dev/null | sort || true
 }
 
-# Decodes the JSON string value of the first "<key>": "..." found in $1
-# (a file holding the raw PreToolUse JSON), honoring backslash escapes.
-# Hand-rolled instead of jq/python: hooks in this repo stay runnable with
-# nothing beyond bash/awk/sed/grep (see graph.sh's own note on this).
-json_string_field() {
-  local file="$1" key="$2"
-  awk -v key="\"${key}\"" '
-    BEGIN { RS = "\x1a"; ORS = "" }
-    {
-      text = $0
-      n = length(text)
-      searchfrom = 1
-      while (1) {
-        kpos = index(substr(text, searchfrom), key)
-        if (kpos == 0) { exit }
-        kpos += searchfrom - 1
-        p = kpos + length(key)
-        while (p <= n && substr(text, p, 1) ~ /[ \t\r\n]/) p++
-        if (substr(text, p, 1) != ":") { searchfrom = kpos + 1; continue }
-        p++
-        while (p <= n && substr(text, p, 1) ~ /[ \t\r\n]/) p++
-        if (substr(text, p, 1) != "\"") { searchfrom = kpos + 1; continue }
-        p++
-        out = ""
-        while (p <= n) {
-          c = substr(text, p, 1)
-          if (c == "\\") {
-            nc = substr(text, p + 1, 1)
-            if (nc == "n") out = out "\n"
-            else if (nc == "t") out = out "\t"
-            else if (nc == "r") out = out "\r"
-            else out = out nc
-            p += 2
-            continue
-          }
-          if (c == "\"") break
-          out = out c
-          p++
-        }
-        print out "\n"
-        exit
-      }
-    }
-  ' "$file"
-}
-
-# Every JSON string value for repeated occurrences of "<key>": "..." in $1,
-# concatenated with blank lines between them — used for `patch`, whose text
-# lives under several "text"/"new_string" entries in one array.
-json_string_field_all() {
-  local file="$1" key="$2"
-  local tmp; tmp="$(mktemp)"
-  cp "$file" "$tmp"
-  while :; do
-    local out
-    out="$(json_string_field "$tmp" "$key")"
-    [ -n "$out" ] || break
-    printf '%s\n\n' "$out"
-    # Drop everything up to and including the first remaining occurrence of the
-    # key so the next pass finds the following one instead of repeating this one.
-    awk -v key="\"${key}\"" '
-      BEGIN { RS = "\x1a" }
-      { p = index($0, key); if (p == 0) { print ""; exit } print substr($0, p + length(key)) }
-    ' "$tmp" > "${tmp}.next"
-    mv "${tmp}.next" "$tmp"
-  done
-  rm -f "$tmp"
-}
-
 report_and_block() {
   local tool="$1" out="$2"
   {
@@ -147,29 +78,25 @@ main() {
   input="$(cat)"
   [ -n "$input" ] || exit 0
 
-  tool_name="$(printf '%s' "$input" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  tool_name="$(printf '%s' "$input" | json_find tool_name)"
   case "$tool_name" in
     mcp__linear-server__save_document) field="content" ;;
     mcp__linear-server__save_issue) field="description" ;;
     *) exit 0 ;;
   esac
 
-  local jsonfile; jsonfile="$(mktemp)"
-  printf '%s' "$input" > "$jsonfile"
-
   local decoded out
-  decoded="$(json_string_field "$jsonfile" "$field")"
+  decoded="$(printf '%s' "$input" | json_find "$field")"
   if [ -n "$decoded" ]; then
     out="$(printf '%s' "$decoded" | duplicate_ids)"
     if [ -n "$out" ]; then
-      rm -f "$jsonfile"
       report_and_block "$tool_name" "$out"
     fi
   fi
 
   local patch_text
-  patch_text="$(json_string_field_all "$jsonfile" "new_string")$(json_string_field_all "$jsonfile" "text")"
-  rm -f "$jsonfile"
+  patch_text="$(printf '%s' "$input" | json_find_all new_string)
+$(printf '%s' "$input" | json_find_all text)"
   if [ -n "$patch_text" ]; then
     out="$(printf '%s' "$patch_text" | duplicate_ids)"
     if [ -n "$out" ]; then
