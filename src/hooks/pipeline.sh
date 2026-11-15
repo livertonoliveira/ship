@@ -1048,9 +1048,9 @@ next_test_pattern_ref() {
 # The `## Existing tests` block used to be an unfiltered `git ls-files` of the
 # whole test tree — 908 paths / 66KB in the run that motivated this, ~95% of the
 # brief, repeated per layer worker. Keep only what a worker in THIS layer could
-# shellcheck disable=SC2178,SC2128 # a string here; the array of that name is another function's local
 # plausibly extend: same layer, and adjacent to a SUT path by directory or by
 # basename token. Truncation is reported, never silent.
+# shellcheck disable=SC2178,SC2128 # a string here; the array of that name is another function's local
 next_relevant_tests() {
   local layer="$1" files="$2" limit=40 all scored
   all="$(next_classified_tests)"
@@ -1145,8 +1145,9 @@ next_develop_authored_tests() {
 # and the gate fed it to jest (MOB-8867, MOB-8873). A test:e2e script, a known
 # runner config, Detox, or e2e test sources already in the tree count.
 next_e2e_runner_present() {
-  [ -f package.json ] && grep -qE '"(test:e2e|e2e)"[[:space:]]*:' package.json && return 0
-  [ -f package.json ] && grep -qE '"detox"[[:space:]]*:' package.json && return 0
+  if [ -f package.json ]; then
+    [ -n "$(json_stream package.json | awk -F'\t' '$1 ~ /\.(test:e2e|e2e|detox)(\.|$)/ { hit = 1 } END { if (hit) print "y" }')" ] && return 0
+  fi
   local f
   for f in playwright.config.* cypress.config.* cypress.json wdio.conf.* nightwatch.conf.* \
     .testcaferc.json codecept.conf.* .detoxrc .detoxrc.* detox.config.*; do
@@ -1879,7 +1880,7 @@ cmd_next() {
   if [ "$(head -1 "$SCRATCH/plan-decision.txt")" = "run" ] && [ "$(phase_toggle "$CONFIG" dev)" != "disabled" ]; then
     if [ ! -f "$SCRATCH/plan.md" ]; then
       if next_dispatched "$SCRATCH" plan; then
-        local iter_out iter_rc=0
+        local iter_rc=0
         set +e
         ( cmd_iter "$SCRATCH" plan-redispatch --max 2 ) >/dev/null
         iter_rc=$?

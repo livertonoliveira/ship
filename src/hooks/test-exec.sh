@@ -55,40 +55,20 @@ resolve_runner() {
   resolve_pkg
 }
 
-# The "scripts" object of package.json, braces inside its string values kept
-# whole. A line range up to the first "}" ended early on a script holding a
-# brace glob ("eslint \"{src,test}/**/*.ts\""): every script after it was
-# invisible, test:unit and test:integration fell back to the bare test command,
-# and the full-suite proof of a landing measured that instead. Measured live
-# 2026-11-12 on api-agendx: a node merged with 27 red unit tests on its base.
-pkg_scripts_block() {
+# A script of package.json, read by its path. A line range up to the first "}"
+# ended early on a script holding a brace glob ("eslint \"{src,test}/**/*.ts\""):
+# every script after it was invisible, test:unit and test:integration fell back
+# to the bare test command, and the full-suite proof of a landing measured that
+# instead. Measured live 2026-11-12 on api-agendx: a node merged with 27 red
+# unit tests on its base.
+pkg_script_value() {
   [ -f package.json ] || return 0
-  awk '
-    { text = text $0 "\n" }
-    END {
-      start = match(text, /"scripts"[ \t\r\n]*:[ \t\r\n]*\{/)
-      if (!start) exit
-      i = start + RLENGTH - 1
-      n = length(text); depth = 0; instr = 0; esc = 0
-      for (j = i; j <= n; j++) {
-        c = substr(text, j, 1)
-        if (instr) {
-          if (esc) esc = 0
-          else if (c == "\\") esc = 1
-          else if (c == "\"") instr = 0
-        } else if (c == "\"") instr = 1
-        else if (c == "{") depth++
-        else if (c == "}") { depth--; if (depth == 0) break }
-      }
-      printf "%s\n", substr(text, i, j - i + 1)
-    }
-  ' package.json
+  json_get ".scripts.$1" package.json
 }
 
 pkg_script_exists() {
   local script="$1"
-  [ -f package.json ] || return 1
-  pkg_scripts_block | grep -qE "\"${script}\"[[:space:]]*:"
+  [ -n "$(pkg_script_value "$script")" ]
 }
 
 resolve_static_checks() {
@@ -122,15 +102,6 @@ resolve_static_checks() {
       pkg_script_exists lint && LINT_FROM_PKG=1 ;;
   esac
   scope_lint_cmd "$scratch"
-}
-
-pkg_script_value() {
-  local script="$1"
-  [ -f package.json ] || return 0
-  pkg_scripts_block \
-    | grep -m1 -E "\"${script}\"[[:space:]]*:" \
-    | sed -E "s/.*\"${script}\"[[:space:]]*:[[:space:]]*\"((\\\\.|[^\"\\\\])*)\".*/\\1/" \
-    | sed 's/\\"/"/g'
 }
 
 # eslint flags that consume the next token — kept together so the target
@@ -324,7 +295,6 @@ build_test_command() {
         CMD_WORDS=("$pkg" test)
         CMD_USES_PKG_SCRIPT=1
       else
-# shellcheck disable=SC2178,SC2128 # a string here; the arrays of that name are other functions' locals
         CMD_WORDS=(npx "$runner")
       fi
       ;;
@@ -354,6 +324,7 @@ build_test_command() {
 # `- <path> (<layer>)` manifest rows, kept as "<layer><TAB><path>" lines. The
 # layer used to be parsed off and thrown away, which is what let an e2e file
 # reach a runner whose config cannot even see it.
+# shellcheck disable=SC2178,SC2128 # a string here; the arrays of that name are other functions' locals
 collect_test_entries() {
   local generated="$1"
   TEST_ENTRIES=""
