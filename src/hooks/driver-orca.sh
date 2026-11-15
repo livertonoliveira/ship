@@ -96,16 +96,22 @@ short_branch() {
   printf '%s' "${1#refs/heads/}"
 }
 
-# The responses are machine-generated and pretty-printed one key per line, so a
-# line-oriented match is enough here; graph.sh's real parser stays in graph.sh.
+# The first value stored under a key, wherever the response nests it.
 json_val() {
-  sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+  json_find "$1"
 }
 
 # Every response opens with a request-envelope "id", so matching the key alone
 # would return that instead of the record's own id. Match the value's shape.
 json_id() {
-  grep -oE "\"$1[0-9a-zA-Z_-]+\"" | head -1 | tr -d '"'
+  json_first_like "^$1[0-9a-zA-Z_-]+\$"
+}
+
+# "  <label>: <value>" for a key the response carries, nothing otherwise.
+said() {
+  local value
+  value="$(printf '%s' "$1" | json_find "$2")"
+  [ -z "$value" ] || printf '  %s: %s\n' "$3" "$value"
 }
 
 # One repo of the runtime's, by whatever name the caller had for it.
@@ -118,17 +124,23 @@ json_id() {
 # node, and the only sign of it was an exit code. Matching all three closes that
 # gap: the label works, the id works, a path works.
 repo_id_for() {
-  orca repo list --json 2>/dev/null | awk -v want="$1" '
-    # One field per line, so a record is accumulated and matched at its closing
-    # brace — the key order in the response is not part of this contract.
-    # The envelope opens with its own request "id", which the first repo record
-    # overwrites before any brace closes.
-    /"id"[[:space:]]*:/          { v=$0; sub(/.*"id"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); id=v }
-    /"path"[[:space:]]*:/        { v=$0; sub(/.*"path"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); path=v }
-    /"displayName"[[:space:]]*:/ { v=$0; sub(/.*"displayName"[[:space:]]*:[[:space:]]*"/,"",v); sub(/".*/,"",v); name=v }
-    /}/ {
-      if (id != "" && (id == want || path == want || name == want)) { print id; exit }
-      path=""; name=""
+  # A repo is the scalars sharing one parent path in the response, so neither
+  # the key order nor what a record nests is part of this contract.
+  orca repo list --json 2>/dev/null | json_stream | awk -F'\t' -v want="$1" '
+    $2 == "o" || $2 == "a" { next }
+    {
+      key = $1; sub(/.*\./, "", key)
+      parent = substr($1, 1, length($1) - length(key))
+      if (!(parent in seen)) { seen[parent] = 1; order[++n] = parent }
+      if (key == "id") id[parent] = $3
+      else if (key == "path") path[parent] = $3
+      else if (key == "displayName") name[parent] = $3
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        p = order[i]
+        if (id[p] != "" && (id[p] == want || path[p] == want || name[p] == want)) { print id[p]; break }
+      }
     }
   '
 }
@@ -167,8 +179,7 @@ resolve_repo() {
   {
     echo "driver-orca.sh: --repo '$REPO' matches no repo registered with the runtime"
     echo "  give its id, its path, or its display name. Known now:"
-    orca repo list --json 2>/dev/null \
-      | sed -n 's/.*"displayName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/    \1/p'
+    orca repo list --json 2>/dev/null | json_find_all displayName | sed 's/^/    /'
   } >&2
   exit 1
 }
@@ -338,7 +349,7 @@ task_workspaces() {
   local task="$1" args=(worktree list --limit 1000 --json)
   [ -n "$REPO" ] && args+=(--repo "id:$REPO")
   orca "${args[@]}" 2>/dev/null \
-    | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | json_find_all path \
     | awk -v t="$task" '{
         n = $0; sub(/.*\//, "", n)
         if (n == t) { print; next }
@@ -535,7 +546,7 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
     # Its own words beat a generic "no task id": `consumer_fenced` names a Run
     # collision, and that reads nothing like a parse failure.
     abandon_dispatch "the runtime refused to create a task for $task on run $run" \
-      "$(printf '%s' "$created" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1)"
+      "$(said "$created" message "runtime said")"
   fi
   printf '%s\n' "$(printf '%s' "$created" | json_val created_by_terminal_handle)" \
     > "$STATE/driver-orca-coordinator.txt"
@@ -600,12 +611,12 @@ Questions and decisions: NEVER call \`orca orchestration ask\` and NEVER use Ask
   # proves nothing either: it exits non-zero and names the stage it died in;
   # measured, a bad --base-branch dies in worktree_create with everything else
   # looking normal.
-  if [ "$rc" -ne 0 ] || printf '%s' "$started" | grep -q '"failedStage"'; then
+  if [ "$rc" -ne 0 ] || [ -n "$(printf '%s' "$started" | json_find failedStage)" ]; then
     abandon_dispatch "the runtime refused to start $task" "$(
-      printf '%s' "$started" | sed -n 's/.*"lastError"[[:space:]]*:[[:space:]]*"\(.*\)".*/  runtime said: \1/p' | head -1
-      printf '%s' "$started" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  runtime said: \1/p' | head -1
-      printf '%s' "$started" | sed -n 's/.*"failedStage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  it died in stage: \1/p' | head -1
-      printf '%s' "$started" | grep -q . || echo "  the call answered nothing at all — rerun it without 2>/dev/null to see the runtime's own error"
+      said "$started" lastError "runtime said"
+      said "$started" message "runtime said"
+      said "$started" failedStage "it died in stage"
+      [ -n "$started" ] || echo "  the call answered nothing at all — rerun it without 2>/dev/null to see the runtime's own error"
     )"
   fi
   dispatch_id="$(printf '%s' "$started" | json_id ctx_ || true)"
@@ -776,19 +787,18 @@ verb_wait() {
     local delivery
     delivery="$(printf '%s' "$out" | json_val deliveryId)"
     [ -n "$delivery" ] || delivery="$(printf '%s' "$out" | json_val delivery_id)"
-    [ -n "$delivery" ] || delivery="$(printf '%s' "$out" \
-      | sed -n 's/.*"delivery"[[:space:]]*:[[:space:]]*{[^}]*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    [ -n "$delivery" ] || delivery="$(printf '%s' "$out" | json_find delivery.id)"
     [ -n "$delivery" ] && printf '%s\n' "$delivery" > "$STATE/driver-orca-delivery.txt"
 
     # An `ok:false` answer used to be indistinguishable from a quiet five
     # minutes: stderr discarded, the exit code swallowed by `|| true`, and the
     # empty parse falling through to `timeout=1`. A call that FAILED in 50ms
     # then read to the graph exactly like a wait window that closed.
-    if printf '%s' "$out" | grep -q '"ok"[[:space:]]*:[[:space:]]*false'; then
+    if [ "$(printf '%s' "$out" | json_find ok)" = "false" ]; then
       printf 'error=%s\n' "$(printf '%s' "$out" | json_val code)"
     fi
 
-    if printf '%s' "$out" | grep -q '"type"[[:space:]]*:[[:space:]]*"escalation"'; then
+    if [ "$(printf '%s' "$out" | json_count type escalation)" -gt 0 ]; then
       printf 'signal=escalation\n'
       return 0
     fi
@@ -946,7 +956,7 @@ verb_probe() {
     printf 'reason=orca not on PATH\n'
     return 0
   fi
-  if orca status --json 2>/dev/null | grep -q '"reachable"[[:space:]]*:[[:space:]]*true'; then
+  if [ "$(orca status --json 2>/dev/null | json_find reachable)" = "true" ]; then
     printf 'ready=1\n'
     printf 'priority=10\n'
     printf 'workspaces=one runtime-managed workspace per node, visible in the app\n'
