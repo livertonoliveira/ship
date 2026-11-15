@@ -306,6 +306,25 @@ test_a_red_project_never_reaches_the_forge() {
   rm -rf "$root"
 }
 
+# MOB-8924/MOB-8926: a check that could not run was a plain red at landing, and
+# the pipeline sent fix agents after it with nothing in the code to fix.
+test_a_runner_that_never_started_is_environment_not_red() {
+  local name="a test:changed whose runner never started is result=environment (exit 7), not red: nothing pushed, no proof"
+  local root; root="$(mktemp -d)"; setup "$root"
+  (cd "$root/repo" && printf 'echo "sh: 1: vitest: command not found"\nexit 127\n' > changed.sh && git commit -qam "test: runner missing") >/dev/null 2>&1
+  local out rc=0
+  out="$(land "$root" T1)" || rc=$?
+  local pushed; pushed="$(git -C "$root/remote.git" rev-parse -q --verify refs/heads/fix/T1-x || true)"
+  if [ "$rc" -eq 7 ] && [ "$(field "$out" result)" = "environment" ] && [ -z "$pushed" ] \
+    && grep -q '^result=environment' "$root/repo/.context/ship-run/T1/pr-land.txt" \
+    && [ ! -f "$root/repo/.context/ship-run/T1/full-proof.txt" ]; then
+    log_pass "$name"
+  else
+    log_fail "$name (rc=$rc out='$out' pushed='$pushed')"
+  fi
+  rm -rf "$root"
+}
+
 test_a_project_without_test_changed_never_reaches_the_forge() {
   local name="a project with no test:changed script is result=red reason=no-test-changed: nothing pushed, no proof"
   local root; root="$(mktemp -d)"; setup "$root"
@@ -343,6 +362,7 @@ test_a_green_project_leaves_a_proof_of_tree_and_base() {
 
 test_a_pre_push_hook_refusal_is_red
 test_a_project_without_test_changed_never_reaches_the_forge
+test_a_runner_that_never_started_is_environment_not_red
 test_a_failed_push_without_a_hook_is_not_red
 test_a_branch_with_nothing_ahead_of_the_base_says_so
 test_every_result_is_on_disk
