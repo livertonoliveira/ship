@@ -197,7 +197,7 @@ if [ "${1:-}" = "--all" ]; then
 fi
 
 input="$(cat)"
-file_path="$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+file_path="$(printf '%s' "$input" | json_find file_path)"
 
 [ -z "$file_path" ] && exit 0
 [ -f "$file_path" ] || exit 0
