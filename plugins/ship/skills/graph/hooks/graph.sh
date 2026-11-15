@@ -2016,7 +2016,7 @@ cmd_poll() {
   require_graph "$dir"
   [ -n "$stall_after" ] || stall_after="$(stall_after_of "$dir")"
 
-  local id wt fp rows prev stalls since quiet_for busy_since now landed=0 stalled=0 working=0
+  local id wt fp rows prev stalls since quiet_for busy_since wt_abs now landed=0 stalled=0 working=0
   now="$(date +%s)"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -2094,9 +2094,14 @@ cmd_poll() {
     # quiet polls with vitest running the whole time. Bounded, so a command
     # that hangs does not hold the node open for ever. The graph's own wait
     # names the workspace in its arguments and is not the node working.
+    # Matched by the workspace's absolute path: a bare name ("wt-TASK-001/")
+    # is also in the arguments of any process working in a same-named
+    # workspace of another checkout, and that one is not this node.
     busy_since="$( { cat "$dir/progress-at-$id.txt" 2>/dev/null || true; } | tr -cd '0-9')"
+    wt_abs="$wt"
+    case "$wt_abs" in /*) ;; *) wt_abs="$PWD/$wt_abs" ;; esac
     if [ -n "$busy_since" ] && [ $(( now - busy_since )) -lt "${SHIP_BUSY_NODE_MAX_S:-3600}" ] \
-       && [ -n "$(pgrep -fl "$wt/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' || true)" ]; then
+       && [ -n "$(pgrep -fl "$wt_abs/" 2>/dev/null | grep -v -e 'driver-[a-z]*\.sh' -e 'graph\.sh' || true)" ]; then
       rm -f "$dir/stall-$id.txt"
       printf 'busy=%s\n' "$id"
       working=$((working + 1))

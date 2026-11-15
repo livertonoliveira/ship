@@ -51,7 +51,7 @@ scratch=".context/ship-run/$task"
 # Every lookup below is a grep that may match nothing; under set -e/pipefail an
 # empty match must be an empty value, never a silent exit — measured live on
 # three nodes whose pr-land printed nothing and whose PRs landed untold.
-field() { { printf '%s\n' "$1" | grep -m1 "^$2=" || true; } | cut -d= -f2-; }
+field() { { grep -m1 "^$2=" <<< "$1" || true; } | cut -d= -f2-; }
 # Every result line is also written to <scratch>/pr-land.txt: the pipeline
 # reads the file, never the caller's screen (where hook noise truncated it on
 # four nodes of one graph, 2026-10-15).
