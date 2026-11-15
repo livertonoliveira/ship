@@ -56,7 +56,7 @@ test_a_running_worker_keeps_the_run_waiting() {
   out="$(cd "$dir" && SHIP_AWAIT_WORKERS_S=0 bash "$PIPELINE" next T-1)"
   rm -rf "$dir"
   if [ "$(field "$out" state)" = "waiting" ] && [ "$(field "$out" action)" = "work" ] \
-     && printf '%s' "$out" | grep -q 'ship-review' && printf '%s' "$out" | grep -q 'without ending your run'; then
+     && grep -q 'ship-review' <<< "$out" && grep -q 'without ending your run' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $out)"

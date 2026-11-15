@@ -29,8 +29,8 @@ test_markdown_findings_extracted() {
 EOF
   out="$(bash "$IDENTITY_SCRIPT" "$dir")"
   rm -rf "$dir"
-  if printf '%s\n' "$out" | grep -qx 'review|medium|src/use-case.ts|duplicated-pre-lock-query' \
-    && printf '%s\n' "$out" | grep -qx 'review|low|src/logger.ts|log-level-too-high'; then
+  if grep -qx 'review|medium|src/use-case.ts|duplicated-pre-lock-query' <<< "$out" \
+    && grep -qx 'review|low|src/logger.ts|log-level-too-high' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -59,8 +59,8 @@ test_json_findings_and_escalations() {
 EOF
   out="$(bash "$IDENTITY_SCRIPT" "$dir")"
   rm -rf "$dir"
-  if printf '%s\n' "$out" | grep -qx 'security|high|src/user.ts|authz-idor' \
-    && ! printf '%s\n' "$out" | grep -q 'src/y.ts'; then
+  if grep -qx 'security|high|src/user.ts|authz-idor' <<< "$out" \
+    && ! grep -q 'src/y.ts' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"

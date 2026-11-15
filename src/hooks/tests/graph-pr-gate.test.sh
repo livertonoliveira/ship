@@ -154,9 +154,9 @@ test_a_clean_pr_without_the_proof_is_never_merged() {
   log="$(cat "$dir"/.context/ship-graph/*/graph-log.md)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' \
-    && printf '%s' "$log" | grep -q 'no proof for the current base' \
-    && printf '%s' "$second" | grep -q '^failed=TASK-001$'; then
+  if [ -z "$merged" ] && grep -q '^awaiting_merge=TASK-001$' <<< "$out" \
+    && grep -q 'no proof for the current base' <<< "$log" \
+    && grep -q '^failed=TASK-001$' <<< "$second"; then
     log_pass "$name"
   else
     log_fail "$name (merged='$merged' out='$out' second='$second')"
@@ -175,7 +175,7 @@ test_a_base_that_moved_after_the_proof_blocks_the_merge() {
   out="$(cd "$dir" && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" set --merge-policy graph >/dev/null && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^failed=TASK-001$'; then
+  if [ -z "$merged" ] && grep -q '^failed=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (merged='$merged' out='$out')"
@@ -194,7 +194,7 @@ test_a_pr_whose_head_changed_after_the_proof_blocks_the_merge() {
   out="$(cd "$dir" && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" set --merge-policy graph >/dev/null && SHIP_PR_REPROVE_MAX=0 GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if [ -z "$merged" ] && printf '%s' "$out" | grep -q '^failed=TASK-001$'; then
+  if [ -z "$merged" ] && grep -q '^failed=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (merged='$merged' out='$out')"
@@ -213,10 +213,10 @@ test_a_merged_pr_completes_the_node() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "merged"' \
-    && printf '%s' "$json" | grep -q '"last_merged": "TASK-001"' \
-    && printf '%s' "$json" | grep -q '"pr_url": "https://forge.test/acme/repo/pull/7"'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '"status": "merged"' <<< "$json" \
+    && grep -q '"last_merged": "TASK-001"' <<< "$json" \
+    && grep -q '"pr_url": "https://forge.test/acme/repo/pull/7"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -235,8 +235,8 @@ test_an_open_pr_keeps_the_node_landed() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "landed"'; then
+  if grep -q '^awaiting_merge=TASK-001$' <<< "$out" \
+    && grep -q '"status": "landed"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -257,8 +257,8 @@ test_a_closed_pr_fails_the_node() {
   held="$(cat "$dir/.context/ship-graph/f/hold-TASK-001.txt" 2>/dev/null || true)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^pr_closed=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "failed"' \
+  if grep -q '^pr_closed=TASK-001$' <<< "$out" \
+    && grep -q '"status": "failed"' <<< "$json" \
     && [ -n "$held" ]; then
     log_pass "$name"
   else
@@ -297,8 +297,8 @@ EOF
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   local logline; logline="$(cat "$dir"/.context/ship-graph/*/graph-log.md 2>/dev/null | grep -c 'through PR #9 of an earlier attempt' || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "merged"' \
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '"status": "merged"' <<< "$json" \
     && [ "${logline:-0}" -ge 1 ]; then
     log_pass "$name"
   else
@@ -324,8 +324,8 @@ test_a_landed_node_with_nothing_to_land_and_no_earlier_pr_fails_with_its_reason(
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^failed=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "failed"'; then
+  if grep -q '^failed=TASK-001$' <<< "$out" \
+    && grep -q '"status": "failed"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -362,10 +362,10 @@ EOF
   log="$(cat "$dir"/.context/ship-graph/*/graph-log.md 2>/dev/null || true)"
   calls="$(cat "$dir/linear.log" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$calls" | grep -q '^transition TASK-001 completed' \
-    && printf '%s' "$calls" | grep -q '^attach TASK-001 https://forge.test/acme/repo/pull/7' \
-    && printf '%s' "$log" | grep -q 'TASK-001 Linear issue moved to its completed state by the graph'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '^transition TASK-001 completed' <<< "$calls" \
+    && grep -q '^attach TASK-001 https://forge.test/acme/repo/pull/7' <<< "$calls" \
+    && grep -q 'TASK-001 Linear issue moved to its completed state by the graph' <<< "$log"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' calls='$(printf '%s' "$calls" | tr '\n' '|')')"
@@ -394,7 +394,7 @@ EOF
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" LINEAR_SH="$dir/fake-linear" LINEAR_FAKE_LOG="$dir/linear.log" LINEAR_API_KEY=k bash "$GRAPH" poll --stall-after 0)"
   calls="$(cat "$dir/linear.log" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' && [ -z "$calls" ]; then
+  if grep -q '^merged=TASK-001$' <<< "$out" && [ -z "$calls" ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' calls='$(printf '%s' "$calls" | tr '\n' '|')')"
@@ -413,11 +413,11 @@ test_summary_reports_the_run_from_its_own_records() {
   out="$(cd "$dir" && bash "$GRAPH" summary 2>&1)"
   summary="$(cat "$dir"/.context/ship-graph/f/summary.md 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^summary=' \
-    && printf '%s' "$summary" | grep -q '^- nodes: 2 · merged: 1 · failed: 0 · other: 1$' \
-    && printf '%s' "$summary" | grep -q '^- attempts: 1 (retries: 0)$' \
-    && printf '%s' "$summary" | grep -qE '^\| TASK-001 \| merged \| 1 \| [0-9T:Z-]+ \| [0-9T:Z-]+ \| [0-9]+ \| #7 \|$' \
-    && printf '%s' "$summary" | grep -qE '^\| TASK-002 \| (pending|ready) \| 0 \|  \|  \|  \|  \|$'; then
+  if grep -q '^summary=' <<< "$out" \
+    && grep -q '^- nodes: 2 · merged: 1 · failed: 0 · other: 1$' <<< "$summary" \
+    && grep -q '^- attempts: 1 (retries: 0)$' <<< "$summary" \
+    && grep -qE '^\| TASK-001 \| merged \| 1 \| [0-9T:Z-]+ \| [0-9T:Z-]+ \| [0-9]+ \| #7 \|$' <<< "$summary" \
+    && grep -qE '^\| TASK-002 \| (pending|ready) \| 0 \|  \|  \|  \|  \|$' <<< "$summary"; then
     log_pass "$name"
   else
     log_fail "$name (out='$(printf '%s' "$out" | head -3 | tr '\n' '|')' summary='$(printf '%s' "$summary" | tr '\n' '|' | cut -c1-400)')"
@@ -444,8 +444,8 @@ test_a_missing_pr_is_surfaced_not_assumed() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^pr_missing=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"status": "landed"'; then
+  if grep -q '^pr_missing=TASK-001$' <<< "$out" \
+    && grep -q '"status": "landed"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -523,8 +523,8 @@ test_a_pr_in_another_repo_is_found_from_the_node_workspace() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir" "$app"
 
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"pr_url": "https://forge.test/acme/app/pull/9"'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '"pr_url": "https://forge.test/acme/app/pull/9"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -546,8 +546,8 @@ test_a_pr_in_another_repo_is_found_after_its_workspace_is_gone() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   rm -rf "$dir" "$app"
 
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$out" | grep -q '^merged=TASK-002$'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '^merged=TASK-002$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -572,7 +572,7 @@ test_a_misplaced_first_workspace_does_not_poison_its_repo() {
   entry="$(cat "$f")"
   rm -rf "$dir" "$app"
 
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
+  if grep -q '^merged=TASK-001$' <<< "$out" \
     && [ "$entry" = "$(printf 'app\thttps://forge.test/acme/app.git')" ]; then
     log_pass "$name"
   else
@@ -596,7 +596,7 @@ test_a_workspace_of_another_graph_repo_is_refused_at_claim() {
   err="$(cd "$dir" && bash "$GRAPH" claim TASK-001 --worktree "$dir/wt-wrong" --branch ship/TASK-001 2>&1)" || rc=$?
   col="$(awk -F'\t' '$1 == "TASK-001" { print $7 }' "$dir/.context/ship-graph/f/nodes.tsv")"
   rm -rf "$dir" "$app"
-  if [ "$rc" -ne 0 ] && printf '%s' "$err" | grep -q 'belongs to app' && [ -z "$col" ]; then
+  if [ "$rc" -ne 0 ] && grep -q 'belongs to app' <<< "$err" && [ -z "$col" ]; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc err=$err col=$col)"
@@ -625,9 +625,9 @@ test_a_missing_pr_asks_instead_of_waiting_forever() {
 
   if [ "$(field "$out" state)" = "landed" ] \
     && [ "$(field "$out" action)" = "ask" ] \
-    && printf '%s' "$out" | grep -q 'no PR found for branch ship/NOPR' \
-    && printf '%s' "$out" | grep -q 'graph.sh" complete' \
-    && printf '%s' "$out" | grep -q 'graph.sh" fail'; then
+    && grep -q 'no PR found for branch ship/NOPR' <<< "$out" \
+    && grep -q 'graph.sh" complete' <<< "$out" \
+    && grep -q 'graph.sh" fail' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
@@ -694,9 +694,9 @@ test_next_hands_the_open_prs_to_the_user() {
 
   if [ "$(field "$out" state)" = "landed" ] \
     && [ "$(field "$out" action)" = "ask" ] \
-    && printf '%s' "$out" | grep -q 'https://forge.test/acme/repo/pull/7' \
-    && printf '%s' "$out" | grep -q 'graph.sh" poll' \
-    && printf '%s' "$out" | grep -q 'graph.sh" fail'; then
+    && grep -q 'https://forge.test/acme/repo/pull/7' <<< "$out" \
+    && grep -q 'graph.sh" poll' <<< "$out" \
+    && grep -q 'graph.sh" fail' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
@@ -717,7 +717,7 @@ test_an_armed_pr_waits_instead_of_asking() {
 
   if [ "$(field "$out" state)" = "landed" ] \
     && [ "$(field "$out" action)" = "wait" ] \
-    && printf '%s' "$out" | grep -q 'graph.sh" poll'; then
+    && grep -q 'graph.sh" poll' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (state='$(field "$out" state)' action='$(field "$out" action)')"
@@ -756,8 +756,8 @@ test_no_forge_does_not_deadlock_the_run() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$json" | grep -q '"pr_state": "no-forge"'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q '"pr_state": "no-forge"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -794,7 +794,7 @@ test_complete_is_the_manual_override() {
   rm -rf "$dir"
 
   if [ "$(field "$out" completed)" = "TASK-001" ] \
-    && printf '%s' "$json" | grep -q '"status": "merged"'; then
+    && grep -q '"status": "merged"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out')"
@@ -850,7 +850,7 @@ test_graph_merge_policy_reads_unknown_again_before_waiting_a_poll() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" SHIP_PR_MSTATE_WAIT_S=0 bash "$GRAPH" set --merge-policy graph >/dev/null && GH_BIN="$dir/fake-gh" SHIP_PR_MSTATE_WAIT_S=0 bash "$GRAPH" poll --stall-after 0)"
   local merged="no"; [ -s "$dir/merged" ] && merged="yes"
   rm -rf "$dir"
-  if [ "$merged" = "yes" ] && printf '%s' "$out" | grep -q '^merged=TASK-001$'; then
+  if [ "$merged" = "yes" ] && grep -q '^merged=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (merged=$merged out=$(printf '%s' "$out" | tr '\n' '|' | cut -c1-200))"
@@ -872,10 +872,10 @@ test_graph_merge_policy_merges_a_clean_unarmed_pr() {
   local next_out
   next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$merged" | grep -q -- '--squash' \
-    && printf '%s' "$json" | grep -q '"status": "merged"' \
-    && printf '%s' "$next_out" | grep -q 'TASK-002'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q -- '--squash' <<< "$merged" \
+    && grep -q '"status": "merged"' <<< "$json" \
+    && grep -q 'TASK-002' <<< "$next_out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' merged='$merged' next=$(field "$next_out" frontier))"
@@ -899,7 +899,7 @@ test_a_merge_that_fails_locally_but_landed_releases_now() {
   local mlog
   mlog="$(cat "$dir/.context/ship-graph/f/pr-TASK-001-merge.log" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' && [ "$calls" = "1" ] && printf '%s' "$mlog" | grep -q 'failed to delete local branch'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" && [ "$calls" = "1" ] && grep -q 'failed to delete local branch' <<< "$mlog"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' calls=$calls log='$mlog')"
@@ -919,7 +919,7 @@ test_graph_merge_policy_waits_while_checks_run() {
   next_out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" next)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' && [ -z "$merged" ] \
+  if grep -q '^awaiting_merge=TASK-001$' <<< "$out" && [ -z "$merged" ] \
     && [ "$(field "$next_out" state)" = "landed" ] && [ "$(field "$next_out" action)" = "wait" ]; then
     log_pass "$name"
   else
@@ -948,8 +948,8 @@ test_graph_merge_policy_sends_a_conflict_back_to_its_node() {
   rm -rf "$dir"
   if [ -z "$merged" ] && [ "$(field "$next_out" action)" != "ask" ] \
     && [ "$(printf '%s\n' "$log" | grep -c 'node asked to merge the base')" = "2" ] \
-    && printf '%s' "$log" | grep -q 'request 2 of 2' \
-    && printf '%s' "$log" | grep -q 'still conflicts with the base after 2 sync requests' && [ "$status" = "1" ]; then
+    && grep -q 'request 2 of 2' <<< "$log" \
+    && grep -q 'still conflicts with the base after 2 sync requests' <<< "$log" && [ "$status" = "1" ]; then
     log_pass "$name"
   else
     log_fail "$name (merged='$merged' next=$(field "$next_out" state)/$(field "$next_out" action) status=$status log=$(printf '%s' "$log" | tail -4 | tr '\n' '|'))"
@@ -969,7 +969,7 @@ test_graph_merge_policy_asks_on_red_checks() {
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
   if [ -z "$merged" ] && [ "$(field "$next_out" state)" = "landed" ] && [ "$(field "$next_out" action)" = "ask" ] \
-    && printf '%s' "$next_out" | grep -q 'merge-state=UNSTABLE'; then
+    && grep -q 'merge-state=UNSTABLE' <<< "$next_out"; then
     log_pass "$name"
   else
     log_fail "$name (merged='$merged' next=$(field "$next_out" state)/$(field "$next_out" action))"
@@ -988,7 +988,7 @@ test_human_merge_policy_never_merges() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' && [ -z "$merged" ]; then
+  if grep -q '^awaiting_merge=TASK-001$' <<< "$out" && [ -z "$merged" ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' merged='$merged')"
@@ -1007,9 +1007,9 @@ test_graph_is_the_default_merge_policy() {
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' \
-    && printf '%s' "$merged" | grep -q -- '--squash' \
-    && printf '%s' "$json" | grep -q '"merge_policy": "graph"'; then
+  if grep -q '^merged=TASK-001$' <<< "$out" \
+    && grep -q -- '--squash' <<< "$merged" \
+    && grep -q '"merge_policy": "graph"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' merged='$merged')"
@@ -1030,7 +1030,7 @@ test_a_graph_without_the_key_merges_by_default() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if printf '%s' "$out" | grep -q '^merged=TASK-001$' && [ -n "$merged" ]; then
+  if grep -q '^merged=TASK-001$' <<< "$out" && [ -n "$merged" ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' merged='$merged')"
@@ -1056,7 +1056,7 @@ test_init_takes_merge_policy_like_max_in_flight() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   merged="$(cat "$dir/merged" 2>/dev/null || true)"
   rm -rf "$dir"
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q '^awaiting_merge=TASK-001$' && [ -z "$merged" ]; then
+  if [ "$rc" -ne 0 ] && grep -q '^awaiting_merge=TASK-001$' <<< "$out" && [ -z "$merged" ]; then
     log_pass "$name"
   else
     log_fail "$name (invalid rc=$rc out='$out' merged='$merged')"

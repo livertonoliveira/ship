@@ -100,7 +100,7 @@ test_missing_file_exits_nonzero_with_stderr() {
     log_fail "$name (exit code was 0)"
     return
   fi
-  if ! printf '%s' "$stderr_output" | grep -qF "$missing"; then
+  if ! grep -qF "$missing" <<< "$stderr_output"; then
     log_fail "$name (stderr did not mention missing file: $stderr_output)"
     return
   fi

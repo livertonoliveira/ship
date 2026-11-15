@@ -95,7 +95,7 @@ test_no_markers_is_clean() {
     return
   fi
 
-  if ! printf '%s' "$out" | grep -qF "NEEDS CLARIFICATION scan — clean."; then
+  if ! grep -qF "NEEDS CLARIFICATION scan — clean." <<< "$out"; then
     log_fail "$name (unexpected output: $out)"
     rm -rf "$dir"
     return
@@ -178,7 +178,7 @@ test_missing_args_usage_fails() {
     return
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "usage:"; then
+  if ! grep -qF "usage:" <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain usage: $stderr_output)"
     return
   fi
@@ -197,7 +197,7 @@ test_invalid_target_usage_fails() {
     return
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "usage:"; then
+  if ! grep -qF "usage:" <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain usage: $stderr_output)"
     return
   fi

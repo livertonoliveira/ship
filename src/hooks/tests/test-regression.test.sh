@@ -74,7 +74,7 @@ EOF
   out="$(cd "$dir" && bash "$TR" check pre.txt post.txt)" || rc=$?
   rm -rf "$dir"
 
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^src/add.test.js 3 1$'; then
+  if [ "$rc" -eq 1 ] && grep -q '^src/add.test.js 3 1$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"

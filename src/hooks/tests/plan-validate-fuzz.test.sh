@@ -260,7 +260,7 @@ test_discovered_by_run_hook_tests_glob() {
   self_name="$(basename "${BASH_SOURCE[0]}")"
   found="$(find "$SCRIPT_DIR" -maxdepth 1 -name "*.test.sh" -print0 | xargs -0 -n1 basename | sort)"
   local name="scripts/run-hook-tests.sh's glob over src/hooks/tests/*.test.sh discovers this file"
-  if printf '%s\n' "$found" | grep -qxF "$self_name"; then
+  if grep -qxF "$self_name" <<< "$found"; then
     log_pass "$name"
   else
     log_fail "$name (discovered: $found)"

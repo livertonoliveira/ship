@@ -25,7 +25,7 @@ test_one_verb_one_path_per_entry_passes() {
   local out rc=0
   out="$(bash "$CHECK" --issues "$d" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^ok files=1 entries=4$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^ok files=1 entries=4$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"
@@ -39,7 +39,7 @@ test_a_set_described_by_a_count_is_a_violation() {
   local out rc=0
   out="$(bash "$CHECK" --issues "$d" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qE '^.*/TASK-002\.md:[0-9]+: not-a-path: modify ~67 arquivos'; then
+  if [ "$rc" -eq 1 ] && grep -qE '^.*/TASK-002\.md:[0-9]+: not-a-path: modify ~67 arquivos' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"
@@ -53,7 +53,7 @@ test_several_paths_on_one_line_is_a_violation() {
   local out rc=0
   out="$(bash "$CHECK" --issues "$d" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q ': several-paths: modify src/a.tsx, tests/a.test.tsx'; then
+  if [ "$rc" -eq 1 ] && grep -q ': several-paths: modify src/a.tsx, tests/a.test.tsx' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"
@@ -67,7 +67,7 @@ test_an_entry_without_a_verb_is_a_violation() {
   local out rc=0
   out="$(bash "$CHECK" --issues "$d" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q ': no-verb: src/a.ts'; then
+  if [ "$rc" -eq 1 ] && grep -q ': no-verb: src/a.ts' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"
@@ -81,7 +81,7 @@ test_a_single_tasks_file_is_checked_too() {
   local out rc=0
   out="$(bash "$CHECK" --tasks "$d/tasks.md" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'several-paths: modify src/b.ts, src/c.ts'; then
+  if [ "$rc" -eq 1 ] && grep -q 'several-paths: modify src/b.ts, src/c.ts' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"

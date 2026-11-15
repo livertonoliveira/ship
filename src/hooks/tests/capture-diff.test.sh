@@ -122,7 +122,7 @@ test_malformed_content_fails_loudly() {
     return
   fi
 
-  if ! printf '%s' "$stderr_output" | grep -qF "not a valid unified diff. Re-capture before proceeding."; then
+  if ! grep -qF "not a valid unified diff. Re-capture before proceeding." <<< "$stderr_output"; then
     log_fail "$name (stderr did not contain the malformed diff message: $stderr_output)"
     rm -rf "$dir"
     return
@@ -163,7 +163,7 @@ test_falls_back_to_local_branch_when_origin_ref_is_absent() {
     rm -rf "$dir"
     return
   fi
-  if ! printf '%s' "$stderr_output" | grep -qF "origin/main not found — using local main instead"; then
+  if ! grep -qF "origin/main not found — using local main instead" <<< "$stderr_output"; then
     log_fail "$name (stderr did not note the fallback: $stderr_output)"
     rm -rf "$dir"
     return
@@ -202,7 +202,7 @@ test_falls_back_to_root_commit_when_no_base_ref_resolves() {
     rm -rf "$dir"
     return
   fi
-  if ! printf '%s' "$stderr_output" | grep -qF "diffing against the repo's root commit"; then
+  if ! grep -qF "diffing against the repo's root commit" <<< "$stderr_output"; then
     log_fail "$name (stderr did not note the fallback: $stderr_output)"
     rm -rf "$dir"
     return

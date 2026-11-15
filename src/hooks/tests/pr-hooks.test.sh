@@ -36,7 +36,7 @@ setup_repo() {
 }
 
 field() {
-  printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-
+  grep -m1 "^$2=" <<< "$1" | cut -d= -f2-
 }
 
 test_preflight_reports_local_state() {
@@ -89,7 +89,7 @@ test_preflight_emits_gate_rows() {
     > "$dir/.context/ship-run/T1/phase-status.md"
   local out
   out="$(cd "$dir" && bash "$PREFLIGHT" --task T1)"
-  if printf '%s' "$out" | grep -q '^gate_row:| dev |'; then
+  if grep -q '^gate_row:| dev |' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name"

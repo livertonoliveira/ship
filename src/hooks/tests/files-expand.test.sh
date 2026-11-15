@@ -62,7 +62,7 @@ test_comma_free_group_stays_literal() {
   local out
   out="$(expand_text "## Files
 - modify src/{id}.ts")"
-  if printf '%s' "$out" | grep -qF -- '- modify src/{id}.ts'; then
+  if grep -qF -- '- modify src/{id}.ts' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -76,7 +76,7 @@ test_lines_outside_files_are_untouched() {
 - modify src/a.ts
 ## Acceptance Criteria
 - {a,b} stays")"
-  if printf '%s' "$out" | grep -qF -- '- {a,b} stays'; then
+  if grep -qF -- '- {a,b} stays' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -89,7 +89,7 @@ test_spec_content_is_never_evaluated() {
   marker="$(mktemp -d)/pwned"
   out="$(expand_text "## Files
 - modify src/{a,\$(touch $marker)}.ts")"
-  if [ ! -e "$marker" ] && printf '%s' "$out" | grep -qF "src/\$(touch $marker).ts"; then
+  if [ ! -e "$marker" ] && grep -qF "src/\$(touch $marker).ts" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"

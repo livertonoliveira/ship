@@ -68,8 +68,8 @@ EOF
     && grep -q '"a":null' "$dir/bodies" \
     && grep -q '"a":"CUR-1"' "$dir/bodies" \
     && grep -q '"p":"Revisão Arquitetural"' "$dir/bodies" \
-    && printf '%s' "$out" | grep -q '"id": "MOB-1", "repo": "", "title": "Schema", "deps": \[\], "files": \["src/db/schema.ts"\]' \
-    && printf '%s' "$out" | grep -q '"id": "MOB-2", "repo": "api", "title": "Endpoint", "deps": \["MOB-1"\], "files": \["src/api/routes.ts"\]'; then
+    && grep -q '"id": "MOB-1", "repo": "", "title": "Schema", "deps": \[\], "files": \["src/db/schema.ts"\]' <<< "$out" \
+    && grep -q '"id": "MOB-2", "repo": "api", "title": "Endpoint", "deps": \["MOB-1"\], "files": \["src/api/routes.ts"\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -92,10 +92,10 @@ test_closed_issues_are_not_nodes() {
 EOF
   out="$(run_nodes "$dir" "P")"
 
-  if ! printf '%s' "$out" | grep -q '"id": "MOB-1"' \
-    && ! printf '%s' "$out" | grep -q '"id": "MOB-2"' \
-    && printf '%s' "$out" | grep -q '"id": "MOB-3", .*"deps": \["MOB-4"\]' \
-    && printf '%s' "$out" | grep -q '"id": "MOB-4", .*"deps": \[\], "files": \["c.ts"\]'; then
+  if ! grep -q '"id": "MOB-1"' <<< "$out" \
+    && ! grep -q '"id": "MOB-2"' <<< "$out" \
+    && grep -q '"id": "MOB-3", .*"deps": \["MOB-4"\]' <<< "$out" \
+    && grep -q '"id": "MOB-4", .*"deps": \[\], "files": \["c.ts"\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -117,7 +117,7 @@ test_native_blocked_by_becomes_a_dep() {
 EOF
   out="$(run_nodes "$dir" "P")"
 
-  if printf '%s' "$out" | grep -q '"id": "MOB-3", .*"deps": \["MOB-1", "MOB-2"\]'; then
+  if grep -q '"id": "MOB-3", .*"deps": \["MOB-1", "MOB-2"\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -139,8 +139,8 @@ EOF
   out="$(run_nodes "$dir" "P")"
 
   if [ "$(printf '%s\n' "$out" | grep -c '"id":')" = "2" ] \
-    && printf '%s' "$out" | grep -q '"id": "MOB-1", .*"deps": \[\], "files": \["src/a.ts"\]' \
-    && printf '%s' "$out" | grep -q '"id": "MOB-2", .*"deps": \[\], "files": \[\]'; then
+    && grep -q '"id": "MOB-1", .*"deps": \[\], "files": \["src/a.ts"\]' <<< "$out" \
+    && grep -q '"id": "MOB-2", .*"deps": \[\], "files": \[\]' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (got: $out)"
@@ -174,7 +174,7 @@ EOF
   local json
   json="$(cd "$dir" && bash "$GRAPH" status --json 2>/dev/null || true)"
 
-  if [ "$rc" -eq 0 ] && printf '%s' "$json" | grep -q 'MOB-2'; then
+  if [ "$rc" -eq 0 ] && grep -q 'MOB-2' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc json=$json)"
@@ -189,7 +189,7 @@ test_missing_key_exits_4_without_calling_out() {
   install_fake_curl "$dir"
   err="$(FAKE_DIR="$dir" PATH="$dir/bin:$PATH" LINEAR_API_KEY="" bash "$GRAPH" nodes --from-linear "P" 2>&1 >/dev/null)" || rc=$?
 
-  if [ "$rc" -eq 4 ] && [ ! -f "$dir/calls" ] && printf '%s' "$err" | grep -q 'LINEAR_API_KEY'; then
+  if [ "$rc" -eq 4 ] && [ ! -f "$dir/calls" ] && grep -q 'LINEAR_API_KEY' <<< "$err"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc err=$err)"
@@ -225,7 +225,7 @@ test_api_error_is_surfaced() {
   printf '%s\n' '{"errors":[{"message":"Authentication required, not authenticated","extensions":{"code":"AUTHENTICATION_ERROR"}}]}' > "$dir/page-1.json"
   err="$(run_nodes "$dir" "P" 2>&1 >/dev/null)" || rc=$?
 
-  if [ "$rc" -eq 1 ] && printf '%s' "$err" | grep -q 'Authentication required'; then
+  if [ "$rc" -eq 1 ] && grep -q 'Authentication required' <<< "$err"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc err=$err)"
@@ -241,7 +241,7 @@ test_unknown_project_is_refused() {
   printf '%s\n' '{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}' > "$dir/page-1.json"
   err="$(run_nodes "$dir" "Nope" 2>&1 >/dev/null)" || rc=$?
 
-  if [ "$rc" -eq 1 ] && printf '%s' "$err" | grep -q 'no issue found'; then
+  if [ "$rc" -eq 1 ] && grep -q 'no issue found' <<< "$err"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc err=$err)"

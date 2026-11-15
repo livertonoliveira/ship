@@ -49,7 +49,7 @@ test_ask_posts_the_question_where_the_graph_reads_it() {
   out="$(cd "$dir" && bash "$PIPELINE" ask T-1 "Delete the dead export, or ignore it in knip?")"
   if [ "$(field "$out" posted)" = "1" ] \
      && grep -q '^question=Delete the dead export, or ignore it in knip?$' "$dir/.context/ship-run/T-1/ask.md" \
-     && printf '%s' "$out" | grep -q 'wait-answer T-1'; then
+     && grep -q 'wait-answer T-1' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $out)"
@@ -64,7 +64,7 @@ test_next_does_not_advance_over_an_unanswered_question() {
   (cd "$dir" && bash "$PIPELINE" ask T-1 "which one?" >/dev/null)
   out="$(cd "$dir" && bash "$PIPELINE" next T-1)"
   if [ "$(field "$out" state)" = "waiting" ] && [ -f "$dir/.context/ship-run/T-1/ask.md" ] \
-     && printf '%s' "$out" | grep -q 'which one?'; then
+     && grep -q 'which one?' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $out)"

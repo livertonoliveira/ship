@@ -51,11 +51,11 @@ test_missing_hook_fails_with_canonical_message() {
     log_fail "$name (init exited 0 with a hook removed)"
     return
   fi
-  if ! printf '%s' "$err" | grep -q 'MISSING HOOK(S).*diff-classify.sh'; then
+  if ! grep -q 'MISSING HOOK(S).*diff-classify.sh' <<< "$err"; then
     log_fail "$name (message did not name the missing hook: $err)"
     return
   fi
-  if ! printf '%s' "$err" | grep -q 'HOOK_DIR='; then
+  if ! grep -q 'HOOK_DIR=' <<< "$err"; then
     log_fail "$name (message did not stamp the resolved HOOK_DIR: $err)"
     return
   fi
@@ -87,7 +87,7 @@ test_required_list_matches_actual_calls() {
   required="$(grep -E '^REQUIRED_HOOKS=' "$HOOKS_DIR/pipeline.sh")"
   local h
   for h in $called; do
-    printf '%s' "$required" | grep -q "$h" || missing="$missing $h"
+    grep -q "$h" <<< "$required" || missing="$missing $h"
   done
   if [ -n "$missing" ]; then
     log_fail "$name (called but not guarded:$missing)"

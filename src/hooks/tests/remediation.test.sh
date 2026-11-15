@@ -12,7 +12,7 @@ fail_count=0
 log_pass() { pass_count=$((pass_count + 1)); echo "PASS: $1"; }
 log_fail() { fail_count=$((fail_count + 1)); echo "FAIL: $1"; }
 
-field() { printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-; }
+field() { grep -m1 "^$2=" <<< "$1" | cut -d= -f2-; }
 
 make_config() {
   printf '# Config\n\n- Artifact language: en\n' > "$1/config.md"

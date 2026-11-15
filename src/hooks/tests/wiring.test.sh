@@ -33,7 +33,7 @@ test_run_skill_next_removal_breaks_detection() {
   local name="removing the pipeline.sh next call from a scratch copy breaks the driver assertion"
   local stripped
   stripped="$(grep -v '@@ship/hooks/pipeline.sh" next' "$RUN_SKILL")"
-  if printf '%s' "$stripped" | grep -q '@@ship/hooks/pipeline.sh" next'; then
+  if grep -q '@@ship/hooks/pipeline.sh" next' <<< "$stripped"; then
     log_fail "$name (stripped copy still matched)"
   else
     log_pass "$name"

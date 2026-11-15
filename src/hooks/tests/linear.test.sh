@@ -109,7 +109,7 @@ test_cached_documents_are_not_fetched_again() {
   echo cached > "$dir/cache/proposal.md"; echo cached > "$dir/cache/design.md"
   out="$(lin "$dir" context MOB-1 --out "$dir/run" --docs "$dir/cache")"
   if ! grep -q documents "$dir/bodies" && [ "$(cat "$dir/cache/design.md")" = "cached" ] \
-     && printf '%s' "$out" | grep -q 'cached'; then
+     && grep -q 'cached' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (bodies: $(cat "$dir/bodies"))"
@@ -211,8 +211,8 @@ test_pipeline_stages_the_linear_context_itself() {
   mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
   out="$(pipe "$dir" MOB-1)"
   if [ "$(field "$out" state)" = "context" ] \
-     && printf '%s' "$out" | grep -q 'already fetched the Linear context' \
-     && ! printf '%s' "$out" | grep -q 'get_issue' \
+     && grep -q 'already fetched the Linear context' <<< "$out" \
+     && ! grep -q 'get_issue' <<< "$out" \
      && [ -s "$dir/repo/.context/ship-run/MOB-1/linear/issue.md" ] \
      && grep 'issueUpdate' "$dir/bodies" | grep -q '"s":"st-prog"'; then
     log_pass "$name"
@@ -253,7 +253,7 @@ test_pipeline_without_a_key_keeps_the_mcp_path() {
   dir="$(mktemp -d)"
   mkdir -p "$dir/repo"; setup_linear_repo "$dir/repo"
   out="$(cd "$dir/repo" && env -u LINEAR_API_KEY bash "$PIPELINE" next MOB-1)"
-  if printf '%s' "$out" | grep -q 'Fetch the issue and project documents via Linear MCP'; then
+  if grep -q 'Fetch the issue and project documents via Linear MCP' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out: $out)"
@@ -276,7 +276,7 @@ test_pipeline_completes_the_issue_once() {
   calls="$(grep -c issueUpdate "$dir/bodies" || true)"
   FAKE_REPORTED=completed pipe "$dir" MOB-1 >/dev/null 2>&1 || true
   if [ "$(field "$out" state)" = "done" ] \
-     && printf '%s' "$out" | grep -q 'moved the issue to its completed state (Concluído)' \
+     && grep -q 'moved the issue to its completed state (Concluído)' <<< "$out" \
      && [ "$calls" = "1" ] && [ "$(grep -c issueUpdate "$dir/bodies")" = "1" ]; then
     log_pass "$name"
   else
@@ -296,8 +296,8 @@ test_state_answers_the_issue_state_type() {
   install_fake_curl "$dir"
   local out rc=0
   out="$(lin "$dir" state MOB-1 2>&1)" || rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qx 'type=unstarted' \
-    && printf '%s' "$out" | grep -qx 'state=Todo' \
+  if [ "$rc" -eq 0 ] && grep -qx 'type=unstarted' <<< "$out" \
+    && grep -qx 'state=Todo' <<< "$out" \
     && [ "$(grep -c 'state{type name}' "$dir/bodies")" = "1" ]; then
     log_pass "$name"
   else

@@ -182,7 +182,7 @@ test_a_run_is_created_before_anything_else() {
   local first
   root="$(new_case)"; run_dispatch "$root"
   first="$(grep '^orchestration ' "$root/argv.log" | head -1)"
-  if printf '%s' "$first" | grep -q '^orchestration run-create '; then
+  if grep -q '^orchestration run-create ' <<< "$first"; then
     log_pass "dispatch opens a Run before any other orchestration call"
   else
     log_fail "dispatch opens a Run before any other orchestration call (first was: $first)"
@@ -196,7 +196,7 @@ test_task_create_carries_the_run() {
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
   # Without --run, task-create falls back to the retired coordinator lookup and
   # answers legacy_read_only. This one flag is the whole difference.
-  if printf '%s' "$line" | grep -q -- '--run run_deadbeef01'; then
+  if grep -q -- '--run run_deadbeef01' <<< "$line"; then
     log_pass "task-create carries the Run (the flag whose absence returned legacy_read_only)"
   else
     log_fail "task-create carries the Run (got: $line)"
@@ -223,9 +223,9 @@ test_worker_start_creates_a_workspace_through_the_runtime() {
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
   # Created THROUGH the runtime is what registers it with the app; a plain git
   # worktree beside the repo never shows up there.
-  if printf '%s' "$line" | grep -q -- '--worktree new-top-level' \
-     && printf '%s' "$line" | grep -q -- '--run run_deadbeef01' \
-     && printf '%s' "$line" | grep -q -- '--task task_deadbeef02'; then
+  if grep -q -- '--worktree new-top-level' <<< "$line" \
+     && grep -q -- '--run run_deadbeef01' <<< "$line" \
+     && grep -q -- '--task task_deadbeef02' <<< "$line"; then
     log_pass "worker-start asks the runtime for a new top-level workspace on the Run's task"
   else
     log_fail "worker-start asks the runtime for a new top-level workspace on the Run's task (got: $line)"
@@ -237,7 +237,7 @@ test_one_workspace_named_for_the_node() {
   local root line
   root="$(new_case)"; run_dispatch "$root"
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -q -- '--name N1' && printf '%s' "$line" | grep -q -- '--display-name N1'; then
+  if grep -q -- '--name N1' <<< "$line" && grep -q -- '--display-name N1' <<< "$line"; then
     log_pass "the workspace is named for the node, so one node reads as one workspace"
   else
     log_fail "the workspace is named for the node (got: $line)"
@@ -251,7 +251,7 @@ test_an_agent_is_launched_in_it() {
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
   # A workspace with no agent in it is the failure mode driver-local had: the
   # checkout exists and nothing is working in it.
-  if printf '%s' "$line" | grep -qE -- '--agent |--terminal '; then
+  if grep -qE -- '--agent |--terminal ' <<< "$line"; then
     log_pass "worker-start launches an agent in the workspace it creates"
   else
     log_fail "worker-start launches an agent in the workspace it creates (got: $line)"
@@ -265,7 +265,7 @@ test_the_node_runs_on_the_orchestration_model() {
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
   # The node session is the pipeline's orchestrator. Left to the user's default
   # agent model it ran on Opus — 69% of a node's cost on 677 measured nodes.
-  if printf '%s' "$line" | grep -qE -- '--agent claude --model sonnet( |$)'; then
+  if grep -qE -- '--agent claude --model sonnet( |$)' <<< "$line"; then
     log_pass "the node agent is launched on the orchestration model by default"
   else
     log_fail "the node agent is launched on the orchestration model by default (got: $line)"
@@ -273,7 +273,7 @@ test_the_node_runs_on_the_orchestration_model() {
   rm -rf "$root"
   root="$(new_case)"; SHIP_NODE_MODEL=claude-sonnet-5-5 run_dispatch "$root"
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -qE -- '--model claude-sonnet-5-5( |$)'; then
+  if grep -qE -- '--model claude-sonnet-5-5( |$)' <<< "$line"; then
     log_pass "SHIP_NODE_MODEL overrides the node model"
   else
     log_fail "SHIP_NODE_MODEL overrides the node model (got: $line)"
@@ -287,9 +287,9 @@ test_the_node_drives_the_pipeline_itself() {
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
   # A node session already runs on the orchestration model; a /ship:run fork
   # on top of it paid a second ~44k-token start and the node's own turns.
-  if printf '%s' "$line" | grep -qE 'run bash "/[^"]*/pipeline\.sh" next N1' \
-     && printf '%s' "$line" | grep -q 'Never invoke the ship:run skill' \
-     && ! printf '%s' "$line" | grep -q -- '--spec /ship:run N1'; then
+  if grep -qE 'run bash "/[^"]*/pipeline\.sh" next N1' <<< "$line" \
+     && grep -q 'Never invoke the ship:run skill' <<< "$line" \
+     && ! grep -q -- '--spec /ship:run N1' <<< "$line"; then
     log_pass "the node brief drives pipeline.sh directly instead of forking /ship:run"
   else
     log_fail "the node brief drives pipeline.sh directly instead of forking /ship:run (got: $line)"
@@ -301,8 +301,8 @@ test_the_node_is_told_how_to_ask() {
   local root line
   root="$(new_case)"; run_dispatch "$root"
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -qE 'pipeline\.sh\\?" ask N1' \
-     && printf '%s' "$line" | grep -q 'never report failure and go idle on a question'; then
+  if grep -qE 'pipeline\.sh\\?" ask N1' <<< "$line" \
+     && grep -q 'never report failure and go idle on a question' <<< "$line"; then
     log_pass "the brief gives the node the graph's own channel for a decision it cannot take"
   else
     log_fail "the brief gives the node the graph's own channel for a decision it cannot take (got: $line)"
@@ -392,9 +392,9 @@ test_dispatch_reports_the_workspace_it_made() {
   local root out
   root="$(new_case)"; run_dispatch "$root"
   out="$(cat "$root/out.txt")"
-  if printf '%s' "$out" | grep -q '^ok=1$' \
-     && printf '%s' "$out" | grep -q '^worktree=/tmp/ws/N1$' \
-     && printf '%s' "$out" | grep -q '^branch=ship/N1$'; then
+  if grep -q '^ok=1$' <<< "$out" \
+     && grep -q '^worktree=/tmp/ws/N1$' <<< "$out" \
+     && grep -q '^branch=ship/N1$' <<< "$out"; then
     log_pass "dispatch reports the workspace path and short branch back to the graph"
   else
     # stderr too: an empty stdout means the driver died before printing, and the
@@ -442,8 +442,8 @@ test_dispatch_refuses_to_report_a_worker_it_cannot_see_working() {
   out="$(cat "$root/out.txt")"
   # The whole bug in one assertion: reporting ok=1 on the runtime's promise is
   # what let five dead nodes be claimed in_flight.
-  if [ "$(cat "$root/rc.txt")" != "0" ] && printf '%s' "$out" | grep -q '^ok=0$' \
-     && ! printf '%s' "$out" | grep -q '^ok=1$'; then
+  if [ "$(cat "$root/rc.txt")" != "0" ] && grep -q '^ok=0$' <<< "$out" \
+     && ! grep -q '^ok=1$' <<< "$out"; then
     log_pass "a worker that never starts working fails the dispatch instead of being reported started"
   else
     log_fail "a worker that never starts working fails the dispatch (rc: $(cat "$root/rc.txt") / stdout: $out)"
@@ -468,7 +468,7 @@ test_a_working_worker_is_reported_confirmed() {
   local root out
   root="$(new_case)"; ORCA_FAKE_TUI=busy run_dispatch "$root"
   out="$(cat "$root/out.txt")"
-  if printf '%s' "$out" | grep -q '^confirmed=working$'; then
+  if grep -q '^confirmed=working$' <<< "$out"; then
     log_pass "dispatch reports confirmation as evidence, not as a claim"
   else
     log_fail "dispatch reports confirmation as evidence (stdout: $out)"
@@ -497,7 +497,7 @@ test_the_worker_is_told_how_to_report_completion() {
   line="$(grep '^orchestration task-create ' "$root/argv.log" | head -1)"
   # Measured: worker_done without --run is rejected as legacy_read_only, and the
   # runtime's own preamble never mentions the Run. Workers retried it forever.
-  if printf '%s' "$line" | grep -q -- '--run run_deadbeef01 in addition to'; then
+  if grep -q -- '--run run_deadbeef01 in addition to' <<< "$line"; then
     log_pass "the brief tells the worker to carry the Run on its completion call"
   else
     log_fail "the brief tells the worker to carry the Run on its completion call (got: $line)"
@@ -516,7 +516,7 @@ test_the_wake_is_left_in_the_workspace_for_the_pipeline_to_run() {
   # and narrating a summary nobody reads. The wake the coordinator needs is now
   # a file pipeline.sh runs at done; the brief tells the worker to send nothing.
   if [ -x "$f" ] && grep -qE 'bash "/[^"]*/driver-orca\.sh" wake N1 --state "/[^"]*"' "$f" \
-    && printf '%s' "$line" | grep -q 'Send no worker_done, run no wake, write no summary'; then
+    && grep -q 'Send no worker_done, run no wake, write no summary' <<< "$line"; then
     log_pass "dispatch leaves the coordinator wake in <workspace>/.context/ship-run/N1/on-done.sh and tells the worker to send nothing"
   else
     log_fail "dispatch leaves the coordinator wake in on-done.sh (file=$([ -f "$f" ] && cat "$f" || echo missing) brief=$(printf '%s' "$line" | cut -c1-200))"
@@ -568,7 +568,7 @@ test_the_wake_stays_silent_while_the_loop_is_running() {
   sends="$(grep -c '^terminal send ' "$root/argv.log" || true)"
   # A message typed at a coordinator inside `graph.sh run` queues behind the
   # call and re-enters the skill over a live loop when it returns.
-  if printf '%s' "$out" | grep -q '^wake=skipped$' && [ "$sends" = "0" ]; then
+  if grep -q '^wake=skipped$' <<< "$out" && [ "$sends" = "0" ]; then
     log_pass "no wake is typed at a coordinator whose loop is running"
   else
     log_fail "no wake is typed at a coordinator whose loop is running (out: $out, sends: $sends)"
@@ -585,7 +585,7 @@ test_the_wake_stays_silent_between_two_slices_of_the_loop() {
   sends="$(grep -c '^terminal send ' "$root/argv.log" || true)"
   printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$root/state/run-heartbeat.txt"
   stale="$(run_wake "$root")"
-  if printf '%s' "$out" | grep -q '^wake=skipped$' && [ "$sends" = "0" ] && [ "$stale" = "wake=sent" ]; then
+  if grep -q '^wake=skipped$' <<< "$out" && [ "$sends" = "0" ] && [ "$stale" = "wake=sent" ]; then
     log_pass "a loop that just ran silences the wake; one that stopped an hour ago does not"
   else
     log_fail "a loop that just ran silences the wake; one that stopped an hour ago does not (fresh: $out, sends: $sends, stale: $stale)"
@@ -628,7 +628,7 @@ test_repo_is_resolved_from_the_working_tree() {
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
   # With --repo omitted the runtime would infer the CALLING terminal's checkout,
   # which is the coordinator's, not necessarily the graph's.
-  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd'; then
+  if grep -q -- '--repo id:repo-from-cwd' <<< "$line"; then
     log_pass "an omitted repo is resolved from the working tree, not left to inference"
   else
     log_fail "an omitted repo is resolved from the working tree (got: $line)"
@@ -640,7 +640,7 @@ test_an_explicit_repo_wins() {
   local root line
   root="$(new_case)"; run_dispatch "$root" --repo repo-from-cwd
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd'; then
+  if grep -q -- '--repo id:repo-from-cwd' <<< "$line"; then
     log_pass "a repo passed by the graph as an id is used as given"
   else
     log_fail "a repo passed by the graph as an id is used as given (got: $line)"
@@ -660,7 +660,7 @@ test_a_display_name_resolves_to_the_id() {
   local root line
   root="$(new_case)"; run_dispatch "$root" --repo the-repo
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
-  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd'; then
+  if grep -q -- '--repo id:repo-from-cwd' <<< "$line"; then
     log_pass "a repo given by display name resolves to the runtime's id"
   else
     log_fail "a repo given by display name resolves to the runtime's id (got: $line)"
@@ -677,8 +677,8 @@ test_the_graph_record_of_the_repo_wins() {
   run_dispatch "$root" --repo not-a-repo
   line="$(grep '^orchestration worker-start ' "$root/argv.log" | head -1)"
   err="$(cat "$root/err.txt")"
-  if printf '%s' "$line" | grep -q -- '--repo id:repo-from-cwd' \
-     && printf '%s' "$err" | grep -q 'not-a-repo ignored — N1 belongs to the-repo'; then
+  if grep -q -- '--repo id:repo-from-cwd' <<< "$line" \
+     && grep -q 'not-a-repo ignored — N1 belongs to the-repo' <<< "$err"; then
     log_pass "the graph's record of a node's repo wins over a --repo the caller hard-coded"
   else
     log_fail "the graph's record of a node's repo wins over a --repo the caller hard-coded (got: $line / err: $err)"
@@ -694,8 +694,8 @@ test_an_unknown_repo_is_refused_by_name() {
   # Handing an unresolvable selector to the runtime buys one exit code per node.
   # Saying which value failed, and what is registered, costs one call.
   if [ "$rc" != "0" ] \
-     && printf '%s' "$err" | grep -q "matches no repo registered with the runtime" \
-     && printf '%s' "$err" | grep -q "the-repo" \
+     && grep -q "matches no repo registered with the runtime" <<< "$err" \
+     && grep -q "the-repo" <<< "$err" \
      && ! grep -q '^orchestration worker-start ' "$root/argv.log"; then
     log_pass "a repo that resolves to nothing is refused by name, before any workspace is made"
   else
@@ -728,7 +728,7 @@ FAKE
   run_dispatch "$root" --repo repo-from-cwd
   rc="$(cat "$root/rc.txt")"
   err="$(cat "$root/err.txt")"
-  if [ "$rc" != "0" ] && printf '%s' "$err" | grep -q "the runtime refused to start N1"; then
+  if [ "$rc" != "0" ] && grep -q "the runtime refused to start N1" <<< "$err"; then
     log_pass "a worker-start that dies with an empty body is reported, not swallowed by set -e"
   else
     log_fail "a worker-start that dies with an empty body is reported (rc=$rc err='$err')"
@@ -774,7 +774,7 @@ test_a_failed_start_takes_back_the_workspace_it_cut() {
   ORCA_FAKE_WS="$root/ws.txt" run_dispatch "$root" --repo repo-from-cwd
   log="$(grep '^worktree rm ' "$root/argv.log" || true)"
   if [ "$(cat "$root/rc.txt")" != "0" ] \
-     && printf '%s' "$log" | grep -q -- '--worktree path:/tmp/ws/N1-2 ' \
+     && grep -q -- '--worktree path:/tmp/ws/N1-2 ' <<< "$log" \
      && [ "$(printf '%s\n' "$log" | grep -c .)" -eq 1 ]; then
     log_pass "a start that dies after cutting the workspace removes that one workspace and no other"
   else
@@ -788,8 +788,8 @@ test_a_failed_dispatch_is_recorded_for_the_graph() {
   root="$(new_case)"; new_orphaning_orca "$root"
   ORCA_FAKE_WS="$root/ws.txt" run_dispatch "$root" --repo repo-from-cwd
   rec="$(cat "$root/state/dispatch-failed-N1.txt" 2>/dev/null || true)"
-  if printf '%s' "$rec" | grep -q 'the runtime refused to start N1' \
-     && printf '%s' "$rec" | grep -q 'pty spawn failed'; then
+  if grep -q 'the runtime refused to start N1' <<< "$rec" \
+     && grep -q 'pty spawn failed' <<< "$rec"; then
     log_pass "a failed dispatch leaves its reason where the graph counts it"
   else
     log_fail "a failed dispatch leaves its reason where the graph counts it (got: '$rec')"
@@ -837,7 +837,7 @@ test_a_probe_reads_the_runtime_not_just_the_path() {
   out="$(ORCA_FAKE_LOG="$root/argv.log" PATH="$root/bin:$PATH" bash "$DRIVER" probe)"
   # The CLI answers fine with the app closed; a graph electing this driver on
   # PATH alone would fail at its first dispatch.
-  if grep -q '^status' "$root/argv.log" && printf '%s' "$out" | grep -q '^ready=1$'; then
+  if grep -q '^status' "$root/argv.log" && grep -q '^ready=1$' <<< "$out"; then
     log_pass "probe asks the runtime whether it is reachable"
   else
     log_fail "probe asks the runtime whether it is reachable (log: $(cat "$root/argv.log"))"
@@ -849,7 +849,7 @@ test_a_probe_declares_its_workspaces() {
   local root out
   root="$(new_case)"
   out="$(ORCA_FAKE_LOG="$root/argv.log" PATH="$root/bin:$PATH" bash "$DRIVER" probe)"
-  if printf '%s' "$out" | grep -q '^workspaces=.*visible in the app'; then
+  if grep -q '^workspaces=.*visible in the app' <<< "$out"; then
     log_pass "probe states that its workspaces show in the app"
   else
     log_fail "probe states that its workspaces show in the app (got: $out)"
@@ -899,9 +899,9 @@ test_a_replayed_signal_is_not_reported_twice() {
   second="$(run_wait "$root" --timeout-ms 1000)"
   # The first worker_done is real. The identical one behind it is the replay,
   # and reporting it again is what turned the wait into a busy loop.
-  if printf '%s' "$first" | grep -q '^signal=worker_done$' \
-     && printf '%s' "$second" | grep -q '^timeout=1$' \
-     && ! printf '%s' "$second" | grep -q '^signal=worker_done$'; then
+  if grep -q '^signal=worker_done$' <<< "$first" \
+     && grep -q '^timeout=1$' <<< "$second" \
+     && ! grep -q '^signal=worker_done$' <<< "$second"; then
     log_pass "a replayed delivery is not reported as a second worker finishing"
   else
     log_fail "a replayed delivery is not reported as a second worker finishing (first='$first' second='$second')"
@@ -918,8 +918,8 @@ test_wait_owes_the_caller_its_window() {
   elapsed=$(( ended - began ))
   # graph.sh paces its stall checks on this call. A `wait` that answers in 50ms
   # turns a three-minute window into a three-second one, whatever the reason.
-  if [ "$elapsed" -ge 3 ] && printf '%s' "$out" | grep -q '^timeout=1$' \
-     && printf '%s' "$out" | grep -q '^waited='; then
+  if [ "$elapsed" -ge 3 ] && grep -q '^timeout=1$' <<< "$out" \
+     && grep -q '^waited=' <<< "$out"; then
     log_pass "a wait with nothing to report still spends the window it was given"
   else
     log_fail "a wait with nothing to report still spends the window it was given (elapsed=${elapsed}s out='$out')"
@@ -934,7 +934,7 @@ test_a_failed_check_is_named_not_swallowed() {
   # stderr discarded, exit code swallowed by `|| true`, empty parse falling
   # through to timeout=1: a call that FAILED in 50ms read exactly like a wait
   # window that closed, and nothing upstream could tell.
-  if printf '%s' "$out" | grep -q '^error=consumer_fenced$'; then
+  if grep -q '^error=consumer_fenced$' <<< "$out"; then
     log_pass "a check the runtime refused is named, not reported as a quiet window"
   else
     log_fail "a check the runtime refused is named, not reported as a quiet window (out='$out')"
@@ -958,7 +958,7 @@ test_an_existing_artifact_ends_the_wait_at_once() {
   out="$(ORCA_FAKE_CHECK=empty run_wait "$root" --timeout-ms 20000 --until-file "$root/done.txt")"
   ended="$(date +%s)"
   # Already finished before the call: it must not buy another whole window.
-  if printf '%s' "$out" | grep -q '^signal=artifact$' \
+  if grep -q '^signal=artifact$' <<< "$out" \
      && printf '%s' "$out" | grep -q "^artifact=$root/done.txt$" \
      && [ "$(( ended - began ))" -lt 5 ]; then
     log_pass "an artifact already on disk ends the wait immediately, without another window"
@@ -979,7 +979,7 @@ test_an_artifact_appearing_mid_window_cuts_it_short() {
   wait
   # Well inside the 60s window, and nowhere near instant either — the driver is
   # really blocking, it is just checking the disk between slices.
-  if printf '%s' "$out" | grep -q '^signal=artifact$' && [ "$elapsed" -lt 40 ] && [ "$elapsed" -ge 3 ]; then
+  if grep -q '^signal=artifact$' <<< "$out" && [ "$elapsed" -lt 40 ] && [ "$elapsed" -ge 3 ]; then
     log_pass "an artifact appearing mid-window ends the wait in seconds, not at the timeout"
   else
     log_fail "an artifact appearing mid-window ends the wait in seconds (elapsed=${elapsed}s out='$out')"
@@ -996,7 +996,7 @@ test_a_watched_file_that_never_appears_still_spends_the_window() {
   # The slices must not turn the wait back into a busy loop: graph.sh paces its
   # stall checks on this call, and a wait that answers early for no reason is
   # the bug this whole file exists to keep fixed.
-  if printf '%s' "$out" | grep -q '^timeout=1$' && [ "$elapsed" -ge 4 ]; then
+  if grep -q '^timeout=1$' <<< "$out" && [ "$elapsed" -ge 4 ]; then
     log_pass "a watched file that never appears still costs the whole window"
   else
     log_fail "a watched file that never appears still costs the whole window (elapsed=${elapsed}s out='$out')"
@@ -1011,7 +1011,7 @@ test_every_driver_accepts_the_until_file_flag() {
   # take it for a positional argument either.
   for d in manual local; do
     out="$(bash "$SCRIPT_DIR/../driver-$d.sh" wait --state "$dir" --until-file "$dir/x" 2>&1)" || ok=0
-    printf '%s' "$out" | grep -q '^signal=\|^timeout=1$' || ok=0
+    grep -q '^signal=\|^timeout=1$' <<< "$out" || ok=0
   done
   rm -rf "$dir"
   if [ "$ok" -eq 1 ]; then
@@ -1034,9 +1034,9 @@ test_dispose_removes_the_workspace_through_the_runtime() {
     bash "$DRIVER" dispose N1 --state "$root/state" 2>/dev/null || true)"
   log="$(cat "$root/dispose.log" 2>/dev/null || true)"
 
-  if printf '%s' "$log" | grep -q '^worktree rm .*--worktree id:' \
-    && printf '%s' "$log" | grep -qE '^orchestration worker-(stop|abandon)' \
-    && printf '%s' "$out" | grep -q '^disposed=1$'; then
+  if grep -q '^worktree rm .*--worktree id:' <<< "$log" \
+    && grep -qE '^orchestration worker-(stop|abandon)' <<< "$log" \
+    && grep -q '^disposed=1$' <<< "$out"; then
     log_pass "dispose fences the worker and removes the workspace through the runtime"
   else
     log_fail "dispose fences the worker and removes the workspace through the runtime (out: $out / log: $log)"
@@ -1053,10 +1053,10 @@ test_a_previous_attempt_is_removed_by_path() {
     ORCA_FAKE_TUI_STATE="$root/tui" ORCA_FAKE_TICK="$root/tick" \
     bash "$DRIVER" dispose N1 --state "$root/state" --worktree "$old" 2>/dev/null || true)"
   log="$(cat "$root/dispose.log" 2>/dev/null || true)"
-  if printf '%s' "$log" | grep -q "^worktree rm .*--worktree path:$old" \
-    && ! printf '%s' "$log" | grep -qE '^orchestration worker-(stop|abandon)' \
-    && ! printf '%s' "$log" | grep -q 'worktree rm .*--worktree id:' \
-    && printf '%s' "$out" | grep -q '^disposed=1$'; then
+  if grep -q "^worktree rm .*--worktree path:$old" <<< "$log" \
+    && ! grep -qE '^orchestration worker-(stop|abandon)' <<< "$log" \
+    && ! grep -q 'worktree rm .*--worktree id:' <<< "$log" \
+    && grep -q '^disposed=1$' <<< "$out"; then
     log_pass "a previous attempt is removed by path, leaving the current worker and workspace alone"
   else
     log_fail "a previous attempt is removed by path, leaving the current worker and workspace alone (out: $out / log: $log)"
@@ -1077,9 +1077,9 @@ test_dispose_waits_for_the_runtime_to_finish_removing() {
   local kept
   kept="$( cd "$root/repo" && ORCA_FAKE_LOG="$root/dispose.log" PATH="$root/bin:$PATH" SHIP_DISPOSE_SETTLE_S=1 \
     bash "$DRIVER" dispose N1 --state "$root/state" --worktree "$stays" 2>/dev/null || true)"
-  if printf '%s' "$out" | grep -q '^disposed=1$' \
-    && printf '%s' "$kept" | grep -q '^disposed=0$' \
-    && printf '%s' "$kept" | grep -q "^reason=the runtime still reports a workspace at $stays"; then
+  if grep -q '^disposed=1$' <<< "$out" \
+    && grep -q '^disposed=0$' <<< "$kept" \
+    && grep -q "^reason=the runtime still reports a workspace at $stays" <<< "$kept"; then
     log_pass "a removal the runtime finishes a moment later counts as removed; one it never finishes does not"
   else
     log_fail "a removal the runtime finishes a moment later counts as removed; one it never finishes does not (late: $out / never: $kept)"

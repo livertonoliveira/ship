@@ -122,7 +122,7 @@ test_missing_scratch_fails() {
     rm -rf "$dir"
     return
   fi
-  if ! printf '%s' "$stderr_output" | grep -qF "$missing"; then
+  if ! grep -qF "$missing" <<< "$stderr_output"; then
     log_fail "$name (stderr did not mention missing file: $stderr_output)"
     rm -rf "$dir"
     return

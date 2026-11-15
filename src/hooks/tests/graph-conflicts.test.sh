@@ -226,8 +226,8 @@ EOF
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$json" | grep -q '"blocked_by_conflict": "TASK-002"' \
-    && ! printf '%s' "$json" | grep -q '"status": "failed"'; then
+  if grep -q '"blocked_by_conflict": "TASK-002"' <<< "$json" \
+    && ! grep -q '"status": "failed"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name"
@@ -261,10 +261,10 @@ EOF
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir"
 
-  if printf '%s' "$json" | grep -q '"src/web/page.tsx"' \
-    && printf '%s' "$json" | grep -q '"blocked_by_conflict": "TASK-004"'; then
+  if grep -q '"src/web/page.tsx"' <<< "$json" \
+    && grep -q '"blocked_by_conflict": "TASK-004"' <<< "$json"; then
     log_fail "$name (the wrong node got blocked)"
-  elif printf '%s' "$json" | grep -q '"blocked_by_conflict": "TASK-002"'; then
+  elif grep -q '"blocked_by_conflict": "TASK-002"' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (TASK-004 was not held back by the refreshed footprint)"
@@ -300,9 +300,9 @@ test_footprint_ignores_siblings_merged_upstream() {
   )
   json="$(cd "$dir" && bash "$GRAPH" status --json)"
   rm -rf "$dir" "$remote"
-  if printf '%s' "$json" | grep -q 'sibling.ts",\|"src/a.ts,src/sibling.ts\|src/sibling.ts,src/a.ts'; then
+  if grep -q 'sibling.ts",\|"src/a.ts,src/sibling.ts\|src/sibling.ts,src/a.ts' <<< "$json"; then
     log_fail "$name (merged sibling file in TASK-010's footprint)"
-  elif printf '%s' "$json" | grep -q '"blocked_by_conflict": "TASK-010"'; then
+  elif grep -q '"blocked_by_conflict": "TASK-010"' <<< "$json"; then
     log_fail "$name (TASK-011 was held back by a file TASK-010 never touched)"
   else
     log_pass "$name"
@@ -452,7 +452,7 @@ EOF
   rm -rf "$dir"
 
   if [ "$new_lines" = "1" ] && [ "$(field "$out" refreshed)" = "1" ] \
-    && printf '%s' "$last_line" | grep -q '+src/api/extra.ts'; then
+    && grep -q '+src/api/extra.ts' <<< "$last_line"; then
     log_pass "$name"
   else
     log_fail "$name (new_lines=$new_lines refreshed='$(field "$out" refreshed)' line='$last_line')"
@@ -483,8 +483,8 @@ EOF
   rm -rf "$dir"
 
   if [ "$rc" -ne 0 ] && [ "$left" = "0" ] \
-    && printf '%s' "$err" | grep -q 'TASK-002: src/features/agenda (2 files)' \
-    && ! printf '%s' "$err" | grep -q 'TASK-004:'; then
+    && grep -q 'TASK-002: src/features/agenda (2 files)' <<< "$err" \
+    && ! grep -q 'TASK-004:' <<< "$err"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc left=$left err='$err')"
@@ -547,8 +547,8 @@ EOF
   local b4 b6
   b4="$(printf '%s' "$json" | awk '/"id": "TASK-004"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
   b6="$(printf '%s' "$json" | awk '/"id": "TASK-006"/ { f = 1 } f && /blocked_by_conflict/ { print; exit }')"
-  if printf '%s' "$b4" | grep -q '"TASK-002"' && printf '%s' "$b6" | grep -q '"TASK-002"' \
-    && ! printf '%s' "$json" | grep -q 'tasks.md'; then
+  if grep -q '"TASK-002"' <<< "$b4" && grep -q '"TASK-002"' <<< "$b6" \
+    && ! grep -q 'tasks.md' <<< "$json"; then
     log_pass "$name"
   else
     log_fail "$name (TASK-004: $b4 | TASK-006: $b6)"

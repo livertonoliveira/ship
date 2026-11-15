@@ -85,7 +85,7 @@ assert_marker_absent() {
 
 assert_stdout_contains() {
   local name="$1" needle="$2"
-  if printf '%s' "$LAST_STDOUT" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<< "$LAST_STDOUT"; then
     log_pass "$name"
   else
     log_fail "$name (stdout did not contain: $needle)"
@@ -94,7 +94,7 @@ assert_stdout_contains() {
 
 assert_stderr_contains() {
   local name="$1" needle="$2"
-  if printf '%s' "$LAST_STDERR" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<< "$LAST_STDERR"; then
     log_pass "$name"
   else
     log_fail "$name (stderr did not contain: $needle)"
@@ -258,7 +258,7 @@ test_added_comment_flagged() {
 
   status=0
   out="$(scan "$dir" "$file")" || status=$?
-  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "service.ts:3" && ! printf '%s' "$out" | grep -q "service.ts:1"; then
+  if [ "$status" -eq 2 ] && grep -q "service.ts:3" <<< "$out" && ! grep -q "service.ts:1" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (exit=$status, out=$out)"
@@ -276,7 +276,7 @@ test_untracked_file_fully_scanned() {
 
   status=0
   out="$(scan "$dir" "$file")" || status=$?
-  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "new-module.ts:1"; then
+  if [ "$status" -eq 2 ] && grep -q "new-module.ts:1" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (exit=$status, out=$out)"
@@ -296,7 +296,7 @@ test_preexisting_spec_id_still_flagged() {
 
   status=0
   out="$(scan "$dir" "$file")" || status=$?
-  if [ "$status" -eq 2 ] && printf '%s' "$out" | grep -q "service.ts:1"; then
+  if [ "$status" -eq 2 ] && grep -q "service.ts:1" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (exit=$status, out=$out)"
@@ -313,7 +313,7 @@ test_all_mode_only_added_comment() {
   printf '// legacy note kept by the project\nexport const a = 1;\n// freshly added marker\n' > "$dir/service.ts"
 
   out="$(cd "$dir" && bash "$HYGIENE_SCRIPT" --all 2>&1)"
-  if printf '%s' "$out" | grep -q "service.ts:3" && ! printf '%s' "$out" | grep -q "service.ts:1"; then
+  if grep -q "service.ts:3" <<< "$out" && ! grep -q "service.ts:1" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out=$out)"

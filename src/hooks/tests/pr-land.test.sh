@@ -75,7 +75,7 @@ test_a_branch_with_nothing_ahead_of_the_base_says_so() {
   (cd "$root/repo" && git checkout -q main && git branch -q -D fix/T1-x && git checkout -q -b fix/T1-x) >/dev/null 2>&1
   local out rc=0
   out="$(land "$root" T1)" || rc=$?
-  if [ "$rc" -eq 6 ] && printf '%s' "$out" | grep -q '^result=empty base=main branch=fix/T1-x' \
+  if [ "$rc" -eq 6 ] && grep -q '^result=empty base=main branch=fix/T1-x' <<< "$out" \
     && grep -q '^result=empty' "$root/repo/.context/ship-run/T1/pr-land.txt" \
     && ! grep -q '^pr create' "$root/gh.log" 2>/dev/null; then
     log_pass "$name"
@@ -93,7 +93,7 @@ test_every_result_is_on_disk() {
   out="$(land "$root" T1)" || rc=$?
   local disk; disk="$(cat "$root/repo/.context/ship-run/T1/pr-land.txt" 2>/dev/null || true)"
   rm -rf "$root"
-  if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q '^result=uncommitted' && printf '%s' "$disk" | grep -q '^result=uncommitted'; then
+  if [ "$rc" -eq 2 ] && grep -q '^result=uncommitted' <<< "$out" && grep -q '^result=uncommitted' <<< "$disk"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out' disk='$disk')"
@@ -110,7 +110,7 @@ test_a_committed_branch_lands_in_one_call() {
     && [ "$(field "$out" automerge)" = "armed" ] && [ "$(field "$out" linear)" = "skipped" ] \
     && grep -q -- '^pr create --base main --head fix/T1-x --title' "$root/gh.log" \
     && grep -q -- '^pr merge --auto --squash fix/T1-x' "$root/gh.log" \
-    && printf '%s' "$title" | grep -q 'fix: Empty rows must not crash the exporter (T1)' \
+    && grep -q 'fix: Empty rows must not crash the exporter (T1)' <<< "$title" \
     && grep -q -- '- fix: handle the empty case' "$root/body.md" \
     && grep -q -- '| review | WARN | 0 | 0 | 1 | 2 |' "$root/body.md" \
     && grep -q '^Closes T1$' "$root/body.md" \
@@ -266,7 +266,7 @@ test_a_failed_push_without_a_hook_is_not_red() {
   local root; root="$(mktemp -d)"; setup "$root"
   (cd "$root/repo" && git remote set-url origin "$root/missing.git")
   local out rc=0; out="$(land "$root" T1 2>&1)" || rc=$?
-  if [ "$rc" -eq 1 ] && ! printf '%s' "$out" | grep -q '^result=red'; then
+  if [ "$rc" -eq 1 ] && ! grep -q '^result=red' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"

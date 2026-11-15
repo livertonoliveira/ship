@@ -47,8 +47,8 @@ test_tasks_on_the_same_files_are_one_task() {
   run < <(graph "$(node A '' 'src/p.ts,test/p.spec.ts')" \
         "$(node B 'A' 'src/p.ts,test/p.spec.ts')" \
         "$(node C 'B' 'src/p.ts,src/q.ts,test/p.spec.ts')") || rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$OUT" | grep -q '^merge A+B+C reason=overlap files=3' \
-    && printf '%s' "$OUT" | grep -q '^nodes=3 proposals=1 after=1$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^merge A+B+C reason=overlap files=3' <<< "$OUT" \
+    && grep -q '^nodes=3 proposals=1 after=1$' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -60,7 +60,7 @@ test_one_hub_file_does_not_glue_unrelated_tasks() {
   local rc=0
   run < <(graph "$(node A '' 'src/index.ts,src/a.ts,src/a2.ts,test/a.spec.ts')" \
         "$(node B '' 'src/index.ts,src/b.ts,src/b2.ts,test/b.spec.ts')") || rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$OUT" | grep -q '^nodes=2 proposals=0 after=2$'; then
+  if [ "$rc" -eq 1 ] && grep -q '^nodes=2 proposals=0 after=2$' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -73,8 +73,8 @@ test_a_straight_chain_is_one_task() {
   run < <(graph "$(node A '' 'src/a.ts,test/a.spec.ts')" \
         "$(node B 'A' 'src/b.ts,test/b.spec.ts')" \
         "$(node C '' 'src/c.ts')") || rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$OUT" | grep -q '^merge A+B reason=chain files=4 delays=0$' \
-    && printf '%s' "$OUT" | grep -q '^nodes=3 proposals=1 after=2$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^merge A+B reason=chain files=4 delays=0$' <<< "$OUT" \
+    && grep -q '^nodes=3 proposals=1 after=2$' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -87,7 +87,7 @@ test_a_chain_with_a_side_dependent_is_not_merged() {
   run < <(graph "$(node A '' 'src/a.ts')" \
         "$(node B 'A' 'src/b.ts')" \
         "$(node C 'A' 'src/c.ts')") || rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$OUT" | grep -q 'proposals=0'; then
+  if [ "$rc" -eq 1 ] && grep -q 'proposals=0' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -102,7 +102,7 @@ test_merge_that_would_cycle_is_refused() {
         "$(node B 'A,E' 'src/b.ts,src/b2.ts,src/b3.ts')" \
         "$(node C 'B' 'src/x.ts,test/x.spec.ts')" \
         "$(node D 'B' 'src/d.ts')") || rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$OUT" | grep -q 'proposals=0'; then
+  if [ "$rc" -eq 1 ] && grep -q 'proposals=0' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -121,7 +121,7 @@ test_reviewability_caps_hold() {
   run --max-lines 600 < <(graph "$(node A '' 'src/p.ts,test/p.spec.ts' 200)" \
         "$(node B 'A' 'src/p.ts,test/p.spec.ts' 300)") || rc3=$?
   if [ "$rc" -eq 1 ] && [ "$rc2" -eq 1 ] && [ "$rc3" -eq 0 ] \
-    && printf '%s' "$OUT" | grep -q '^merge A+B reason=overlap files=2 lines=500 delays=0$'; then
+    && grep -q '^merge A+B reason=overlap files=2 lines=500 delays=0$' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc/$rc2/$rc3 out=$OUT)"
@@ -134,7 +134,7 @@ test_delays_counts_who_would_wait_on_work_they_did_not_need() {
   run < <(graph "$(node A '' 'src/p.ts,test/p.spec.ts')" \
         "$(node B 'A' 'src/p.ts,test/p.spec.ts')" \
         "$(node D 'A' 'src/d.ts')") || rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$OUT" | grep -q '^merge A+B reason=overlap files=2 delays=1$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^merge A+B reason=overlap files=2 delays=1$' <<< "$OUT"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$OUT)"
@@ -148,7 +148,7 @@ test_different_repos_never_merge() {
   local rc=0 out
   out="$(bash "$MERGE" --from "$f" 2>&1)" || rc=$?
   rm -f "$f"
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'proposals=0'; then
+  if [ "$rc" -eq 1 ] && grep -q 'proposals=0' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$out)"
@@ -192,7 +192,7 @@ EOT
   local rc=0 out
   out="$(bash "$MERGE" --tasks "$d/tasks.md" 2>&1)" || rc=$?
   rm -rf "$d"
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^merge TASK-001+TASK-002 reason=overlap files=2 delays=0$'; then
+  if [ "$rc" -eq 0 ] && grep -q '^merge TASK-001+TASK-002 reason=overlap files=2 delays=0$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out=$out)"

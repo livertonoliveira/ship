@@ -87,7 +87,7 @@ test_layer_path_contradiction_rejected() {
   write_plan "$dir" integration "test/e2e/cash-flow.e2e-spec.ts"
   out="$(bash "$PV" "$dir/plan.md" 2>&1)" || rc=$?
   rm -rf "$dir"
-  if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "contradiz a camada"; then
+  if [ "$rc" -eq 2 ] && grep -q "contradiz a camada" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"
@@ -132,7 +132,7 @@ test_disabled_layer_rejected() {
 - e2e: disabled'
   out="$(bash "$PV" "$dir/plan.md" --config "$dir/config.md" 2>&1)" || rc=$?
   rm -rf "$dir"
-  if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "camada desabilitada"; then
+  if [ "$rc" -eq 2 ] && grep -q "camada desabilitada" <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (rc=$rc out='$out')"

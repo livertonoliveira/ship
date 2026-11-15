@@ -104,7 +104,7 @@ test_a_merged_node_frees_its_workspace() {
   wt_col="$(awk -F'\t' '$1 == "TASK-001" { print $7 }' "$dir/.context/ship-graph/f/nodes.tsv")"
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^workspace_freed=TASK-001$' \
+  if grep -q '^workspace_freed=TASK-001$' <<< "$out" \
     && [ "$gone" -eq 1 ] && [ "$harvested" -eq 1 ] && [ -z "$wt_col" ]; then
     log_pass "$name"
   else
@@ -142,7 +142,7 @@ test_a_merged_node_frees_its_failed_attempts() {
   out="$(cd "$dir" && GH_BIN="$dir/fake-gh" bash "$GRAPH" poll --stall-after 0)"
   [ -d "$first" ] && gone=0
   rm -rf "$dir"
-  if [ "$gone" -eq 1 ] && printf '%s' "$out" | grep -q '^previous_freed=TASK-001$'; then
+  if [ "$gone" -eq 1 ] && grep -q '^previous_freed=TASK-001$' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (gone=$gone out='$out')"
@@ -177,7 +177,7 @@ test_an_unmerged_node_keeps_its_workspace() {
   [ -d "$(WS "$dir" TASK-001)" ] && present=1
   rm -rf "$dir"
 
-  if [ "$present" -eq 1 ] && ! printf '%s' "$out" | grep -q '^workspace_freed='; then
+  if [ "$present" -eq 1 ] && ! grep -q '^workspace_freed=' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"
@@ -197,7 +197,7 @@ test_uncommitted_work_is_never_thrown_away() {
   [ -d "$(WS "$dir" TASK-001)" ] && present=1
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^workspace_kept=TASK-001$' && [ "$present" -eq 1 ]; then
+  if grep -q '^workspace_kept=TASK-001$' <<< "$out" && [ "$present" -eq 1 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"
@@ -223,7 +223,7 @@ test_the_runs_own_scratch_is_not_uncommitted_work() {
   [ -f "$dir/.context/ship-graph/f/artifacts/TASK-001/homolog-report.md" ] && harvested=1
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^workspace_freed=TASK-001$' && [ "$present" -eq 0 ] && [ "$harvested" -eq 1 ]; then
+  if grep -q '^workspace_freed=TASK-001$' <<< "$out" && [ "$present" -eq 0 ] && [ "$harvested" -eq 1 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present harvested=$harvested)"
@@ -243,7 +243,7 @@ test_keep_workspaces_disables_the_whole_thing() {
   [ -d "$(WS "$dir" TASK-001)" ] && present=1
   rm -rf "$dir"
 
-  if [ "$present" -eq 1 ] && ! printf '%s' "$out" | grep -q '^workspace_freed='; then
+  if [ "$present" -eq 1 ] && ! grep -q '^workspace_freed=' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"
@@ -270,8 +270,8 @@ test_sweep_catches_up() {
   [ -d "$(WS "$dir" TASK-001)" ] && present=1
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^workspace_freed=TASK-001$' \
-    && printf '%s' "$out" | grep -q '^swept=' && [ "$present" -eq 0 ]; then
+  if grep -q '^workspace_freed=TASK-001$' <<< "$out" \
+    && grep -q '^swept=' <<< "$out" && [ "$present" -eq 0 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"
@@ -295,7 +295,7 @@ test_a_failed_node_is_never_swept() {
   [ -d "$(WS "$dir" TASK-001)" ] && present=1
   rm -rf "$dir"
 
-  if [ "$present" -eq 1 ] && ! printf '%s' "$out" | grep -q 'TASK-001'; then
+  if [ "$present" -eq 1 ] && ! grep -q 'TASK-001' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"
@@ -319,7 +319,7 @@ test_driver_local_dispose_deregisters_the_worktree() {
   (cd "$dir" && git worktree list --porcelain | grep -q 'TASK-001') || registered=0
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^disposed=1$' && [ "$present" -eq 0 ] && [ "$registered" -eq 0 ]; then
+  if grep -q '^disposed=1$' <<< "$out" && [ "$present" -eq 0 ] && [ "$registered" -eq 0 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present registered=$registered)"
@@ -346,7 +346,7 @@ test_driver_local_disposes_from_any_cwd() {
   (cd "$dir" && git worktree list --porcelain | grep -q 'TASK-001') || registered=0
   rm -rf "$dir" "$elsewhere"
 
-  if printf '%s' "$out" | grep -q '^disposed=1$' && [ "$present" -eq 0 ] && [ "$registered" -eq 0 ]; then
+  if grep -q '^disposed=1$' <<< "$out" && [ "$present" -eq 0 ] && [ "$registered" -eq 0 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present registered=$registered)"
@@ -365,7 +365,7 @@ test_driver_local_refuses_a_path_it_does_not_own() {
   [ -f "$dir/precious/file.txt" ] && present=1
   rm -rf "$dir"
 
-  if printf '%s' "$out" | grep -q '^disposed=0$' && [ "$present" -eq 1 ]; then
+  if grep -q '^disposed=0$' <<< "$out" && [ "$present" -eq 1 ]; then
     log_pass "$name"
   else
     log_fail "$name (out='$out' present=$present)"

@@ -27,7 +27,7 @@ AC_IN="A"'C-01'
 AC_OUT="A"'C-99'
 
 next() { local dir="$1"; shift; (cd "$dir" && bash "$PIPELINE" next "$@"); }
-field() { printf '%s\n' "$1" | grep -m1 "^$2=" | cut -d= -f2-; }
+field() { grep -m1 "^$2=" <<< "$1" | cut -d= -f2-; }
 scratch_of() { printf '%s/.context/ship-run/%s' "$1" "$2"; }
 
 setup_repo() {
@@ -127,10 +127,10 @@ test_layer_without_contract_is_not_dispatched() {
   # The contract routes the only scenario to unit; integration has zero rows.
   out="$(drive_to_verify "$dir" TASK-1 unit src/b.test.js)"
   scratch="$(scratch_of "$dir" TASK-1)"
-  if printf '%s' "$out" | grep -q 'ship-test-unit' \
-    && ! printf '%s' "$out" | grep -q 'ship-test-integration' \
+  if grep -q 'ship-test-unit' <<< "$out" \
+    && ! grep -q 'ship-test-integration' <<< "$out" \
     && grep -q 'integration(no-contract)' "$scratch/verify-a.txt" \
-    && printf '%s' "$out" | grep -q 'skipped: integration(no-contract)'; then
+    && grep -q 'skipped: integration(no-contract)' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out state=$(field "$out" state), verify-a='$(cat "$scratch/verify-a.txt" 2>/dev/null | tr '\n' ' ')')"
@@ -166,7 +166,7 @@ test_layer_already_authored_by_develop_is_not_dispatched() {
     esac
   done
   scratch="$sc"
-  if ! printf '%s' "$out" | grep -q 'ship-test-unit' \
+  if ! grep -q 'ship-test-unit' <<< "$out" \
     && grep -q 'unit(authored-by-develop)' "$scratch/verify-a.txt"; then
     log_pass "$name"
   else
@@ -255,8 +255,8 @@ test_style_ref_is_layer_appropriate() {
   drive_to_verify "$dir" TASK-1 unit test/unit/services/b2.spec.js >/dev/null
   brief="$(scratch_of "$dir" TASK-1)/test-brief-unit.md"
   ref="$(grep -m1 'Style reference' "$brief" 2>/dev/null || true)"
-  if printf '%s' "$ref" | grep -q 'test/unit/services/b.spec.js' \
-    && ! printf '%s' "$ref" | grep -q 'aaa-unrelated'; then
+  if grep -q 'test/unit/services/b.spec.js' <<< "$ref" \
+    && ! grep -q 'aaa-unrelated' <<< "$ref"; then
     log_pass "$name"
   else
     log_fail "$name (ref='$ref')"
@@ -333,7 +333,7 @@ test_e2e_without_a_runner_gets_no_worker() {
   mkdir -p "$dir/e2e/maestro"; printf -- '- launchApp\n' > "$dir/e2e/maestro/flow.yaml"
   out="$(drive_to_verify "$dir" TASK-1 e2e e2e/b.spec.ts)"
   scratch="$(scratch_of "$dir" TASK-1)"
-  if ! printf '%s' "$out" | grep -q 'ship-test-e2e' && grep -q 'e2e(no-e2e-runner)' "$scratch/verify-a.txt"; then
+  if ! grep -q 'ship-test-e2e' <<< "$out" && grep -q 'e2e(no-e2e-runner)' "$scratch/verify-a.txt"; then
     log_pass "$name"
   else
     log_fail "$name (verify-a='$(cat "$scratch/verify-a.txt" 2>/dev/null | tr '\n' ' ')')"
@@ -350,7 +350,7 @@ test_e2e_with_detox_gets_its_worker() {
 - e2e: enabled'
   printf 'module.exports = {};\n' > "$dir/.detoxrc.js"
   out="$(drive_to_verify "$dir" TASK-1 e2e e2e/b.test.ts)"
-  if printf '%s' "$out" | grep -q 'ship-test-e2e'; then
+  if grep -q 'ship-test-e2e' <<< "$out"; then
     log_pass "$name"
   else
     log_fail "$name (out state=$(field "$out" state))"

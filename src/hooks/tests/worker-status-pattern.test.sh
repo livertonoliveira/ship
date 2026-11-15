@@ -56,13 +56,13 @@ DONE_WITH_CONCERNS
 NEEDS_CONTEXT
 BLOCKED"
   while IFS= read -r state; do
-    if ! printf '%s\n' "$expected" | grep -qxF "$state"; then
+    if ! grep -qxF "$state" <<< "$expected"; then
       log_fail "$name (unexpected heading: $state)"
       return
     fi
   done <<< "$headings"
   while IFS= read -r state; do
-    if ! printf '%s\n' "$headings" | grep -qxF "$state"; then
+    if ! grep -qxF "$state" <<< "$headings"; then
       log_fail "$name (missing heading: $state)"
       return
     fi
@@ -79,11 +79,11 @@ test_each_state_has_trigger_and_behavior() {
       found && /^### / { exit }
       found { print }
     ' "$PATTERN_FILE")"
-    if ! printf '%s' "$block" | grep -q '\*\*Trigger:\*\*'; then
+    if ! grep -q '\*\*Trigger:\*\*' <<< "$block"; then
       log_fail "$name (no Trigger for $state)"
       return
     fi
-    if ! printf '%s' "$block" | grep -q '\*\*Behavior:\*\*'; then
+    if ! grep -q '\*\*Behavior:\*\*' <<< "$block"; then
       log_fail "$name (no Behavior for $state)"
       return
     fi
@@ -108,7 +108,7 @@ test_missing_empty_out_of_enum_all_treated_as_blocked() {
     log_fail "$name (no single rule line covering missing, empty, and BLOCKED)"
     return
   fi
-  if ! printf '%s' "$rule_line" | grep -qi 'outside the four-value enum'; then
+  if ! grep -qi 'outside the four-value enum' <<< "$rule_line"; then
     log_fail "$name (rule line does not cover out-of-enum values)"
     return
   fi
@@ -129,7 +129,7 @@ test_edge_cases_each_resolve_to_blocked() {
       log_fail "$name (no edge case section for $label)"
       return
     fi
-    if ! printf '%s' "$block" | grep -q 'BLOCKED'; then
+    if ! grep -q 'BLOCKED' <<< "$block"; then
       log_fail "$name ($label edge case does not resolve to BLOCKED)"
       return
     fi

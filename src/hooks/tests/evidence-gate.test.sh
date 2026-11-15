@@ -139,12 +139,12 @@ test_repo_with_no_test_files() {
 
   local untested_arr
   untested_arr="$(extract_json_array "$out" untested)"
-  if ! printf '%s' "$untested_arr" | grep -qF '"src/a.ts"'; then
+  if ! grep -qF '"src/a.ts"' <<< "$untested_arr"; then
     log_fail "$name (missing src/a.ts in untested: $untested_arr)"
     rm -rf "$repo"
     return
   fi
-  if ! printf '%s' "$untested_arr" | grep -qF '"src/b.ts"'; then
+  if ! grep -qF '"src/b.ts"' <<< "$untested_arr"; then
     log_fail "$name (missing src/b.ts in untested: $untested_arr)"
     rm -rf "$repo"
     return
@@ -163,7 +163,7 @@ test_output_is_valid_json_with_three_keys() {
 
   out="$(cd "$repo" && bash "$EVIDENCE_SCRIPT" "$touched")"
 
-  if ! printf '%s' "$out" | grep -qE '^\{.*"tested":\[.*\].*"untested":\[.*\].*"total":[0-9]+\}$'; then
+  if ! grep -qE '^\{.*"tested":\[.*\].*"untested":\[.*\].*"total":[0-9]+\}$' <<< "$out"; then
     log_fail "$name (output was: $out)"
     rm -rf "$repo"
     return
